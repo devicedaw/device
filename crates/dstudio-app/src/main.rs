@@ -66,6 +66,7 @@ mod groups;
 mod highlight;
 mod live_import;
 mod live_set;
+mod midi_export;
 mod midi_in;
 mod minimap;
 mod mixer;
@@ -85,6 +86,7 @@ mod sampler_panel;
 mod sections;
 mod selection;
 mod selftest;
+mod send_to_sampler;
 mod settings;
 mod shape_rack;
 mod showcase;
@@ -1561,8 +1563,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.open_input_menu();
     }
     CLIP_MENU_AUDIO.store(args.clip_menu_audio, std::sync::atomic::Ordering::Relaxed);
-    if CLIP_FADES_REVIEW.load(std::sync::atomic::Ordering::Relaxed) {
-        // A 4 s pad (three detuned sines) on the Audio track at bar 2.
+    if CLIP_FADES_REVIEW.load(std::sync::atomic::Ordering::Relaxed) || args.clip_menu_audio {
+        // A 4 s pad (three detuned sines) on the Audio track at bar 2 (review-clip-menu opens its menu).
         let dir = std::env::temp_dir().join("device-studio-review");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("Pad.wav");
@@ -2703,7 +2705,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_composer_create, |c| c.composer_create());
     on!(on_composer_load, |c, i: i32| c.composer_load(i.max(0) as usize));
     on!(on_composer_original_pick, |c| c.composer_original());
-    // Export audio asks for a file with the controller NOT borrowed.
+    // Export audio and Export MIDI ask for a file with the controller NOT borrowed.
     {
         let ctl = ctl.clone();
         let aw = app.as_weak();
@@ -2728,6 +2730,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         name.into()
                     };
                     ctl.borrow_mut().export_clip(id, &path, true);
+                }
+            }
+            let request = ctl.borrow_mut().midi_dialog_request.take();
+            if let Some((id, name)) = request {
+                let start = ctl.borrow().export.dir.clone();
+                let picked = rfd::FileDialog::new()
+                    .set_title("Export MIDI")
+                    .add_filter("MIDI", &["mid", "midi"])
+                    .set_file_name(name)
+                    .set_directory(&start)
+                    .save_file();
+                if let Some(path) = picked {
+                    ctl.borrow_mut().export_midi(id, &midi_export::with_mid_extension(path), true);
                 }
             }
             if let Some(a) = aw.upgrade() {

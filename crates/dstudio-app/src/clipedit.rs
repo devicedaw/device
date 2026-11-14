@@ -46,7 +46,7 @@ fn slint_color(c: [f32; 3]) -> slint::Color {
 }
 
 impl MenuAction {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             MenuAction::Cut => "Cut",
             MenuAction::Copy => "Copy",
@@ -60,6 +60,9 @@ impl MenuAction {
             MenuAction::Enable => "Enable",
             MenuAction::ShowInFinder => "Show in Finder",
             MenuAction::Rename => "Rename…",
+            MenuAction::Resample => "Resample",
+            MenuAction::SendToSampler => "Send to Sampler",
+            MenuAction::ExportMidi => "Export MIDI",
             MenuAction::Export => "Export audio to Finder",
             MenuAction::Transpose => "Transpose",
             MenuAction::Quantize => "Quantize",
@@ -111,6 +114,7 @@ impl MenuAction {
             MenuAction::Delete
                 | MenuAction::Disable
                 | MenuAction::Enable
+                | MenuAction::Resample
                 | MenuAction::ShowInFinder
                 | MenuAction::Transpose
                 | MenuAction::Ask
@@ -630,7 +634,10 @@ impl Controller {
             Delete,
             if disabled { Enable } else { Disable },
             Rename,
+            Resample,
+            SendToSampler,
             ShowInFinder,
+            ExportMidi,
             Export,
             Transpose,
             Quantize,
@@ -638,6 +645,11 @@ impl Controller {
         ];
         if takes < 2 {
             items.retain(|&a| a != Takes);
+        }
+        if midi {
+            items.retain(|&a| a != Resample && a != SendToSampler);
+        } else {
+            items.retain(|&a| a != ExportMidi);
         }
         if midi {
             items.push(if pattern { ToMidi } else { ToPattern });
@@ -652,8 +664,9 @@ impl Controller {
                     Split => splittable,
                     ShowInFinder => !midi,
                     Consolidate => self.can_render_clip(id, false),
-                    Bounce | Export => self.can_render_clip(id, true),
-                    Transpose | Quantize | Humanize | ToPattern | ToMidi => midi,
+                    Bounce | Export | Resample => self.can_render_clip(id, true),
+                    SendToSampler => !midi,
+                    Transpose | Quantize | Humanize | ToPattern | ToMidi | ExportMidi => midi,
                     _ => false,
                 };
                 (a, enabled)
@@ -743,6 +756,11 @@ impl Controller {
             MenuAction::Delete => self.delete_selection(),
             MenuAction::Split => self.split_clip(),
             MenuAction::Consolidate => self.consolidate_clip(id),
+            MenuAction::Resample => self.bounce_clip(id),
+            MenuAction::SendToSampler => {
+                self.send_to_sampler(id);
+            }
+            MenuAction::ExportMidi => self.export_midi_request(id),
             MenuAction::Export => self.export_clip_request(id),
             MenuAction::Disable | MenuAction::Enable => self.toggle_clip_disabled(),
             MenuAction::ShowInFinder => self.show_clip_in_finder(),

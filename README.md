@@ -54,9 +54,10 @@ wgpu.
   clip or section, ⌘D duplicates the selected clip or section.
 - **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
-- **Printing clips.** Consolidate joins clips into one, Bounce to new track (⌘B, or Resample in the audio clip editor)
-  renders a clip through its track's devices onto a new track, and Export audio saves one clip as a WAV. Renders run in
-  the background while you keep working, and each is one undo step.
+- **Printing clips.** Consolidate joins clips into one, Bounce to new track (⌘B, or Resample in the clip menu and the
+  audio clip editor) renders a clip through its track's devices onto a new track, and Export audio saves one clip as a
+  WAV. Renders run in the background while you keep working, and each is one undo step. Export MIDI saves a MIDI clip as
+  a standard MIDI file, and Send to Sampler puts an audio clip on a new track, played by a Sampler.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
   compensation is measured with an acoustic loopback test, not guessed. Right-click the record button for a one- or
   two-bar count-in: the click plays from that far back and the take starts where you pressed record. Record with the

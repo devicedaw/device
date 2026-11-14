@@ -26,6 +26,7 @@ pub mod render_plan;
 pub mod scale;
 pub mod shape;
 pub mod smart_quantize;
+pub mod smf;
 pub mod snapshot;
 pub mod steps;
 pub mod warp;
