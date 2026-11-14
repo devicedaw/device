@@ -183,7 +183,8 @@ TEST_CASE(routing_validation) {
         return s.publish(e) == SE_ERR_INVALID_ARG;
     };
     CHECK(bad([](RSession& s) { s.send(1, 3, 1.0f); }));  // not a return
-    CHECK(bad([](RSession& s) { s.send(2, 2, 1.0f); }));  // from a return
+    CHECK(bad([](RSession& s) { s.send(2, 2, 1.0f); }));  // a return into itself
+    CHECK(bad([](RSession& s) { s.ret(4); s.send(2, 4, 1.0f); s.send(4, 2, 1.0f); })); // returns in a loop
     CHECK(bad([](RSession& s) { s.send(1, 9, 1.0f); }));  // unknown
     CHECK(bad([](RSession& s) { s.send(9, 2, 1.0f); }));  // unknown sender
     CHECK(bad([](RSession& s) { s.send(1, 2, 5.0f); }));  // gain out of range
@@ -207,6 +208,32 @@ TEST_CASE(routing_validation) {
     s.send(1, 2, 1.0f);
     REQUIRE(s.publish(e) == SE_OK);
     CHECK_NEAR(play_left(e, 1024)[100], 1.0f, 1e-6f);
+}
+
+TEST_CASE(routing_a_return_sends_into_another_return) {
+    // A group track (published as a return) with a send to a reverb return.
+    EngineHandle e;
+    RSession s;
+    s.audio(1, steady(e, 1)); // 0.5 left
+    s.ret(2);                 // the group
+    s.ret(4, 0.5f);           // the return it sends to
+    s.out(1, 2);
+    s.send(2, 4, 0.5f); // post-fader: 0.25 into the return, which plays it at 0.5
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK_NEAR(play_left(e, 1024)[100], 0.5f + 0.125f, 1e-6f);
+    // Listed with the receiving return first: the same.
+    RSession r;
+    r.ret(4, 0.5f);
+    r.audio(1, steady(e, 1));
+    r.ret(2);
+    r.out(1, 2);
+    r.send(2, 4, 0.5f);
+    REQUIRE(r.publish(e) == SE_OK);
+    CHECK_NEAR(play_left(e, 1024)[100], 0.625f, 1e-6f);
+    // A muted group sends nothing either.
+    r.tracks[2].d.mute = 1;
+    REQUIRE(r.publish(e) == SE_OK);
+    CHECK_NEAR(play_left(e, 1024)[100], 0.0f, 1e-7f);
 }
 
 TEST_CASE(routing_delay_compensation_aligns_direct_and_return_paths) {
@@ -243,6 +270,37 @@ TEST_CASE(routing_delay_compensation_aligns_direct_and_return_paths) {
     CHECK_NEAR(off[2000], 0.5f, 1e-6f); // track 1 direct
     CHECK_NEAR(off[2700], 0.5f, 1e-6f); // track 1 through the return
     CHECK_NEAR(off[3000], 1.0f, 1e-6f); // track 3 through its chain and the return
+}
+
+// A group (a return) with a 400-frame chain sends into a return with a
+// 200-frame chain: the group's own output and its send through the return
+// land together, 600 frames late, alongside a plain track.
+TEST_CASE(routing_delay_compensation_through_a_group_send) {
+    EngineHandle e;
+    std::vector<float> imp(8000, 0.0f);
+    imp[0] = 0.5f;
+    const uint64_t a = load_asset(e, {imp});
+    RSession s;
+    s.audio(1, {clip(1, a, 2000, 0, 8000)}); // into the group
+    s.ret(2).devices = {clap_latency(20, 400)}; // the group
+    s.ret(4).devices = {clap_latency(40, 200)}; // the return it sends to
+    s.out(1, 2);
+    s.send(2, 4, 1.0f);
+    s.audio(5, {clip(5, a, 2000, 0, 8000)}); // straight to the master
+    REQUIRE(s.publish(e) == SE_OK);
+    se_pdc_report r{};
+    std::vector<se_pdc_track> tr(8);
+    std::size_t n = 0;
+    REQUIRE(se_pdc_report_get(e, &r, tr.data(), tr.size(), &n) == SE_OK);
+    CHECK_EQ(r.total_frames, 600u);
+    const auto l = play_left(e, 6000);
+    std::vector<std::size_t> nz;
+    for (std::size_t i = 0; i < l.size(); ++i)
+        if (l[i] != 0.0f) nz.push_back(i);
+    // The group (0.5), the group through the return (0.5) and track 5 (0.5).
+    REQUIRE(nz.size() == 1u);
+    CHECK_EQ(nz[0], std::size_t{2600});
+    CHECK_NEAR(l[2600], 1.5f, 1e-6f);
 }
 
 // A line fed silence only to play out its tail goes idle once the tail has

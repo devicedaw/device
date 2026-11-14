@@ -284,7 +284,7 @@ export struct MixerStrip {
     name: string,
     instrument: bool,
     is-return: bool,     // return strip: no R / I, no Sends section
-    is-group: bool,      // group strip: no R / I, no Sends section, a "Group" caption
+    is-group: bool,      // group strip: no R / I, a fold chevron by the name
     group-start: bool,   // first return strip (divider before it)
     color: color,
     selected: bool,
@@ -875,6 +875,8 @@ export global Studio {
     in property <string> sel-out-text: "Master";
     in property <[SendRow]> sel-sends;             // channel strip Sends tab: one slot per return
     in property <bool> sel-can-send;
+    // The selected track can pick its output (not a return or group track).
+    in property <bool> sel-can-route;
     in property <bool> can-add-return: true;       // fewer than the most return tracks
     in property <bool> route-menu-open;            // send options / Out / Add track menu
     in property <[ChoiceItem]> route-menu-items;

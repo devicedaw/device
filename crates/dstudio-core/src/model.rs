@@ -614,7 +614,7 @@ impl Project {
         let returns = kept;
         let return_ids: Vec<TrackId> = returns.iter().map(|t| t.id).collect();
         // Groups: kept while they hold no content and there is room for their bus next to the
-        // returns; otherwise they load as ordinary tracks.
+        // returns; otherwise they load as ordinary tracks. A group keeps its sends to returns.
         let mut buses = returns.len();
         for t in &mut ordinary {
             if t.is_group() {
@@ -627,7 +627,6 @@ impl Project {
                     t.input = None;
                     t.arm = false;
                     t.monitor = false;
-                    t.sends.clear();
                     t.output = None;
                 }
             }

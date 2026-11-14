@@ -805,9 +805,9 @@ component Inspector inherits Rectangle {
         x: 10px; y: Studio.sel-group ? 37px : 63px; width: 149px; height: 18px; border-radius: 9px;
         Text { x: 7.5px; text: "Out"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Text { x: 29.5px; width: 134px - self.x - 4px; text: Studio.sel-out-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
-        if Studio.sel-can-send: Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
+        if Studio.sel-can-route: Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
         accessible-role: combobox; accessible-label: "Out"; accessible-value: Studio.sel-out-text;
-        TouchArea { clicked => { if (Studio.sel-can-send) { Studio.open-out-menu(parent.absolute-position.x + 1px, (parent.absolute-position.y - Studio.menu-dy) + parent.height + 3px); } } }
+        TouchArea { clicked => { if (Studio.sel-can-route) { Studio.open-out-menu(parent.absolute-position.x + 1px, (parent.absolute-position.y - Studio.menu-dy) + parent.height + 3px); } } }
     }
     // Input / Sends tabs: 24 pt row, 12 pt bold, centred 24 pt apart; the Sends tab adds a "+"
     // (add a send) after its label. View state only (Studio.strip-tab, so review states can open
