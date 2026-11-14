@@ -90,6 +90,8 @@ jobs:
         run: shellcheck -S warning tools/ci/*.sh tools/release/*.sh tools/*.sh
       - name: Change detection (tools/ci/changes.sh)
         run: tools/ci/test-changes.sh
+      - name: Release notes extraction
+        run: tools/release/test-changelog-notes.sh
       - name: Release scanner lookup (tools/release/find-scanner.sh)
         run: tools/release/test-find-scanner.sh
       - name: Agent skills

@@ -180,7 +180,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Export | ✅ | |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
 | Windows and Linux audio | 🚧 | Linux streams run in CI on a headless PipeWire server; neither has run on a physical sound card; no ASIO |
-| Releases and branding | 🚧 | Packages are built (unsigned); code signing, original icons, a first tagged release |
+| Releases and branding | 🚧 | Packages are built and macOS signing is set up; original icons, Windows signing, a first tagged release ([CHANGELOG.md](CHANGELOG.md)) |
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
 

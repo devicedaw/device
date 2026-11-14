@@ -321,7 +321,7 @@ The macOS app's two architectures build side by side on separate runners and
 are joined with `lipo` in a third job. Each package carries the plugin scanner next to the app, where the app looks
 for it first, and is smoke-tested on its runner (installed, then started to
 render a screenshot). Pushing a tag `vX.Y.Z` builds them from `main` and
-creates a **draft** GitHub release with generated notes, a `SHA256SUMS.txt` and
+creates a **draft** GitHub release (see [Versions and releases](#versions-and-releases)), a `SHA256SUMS.txt` and
 a signed build provenance attestation for every package (check a download with
 `gh attestation verify <file> --repo devicedaw/device`); the tag must match the
 `version` in the root `Cargo.toml`. A manual run (Actions › Release › Run
@@ -342,6 +342,34 @@ Every other build is signed ad hoc, and macOS asks the user to allow it on
 first launch. The Windows packages are not signed yet,
 so SmartScreen warns on first run. The packaging scripts are in
 [`tools/release/`](../tools/release/).
+
+### Versions and releases
+
+Device uses [Semantic Versioning](https://semver.org/), staying on `0.x` while it is pre-alpha:
+
+- **Minor** (`0.1.0` to `0.2.0`): new features, or a change that breaks projects saved by an older version.
+- **Patch** (`0.1.0` to `0.1.1`): fixes only.
+- **Pre-releases**: `0.2.0-alpha.1`, `-beta.N` or `-rc.N`. They are published as GitHub pre-releases.
+
+The app version is the `version` in the root `Cargo.toml` (every crate shares it). The project file format has its
+own version number and changes only when the file format does, independently of the app version.
+
+[`CHANGELOG.md`](../CHANGELOG.md) is the user-facing list of changes, in
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. A pull request with a change users would notice
+adds a line under **Unreleased**. [`PROGRESS.md`](../PROGRESS.md) stays the detailed development log.
+
+To release:
+
+1. Open a release pull request that sets `version` in `Cargo.toml` (run `cargo check` so `Cargo.lock` follows) and
+   moves the Unreleased entries under a new `## [X.Y.Z] - YYYY-MM-DD` heading in `CHANGELOG.md`.
+2. Merge it, then tag that commit on `main` and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. The Release workflow checks that the tag matches `Cargo.toml`, is on `main` and has a changelog section, builds
+   and signs the packages (the macOS signing job waits for approval in the `release` environment), and creates a
+   draft release. Its notes are the changelog section followed by GitHub's generated list of pull requests.
+4. Review the draft and its packages, then publish it.
+
+The section for the notes is extracted by [`tools/release/changelog-notes.sh`](../tools/release/changelog-notes.sh),
+tested in CI by `tools/release/test-changelog-notes.sh`.
 
 ### Compatibility names
 
