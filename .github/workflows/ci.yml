@@ -92,6 +92,8 @@ jobs:
         run: tools/ci/test-changes.sh
       - name: Release notes extraction
         run: tools/release/test-changelog-notes.sh
+      - name: Release scanner lookup (tools/release/find-scanner.sh)
+        run: tools/release/test-find-scanner.sh
       - name: Agent skills
         run: python3 tools/agents/check_skills.py
       # Formatting is checked with a pinned toolchain (RUST_LINT_TOOLCHAIN,

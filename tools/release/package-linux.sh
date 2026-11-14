@@ -18,8 +18,7 @@ stage="$work/$name"
 mkdir -p "$stage/bin" "$stage/share/applications" "$out"
 
 install -m 755 "$release/device-studio" "$stage/bin/device-studio"
-scanner="$(ls -t "$release"/build/dstudio-engine-*/out/build/dstudio_plugin_scanner 2>/dev/null | head -1)"
-[ -n "$scanner" ] || { echo "plugin scanner not found under $release/build" >&2; exit 1; }
+scanner="$(bash "$root/tools/release/find-scanner.sh" "$release")"
 install -m 755 "$scanner" "$stage/bin/dstudio_plugin_scanner"
 strip --strip-debug "$stage/bin/device-studio" "$stage/bin/dstudio_plugin_scanner"
 for doc in LICENSE README.md; do

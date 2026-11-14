@@ -326,6 +326,12 @@ pub enum MenuAction {
     Enable,
     ShowInFinder,
     Rename,
+    /// Audio clips: rendered to a new track below (the clip editor's Resample).
+    Resample,
+    /// Audio clips: a new instrument track whose Sampler plays the clip (src/send_to_sampler.rs).
+    SendToSampler,
+    /// MIDI clips: the clip as a Standard MIDI File (src/midi_export.rs).
+    ExportMidi,
     Export,
     Transpose,
     Quantize,
@@ -422,6 +428,10 @@ pub struct Controller {
     /// Export dialog and the unsaved-changes prompt (src/dialogs.rs).
     pub export: crate::dialogs::ExportUi,
     pub clip_render: crate::clip_render::ClipRender,
+    /// Test hook: where the next Export MIDI writes, instead of asking with a file dialog.
+    pub midi_export_path: Option<std::path::PathBuf>,
+    /// Export MIDI waits for the file dialog the main loop runs unborrowed: (clip, suggested name).
+    pub midi_dialog_request: Option<(ClipId, String)>,
     pub unsaved_open: bool,
     /// A Live set to import once the unsaved-changes prompt is answered.
     pub(crate) pending_import: Option<crate::live_import::PendingImport>,
@@ -607,6 +617,8 @@ impl Controller {
             project_dir: None,
             export: Default::default(),
             clip_render: Default::default(),
+            midi_export_path: None,
+            midi_dialog_request: None,
             unsaved_open: false,
             pending_import: None,
             updates_open: false,

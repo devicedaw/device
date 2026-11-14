@@ -13505,6 +13505,8 @@ fn clip_render_steps() -> Vec<Step> {
         joined_before: usize,
         assets_now: usize,
         undo_now: Option<String>,
+        sampler_tracks: usize,
+        sampler_clip: u64,
     }
     let st = Rc::new(RefCell::new(St::default()));
     let k: Vec<Rc<RefCell<St>>> = (0..40).map(|_| st.clone()).collect();
@@ -13513,6 +13515,7 @@ fn clip_render_steps() -> Vec<Step> {
     let (s1, s2, s3, s4, s5, s6, s7, s8, s9, s10) = (next(), next(), next(), next(), next(), next(), next(), next(), next(), next());
     let (s11, s12, s13, s14, s15, s16, s17, s18) = (next(), next(), next(), next(), next(), next(), next(), next());
     let (s19, s20, s21, s22, s23, s24, s25, s26) = (next(), next(), next(), next(), next(), next(), next(), next());
+    let (s27, s28, s29, s30, s31, s32, s33) = (next(), next(), next(), next(), next(), next(), next());
     vec![
         DoC(
             "clip render: scratch folder, two 2 s sine WAVs; import the first at beat 4 on a new track",
@@ -13784,6 +13787,101 @@ fn clip_render_steps() -> Vec<Step> {
                 (rate == 48_000 && ch == 2 && p > floor && (96_000..=192_000).contains(&(s.len() / 2)) && same && !c.clip_render.busy())
                     .then_some(())
                     .ok_or(format!("rate {rate} ch {ch} frames {} peak {p} (floor {floor}) same {same}", s.len() / 2))
+            }),
+        ),
+        DoC(
+            "export midi: right-click the MIDI clip, with Export MIDI pointed at a temp file",
+            Box::new(move |a, ctl| {
+                let id = ClipId(s27.borrow().midi_clip);
+                ctl.borrow_mut().midi_export_path = Some(dir().join("export").join("clip.mid"));
+                let (x, y) = clip_in_view(a, ctl, id);
+                right_click(a, x, y);
+            }),
+        ),
+        Check(
+            "export midi: the menu lists Export MIDI between Show in Finder and Export audio",
+            Box::new(|c, _| {
+                let labels: Vec<&str> = c.menu.items.iter().map(|(a, _)| a.label()).collect();
+                let at = |l: &str| labels.iter().position(|x| *x == l);
+                let ok = c.menu.open
+                    && matches!((at("Show in Finder"), at("Export MIDI"), at("Export audio to Finder")), (Some(a), Some(b), Some(e)) if a + 1 == b && b + 1 == e)
+                    && c.menu.items.iter().any(|&(a, en)| a == crate::controller::MenuAction::ExportMidi && en);
+                ok.then_some(()).ok_or(format!("{labels:?}"))
+            }),
+        ),
+        Do("export midi: choose Export MIDI", Box::new(|a| click_entry(a, "Export MIDI"))),
+        Check(
+            "export midi: the file is a format 0 Standard MIDI File with the clip's notes",
+            Box::new(move |c, _| {
+                let f = std::fs::read(dir().join("export").join("clip.mid")).map_err(|e| e.to_string())?;
+                let notes = c.project().midi_clip(ClipId(s28.borrow().midi_clip)).map_or(0, |m| m.playing_notes().len());
+                let ons = f.windows(1).filter(|w| w[0] == 0x90).count();
+                (f.starts_with(b"MThd") && f[8..10] == [0, 0] && &f[14..18] == b"MTrk" && ons >= notes && !c.menu.open)
+                    .then_some(())
+                    .ok_or(format!("{} bytes, {ons} note-ons for {notes} notes", f.len()))
+            }),
+        ),
+        DoC(
+            "send to sampler: right-click the first audio clip",
+            Box::new(move |a, ctl| {
+                let mut s = s29.borrow_mut();
+                s.sampler_tracks = ctl.borrow().project().tracks.len();
+                let id = ClipId(s.first);
+                drop(s);
+                let (x, y) = clip_in_view(a, ctl, id);
+                right_click(a, x, y);
+            }),
+        ),
+        Check(
+            "send to sampler: Resample and Send to Sampler follow Rename on an audio clip; no Export MIDI",
+            Box::new(move |c, _| {
+                s33.borrow_mut().sampler_clip = c.menu.clip.map_or(0, |k| k.0);
+                let labels: Vec<&str> = c.menu.items.iter().map(|(a, _)| a.label()).collect();
+                let at = |l: &str| labels.iter().position(|x| *x == l);
+                let ok = c.menu.open
+                    && matches!((at("Rename…"), at("Resample"), at("Send to Sampler")), (Some(r), Some(a), Some(b)) if r + 1 == a && a + 1 == b)
+                    && at("Export MIDI").is_none();
+                ok.then_some(()).ok_or(format!("{labels:?}"))
+            }),
+        ),
+        Do("send to sampler: choose Send to Sampler", Box::new(|a| click_entry(a, "Send to Sampler"))),
+        Check(
+            "send to sampler: a new instrument track below, selected, whose Sampler holds the clip's file",
+            Box::new(move |c, _| {
+                let s = s30.borrow();
+                let p = c.project();
+                // The clip under the pointer (the menu's clip).
+                let (ti, ci) = p.find_clip(ClipId(s.sampler_clip)).ok_or("clip gone")?;
+                let clip = &p.tracks[ti].clips[ci];
+                let t = p.tracks.get(ti + 1).ok_or("no track below")?;
+                let d = t.instrument_plugin.as_ref().ok_or("no instrument")?;
+                let ok = p.tracks.len() == s.sampler_tracks + 1
+                    && t.kind == TrackKind::Instrument
+                    && d.plugin.id == "sampler-steam"
+                    && d.samples.first().is_some_and(|x| x.asset == clip.asset)
+                    && c.selected_track == Some(t.id)
+                    && c.doc.undo_label() == Some("Send to Sampler");
+                ok.then_some(()).ok_or(format!(
+                    "{} tracks (was {}), plugin {}, sample {:?} clip asset {:?}, selected {:?} new {:?}, undo {:?}",
+                    p.tracks.len(),
+                    s.sampler_tracks,
+                    d.plugin.id,
+                    d.samples.first().map(|x| x.asset),
+                    clip.asset,
+                    c.selected_track,
+                    t.id,
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        Do("send to sampler: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check(
+            "send to sampler: undo removes the track in one step",
+            Box::new(move |c, _| {
+                let n = c.project().tracks.len();
+                let sampler =
+                    c.project().tracks.iter().any(|t| t.instrument_plugin.as_ref().is_some_and(|d| d.plugin.id == "sampler-steam"));
+                (n == s31.borrow().sampler_tracks && !sampler && s32.borrow().first != 0).then_some(()).ok_or(format!("{n} tracks"))
             }),
         ),
         DoC(
