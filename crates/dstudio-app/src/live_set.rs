@@ -1093,10 +1093,10 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
     }
     let set = child(root, "LiveSet").ok_or("no LiveSet")?;
     require(set, SET_PATHS, "LiveSet")?;
-    if let Some(dir) = project_dir {
-        if !dir.join(PROJECT_INFO_DIR).is_dir() {
-            return Err(format!("the folder has no \"{PROJECT_INFO_DIR}\", so Live would show every sample offline"));
-        }
+    if let Some(dir) = project_dir
+        && !dir.join(PROJECT_INFO_DIR).is_dir()
+    {
+        return Err(format!("the folder has no \"{PROJECT_INFO_DIR}\", so Live would show every sample offline"));
     }
     let scenes = path(set, "Scenes").map_or(0, |s| s.children().filter(|c| c.has_tag_name("Scene")).count());
     if scenes == 0 {
