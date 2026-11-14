@@ -24,8 +24,9 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Path $stage | Out-Null
 
 Copy-Item (Join-Path $release 'device-studio.exe') $stage
+# Cargo 1.99 and earlier: build\dstudio-engine-<hash>\out; 1.100 and later: build\dstudio-engine\<hash>\out.
 $scanner = Get-ChildItem -Path (Join-Path $release 'build') -Filter 'dstudio_plugin_scanner.exe' -Recurse |
-    Where-Object { $_.FullName -match 'dstudio-engine-[^\\]+\\out\\build\\' } |
+    Where-Object { $_.FullName -match 'dstudio-engine(-[^\\]+|\\[^\\]+)\\out\\build\\' } |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $scanner) { throw 'plugin scanner not found under the release build directory' }
 Copy-Item $scanner.FullName $stage

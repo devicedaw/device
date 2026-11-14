@@ -19,7 +19,7 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$out"
 
 scanner_of() {  # the scanner build.rs built for one target triple
-  ls -t "$target/$1"/release/build/dstudio-engine-*/out/build/dstudio_plugin_scanner 2>/dev/null | head -1
+  bash "$root/tools/release/find-scanner.sh" "$target/$1/release" 2>/dev/null || true
 }
 if [ -n "${DSTUDIO_MACOS_ARM_DIR:-}" ] || [ -n "${DSTUDIO_MACOS_X86_DIR:-}" ]; then
   arm_app="${DSTUDIO_MACOS_ARM_DIR:?set both DSTUDIO_MACOS_ARM_DIR and DSTUDIO_MACOS_X86_DIR}/device-studio"
