@@ -12249,6 +12249,40 @@ fn group_steps() -> Vec<Step> {
             }),
         ),
         DoC(
+            "groups: select the group, its strip's Sends +: a new return, send the group to it at -6 dB",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let Some(g) = group(&c).map(|g| g.id) else { return };
+                c.select_track(g);
+                if let Some(r) = c.sends_add_return(g) {
+                    c.set_send_level(g, r, 0.5);
+                    c.send_gesture_end();
+                }
+            }),
+        ),
+        Check(
+            "groups: the group sends into the return, its strip shows Sends but no Out menu",
+            Box::new(|c, a| {
+                let g = group(c).ok_or("no group")?;
+                let r = c.project().returns().last().map(|r| r.id).ok_or("no return")?;
+                let st = a.global::<Studio>();
+                (g.sends.len() == 1
+                    && g.sends[0].target == r
+                    && g.sends[0].level == 0.5
+                    && c.doc.undo_label() == Some("Send Level Change")
+                    && st.get_sel_can_send()
+                    && !st.get_sel_can_route())
+                .then_some(())
+                .ok_or(format!(
+                    "sends {:?} undo {:?} can send {} can route {}",
+                    g.sends,
+                    c.doc.undo_label(),
+                    st.get_sel_can_send(),
+                    st.get_sel_can_route()
+                ))
+            }),
+        ),
+        DoC(
             "groups: Ungroup",
             Box::new(|_, ctl| {
                 let mut c = ctl.borrow_mut();

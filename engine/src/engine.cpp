@@ -1775,18 +1775,23 @@ void Engine::plan_pdc(RenderGraph& g) const {
     // of the tracks feeding it, and reaches the master at in_r + lat_r. The
     // master's L is the latest arrival. Muted tracks count, so mute and solo
     // never shift timing.
+    // A return that sends into another return (a group's sends) feeds it at
+    // its own arrival plus its chain, so buses are visited in processing order.
     std::vector<uint64_t> bus_in(g.bus_count, 0);
-    for (std::size_t t = 0; t < track_count; ++t) {
-        const TrackNode& node = g.tracks[t];
-        if (node.out_bus >= 0) bus_in[static_cast<std::size_t>(node.out_bus)] = std::max(bus_in[static_cast<std::size_t>(node.out_bus)], lat(t));
-        for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s) {
-            const auto b = static_cast<std::size_t>(g.sends[s].bus);
-            bus_in[b] = std::max(bus_in[b], lat(t));
-        }
-    }
     const auto input_of = [&](const TrackNode& node) -> uint64_t {
         return node.bus >= 0 ? bus_in[static_cast<std::size_t>(node.bus)] : 0;
     };
+    const bool ordered = g.order.size() == track_count;
+    for (std::size_t k = 0; k < track_count; ++k) {
+        const std::size_t t = ordered ? g.order[k] : k;
+        const TrackNode& node = g.tracks[t];
+        const uint64_t ready = input_of(node) + lat(t);
+        if (node.out_bus >= 0) bus_in[static_cast<std::size_t>(node.out_bus)] = std::max(bus_in[static_cast<std::size_t>(node.out_bus)], ready);
+        for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s) {
+            const auto b = static_cast<std::size_t>(g.sends[s].bus);
+            bus_in[b] = std::max(bus_in[b], ready);
+        }
+    }
     uint64_t total = 0;
     for (std::size_t t = 0; t < track_count; ++t)
         if (g.tracks[t].out_bus < 0) total = std::max(total, input_of(g.tracks[t]) + lat(t));

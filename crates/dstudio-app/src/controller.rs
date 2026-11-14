@@ -2376,7 +2376,7 @@ impl Controller {
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                let n = if t.is_bus() { 0 } else { slots };
+                let n = if t.is_return() { 0 } else { slots };
                 send_first += n;
                 (i, t, send_first - n, n)
             })
