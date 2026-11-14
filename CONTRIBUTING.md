@@ -51,6 +51,7 @@ clang, MSVC and GCC, so please build on more than one compiler if you can, or ch
 - **Performance:** anything that could affect performance (especially the audio thread) includes benchmark results
   before and after. Extend the existing benchmarks (`engine/bench`, `crates/*/benches`) if none cover your change. The
   audio thread must never allocate, lock or wait.
+- **Changelog:** a change users would notice adds a line under Unreleased in [CHANGELOG.md](CHANGELOG.md).
 - **Docs:** keep [README.md](README.md) and `docs/` accurate when your change affects what they describe (see README ›
   Development › Keeping this README up to date).
 - **Original work only.** Do not paste code, artwork, icons, fonts, presets or samples from other products, and only add
