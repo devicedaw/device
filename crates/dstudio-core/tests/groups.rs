@@ -34,7 +34,7 @@ fn a_group_sits_among_the_ordinary_tracks_and_takes_outputs() {
 }
 
 #[test]
-fn a_group_refuses_clips_sends_an_output_and_arming() {
+fn a_group_refuses_clips_an_output_and_arming() {
     let mut d = Document::new(Project::default());
     let g = add(&mut d, TrackKind::Group, "Group 1", Some(0));
     let g2 = add(&mut d, TrackKind::Group, "Group 2", Some(0));
@@ -42,12 +42,31 @@ fn a_group_refuses_clips_sends_an_output_and_arming() {
     let before = d.project().clone();
     assert!(d.execute(Command::SetTrackOutput { track: g, output: Some(g2) }, Origin::User).is_err());
     assert!(d.execute(Command::SetTrackOutput { track: g, output: Some(r) }, Origin::User).is_err());
-    assert!(d.execute(Command::SetSends { track: g, sends: vec![TrackSend::new(r)] }, Origin::User).is_err());
     assert!(d.execute(Command::SetTrackArm { track: g, arm: true }, Origin::User).is_err());
     // Sends go to returns only, never to a group.
     let a = d.project().tracks.iter().find(|t| t.kind == TrackKind::Audio).unwrap().id;
     assert!(d.execute(Command::SetSends { track: a, sends: vec![TrackSend::new(g)] }, Origin::User).is_err());
     assert_eq!(d.project(), &before);
+}
+
+#[test]
+fn a_group_sends_into_a_return_but_a_return_does_not_send() {
+    let mut d = Document::new(Project::default());
+    let g = add(&mut d, TrackKind::Group, "Group 1", Some(0));
+    let r = add_return(&mut d);
+    let r2 = add_return(&mut d);
+    let mut s = TrackSend::new(r);
+    s.level = 0.5;
+    d.execute(Command::SetSends { track: g, sends: vec![s] }, Origin::User).unwrap();
+    assert_eq!(d.project().track(g).unwrap().sends.len(), 1);
+    assert!(d.execute(Command::SetSends { track: r, sends: vec![TrackSend::new(r2)] }, Origin::User).is_err());
+    // A saved group send survives loading.
+    let mut p = d.project().clone();
+    p.sanitize_routing();
+    assert_eq!(p.track(g).unwrap().sends[0].target, r);
+    assert_eq!(p.track(g).unwrap().sends[0].level, 0.5);
+    d.undo().unwrap();
+    assert!(d.project().track(g).unwrap().sends.is_empty());
 }
 
 #[test]

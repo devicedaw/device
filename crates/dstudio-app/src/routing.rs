@@ -148,7 +148,7 @@ impl Controller {
     /// Create a return track and a send to it from `track`, in one undo step ("Add Send").
     pub fn new_return_with_send(&mut self, track: TrackId) -> Option<TrackId> {
         let p = self.project();
-        let t = p.track(track).filter(|t| !t.is_bus())?;
+        let t = p.track(track).filter(|t| !t.is_return())?;
         if p.returns().count() >= MAX_RETURNS {
             self.set_status(format!("A project has at most {MAX_RETURNS} return tracks"), 3);
             return None;
@@ -201,10 +201,10 @@ impl Controller {
         self.set_sends(if pre { "Send Pre-Fader" } else { "Send Post-Fader" }, track, sends)
     }
 
-    /// `track` can send to `target`: an ordinary track and an existing return track.
+    /// `track` can send to `target`: an ordinary or group track and an existing return track.
     fn can_send(&self, track: TrackId, target: TrackId) -> bool {
         let p = self.project();
-        p.track(track).is_some_and(|t| !t.is_bus()) && p.track(target).is_some_and(|r| r.is_return())
+        p.track(track).is_some_and(|t| !t.is_return()) && p.track(target).is_some_and(|r| r.is_return())
     }
 
     /// Set a send's level (linear gain, clamped to −∞..+6 dB). A silent slot (no send stored yet)
@@ -262,7 +262,7 @@ impl Controller {
     /// The "+" beside Sends (channel strip Sends tab, mixer strip): a new return track, its slot
     /// silent on every track; `track` stays selected.
     pub fn sends_add_return(&mut self, track: TrackId) -> Option<TrackId> {
-        if self.project().track(track).is_none_or(|t| t.is_bus()) {
+        if self.project().track(track).is_none_or(|t| t.is_return()) {
             return None;
         }
         self.add_return_track(false)
@@ -378,7 +378,7 @@ impl Controller {
     /// send, or a silent one.
     pub(crate) fn send_rows(&self, track: &Track) -> Vec<SendRow> {
         let p = self.project();
-        if track.is_bus() {
+        if track.is_return() {
             return Vec::new();
         }
         p.returns()
@@ -410,7 +410,7 @@ impl Controller {
         // The pill is lit while return rows actually show (not in a project without returns).
         s.set_returns_shown(self.returns_shown() && p.returns().next().is_some());
         s.set_sends_open(self.routing.sends_open);
-        let rows: Vec<SendRow> = p.tracks.iter().filter(|t| !t.is_bus()).flat_map(|t| self.send_rows(t)).collect();
+        let rows: Vec<SendRow> = p.tracks.iter().filter(|t| !t.is_return()).flat_map(|t| self.send_rows(t)).collect();
         s.set_strip_sends_max(p.returns().count() as i32);
         sync_model(&self.routing.strip_sends_model, rows);
         let sel = self.selected_track.and_then(|id| p.track(id));
@@ -424,7 +424,8 @@ impl Controller {
         };
         s.set_sel_out_text(out.into());
         sync_model(&self.routing.sel_sends_model, sel.map(|t| self.send_rows(t)).unwrap_or_default());
-        s.set_sel_can_send(sel.is_some_and(|t| !t.is_bus()));
+        s.set_sel_can_send(sel.is_some_and(|t| !t.is_return()));
+        s.set_sel_can_route(sel.is_some_and(|t| !t.is_bus()));
         s.set_can_add_return(p.returns().count() < MAX_RETURNS);
         match &self.routing.menu {
             Some(m) => {

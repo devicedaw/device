@@ -1394,9 +1394,15 @@ int32_t se_preview_get(se_engine* engine, se_preview_info* out);
  * Validation (else SE_ERR_INVALID_ARG): arrays non-NULL when counted; route
  * and send track ids known; a track routed at most once; at most
  * SE_MAX_RETURNS returns; a return has no clips, notes, instrument, input,
- * arm or monitoring, no output other than the master and no sends; an output
- * or send target is a return track other than the track itself; a track sends
- * to a return at most once; gain finite in 0..4. */
+ * arm or monitoring and no output other than the master; an output or send
+ * target is a return track other than the track itself; a track sends to a
+ * return at most once; gain finite in 0..4.
+ *
+ * Sends between returns (a later addition, for group tracks, which the app
+ * publishes as returns): a return may send into other returns as long as the
+ * sends between returns form no loop. Its sends follow the rule for its main
+ * output under mute and solo, and delay compensation counts the return's own
+ * arrival and chain before the return it feeds. */
 #define SE_MAX_RETURNS 16
 
 typedef struct se_track_route {

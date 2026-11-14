@@ -1553,8 +1553,12 @@ fn kind_name(k: TrackKind) -> &'static str {
 fn validate_routing(p: &Project, id: TrackId, kind: TrackKind, sends: &[TrackSend], output: Option<TrackId>) -> Result<(), EditError> {
     let is_return_track = |t: TrackId| t != id && p.track(t).is_some_and(|t| t.is_return());
     let is_bus_track = |t: TrackId| t != id && p.track(t).is_some_and(|t| t.is_bus());
-    if matches!(kind, TrackKind::Return | TrackKind::Group) && (!sends.is_empty() || output.is_some()) {
-        return Err(invalid("track", "a return or group track has no sends and plays into the master"));
+    // Group tracks may send into returns (returns never send, so sends form no loop).
+    if kind == TrackKind::Return && !sends.is_empty() {
+        return Err(invalid("track", "a return track has no sends"));
+    }
+    if matches!(kind, TrackKind::Return | TrackKind::Group) && output.is_some() {
+        return Err(invalid("track", "a return or group track plays into the master"));
     }
     for (i, s) in sends.iter().enumerate() {
         if !is_return_track(s.target) {

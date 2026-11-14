@@ -482,8 +482,8 @@ int32_t apply_routing(RenderGraph& g, const se_session_desc_v9& desc9, std::stri
         auto& list = per_track[static_cast<std::size_t>(t)];
         const std::string who = "send from track " + std::to_string(s.track_id) + " to " + std::to_string(s.return_track_id);
         const int32_t bus = bus_of(s.return_track_id, s.track_id);
-        if (g.tracks[static_cast<std::size_t>(t)].is_return || bus < 0) {
-            err = who + ": sends go from an ordinary track to a return track";
+        if (bus < 0) {
+            err = who + ": sends go into a return track other than the sender";
             return SE_ERR_INVALID_ARG;
         }
         if (!std::isfinite(s.gain) || s.gain < 0.0f || s.gain > 4.0f) {
@@ -508,6 +508,39 @@ int32_t apply_routing(RenderGraph& g, const se_session_desc_v9& desc9, std::stri
         node.send_count = static_cast<uint32_t>(per_track[t].size());
         g.sends.insert(g.sends.end(), per_track[t].begin(), per_track[t].end());
     }
+    // A return may send into other returns (a group track's sends), but the
+    // buses must not form a cycle: depth-first over return -> return sends.
+    {
+        std::vector<int32_t> bus_track(g.bus_count, -1);
+        for (std::size_t t = 0; t < n; ++t)
+            if (g.tracks[t].bus >= 0) bus_track[static_cast<std::size_t>(g.tracks[t].bus)] = static_cast<int32_t>(t);
+        std::vector<uint8_t> state(g.bus_count, 0); // 0 new, 1 on the path, 2 done
+        std::vector<std::pair<uint32_t, uint32_t>> stack; // (bus, next send to look at)
+        for (uint32_t b0 = 0; b0 < g.bus_count; ++b0) {
+            if (state[b0] != 0) continue;
+            stack.push_back({b0, 0});
+            state[b0] = 1;
+            while (!stack.empty()) {
+                auto& [b, i] = stack.back();
+                const TrackNode& node = g.tracks[static_cast<std::size_t>(bus_track[b])];
+                if (i == node.send_count) {
+                    state[b] = 2;
+                    stack.pop_back();
+                    continue;
+                }
+                const auto to = static_cast<uint32_t>(g.sends[node.send_begin + i++].bus);
+                if (state[to] == 1) {
+                    err = "sends between return track " + std::to_string(node.track_id) + " and " +
+                          std::to_string(g.tracks[static_cast<std::size_t>(bus_track[to])].track_id) + " form a loop";
+                    return SE_ERR_INVALID_ARG;
+                }
+                if (state[to] == 0) {
+                    state[to] = 1;
+                    stack.push_back({to, 0});
+                }
+            }
+        }
+    }
     // Mute and solo.
     bool solo_track = false, solo_return = false;
     for (std::size_t t = 0; t < n; ++t)
@@ -518,7 +551,7 @@ int32_t apply_routing(RenderGraph& g, const se_session_desc_v9& desc9, std::stri
         const bool on = !static_mute(td);
         if (node.is_return) {
             node.main_on = on && (!solo_return || td.solo != 0);
-            node.send_live = false;
+            node.send_live = node.main_on;
         } else {
             node.send_live = on && (!solo_track || td.solo != 0);
             node.main_on = node.out_bus >= 0 ? node.send_live : on && ((!solo_track && !solo_return) || td.solo != 0);

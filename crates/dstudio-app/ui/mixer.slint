@@ -113,7 +113,7 @@ component Strip inherits Rectangle {
     Rectangle { x: 8 * root.u; y: root.master ? root.gain-y : root.sends-y; width: 92 * root.u; height: 1 * root.u; background: #ffffff14; }
     // Sends: title + chevron (expands / collapses the Sends section of every strip) and "+"
     // (a new return track, silent on every strip). Return strips have no sends.
-    if !root.master && !root.s.is-return && !root.s.is-group: Rectangle {
+    if !root.master && !root.s.is-return: Rectangle {
         x: 8 * root.u; y: root.sends-y; width: 92 * root.u; height: 22 * root.u;
         Text { x: 2 * root.u; y: 5 * root.u; height: 14 * root.u; text: "Sends"; color: sends-ta.has-hover ? #ffffffb3 : #ffffff66; font-size: 10 * root.u; font-weight: 600; letter-spacing: -0.2 * root.u; vertical-alignment: center; }
         Icon { x: 35.5 * root.u; y: 7.5 * root.u; width: 9 * root.u; height: 9 * root.u; d: Studio.sends-open ? Icons.chevron-down : Icons.chevron-up; ink: sends-ta.has-hover ? #ffffffb3 : #ffffff66; stroke-width: 1.4px; }
@@ -134,7 +134,7 @@ component Strip inherits Rectangle {
     // Expanded Sends section: one row per return track, stacked upward from the Sends row (the
     // same rows on every strip, so they line up across strips). It
     // takes at most the room under the insert pill; more rows scroll with the wheel.
-    if Studio.sends-open && !root.master && !root.s.is-return && !root.s.is-group: sends-box := Rectangle {
+    if Studio.sends-open && !root.master && !root.s.is-return: sends-box := Rectangle {
         property <length> content-h: (Studio.strip-sends-max * 20 + 4) * root.u;
         property <length> max-scroll: max(0px, self.content-h - self.height);
         property <length> scroll: min(self.scroll-raw, self.max-scroll);
@@ -158,9 +158,9 @@ component Strip inherits Rectangle {
             height: parent.height * parent.height / sends-box.content-h; border-radius: 1px; background: #ffffff33;
         }
     }
-    // Return strips: a "Return" caption where the Sends row sits on track strips.
-    if root.s.is-return || root.s.is-group: Text {
-        x: 10 * root.u; y: root.sends-y + 5 * root.u; height: 14 * root.u; text: root.s.is-group ? "Group" : "Return"; color: #ffffff4d; font-size: 10 * root.u; font-weight: 600; letter-spacing: -0.2 * root.u; vertical-alignment: center;
+    // Return strips: a "Return" caption where the Sends row sits on track and group strips.
+    if root.s.is-return: Text {
+        x: 10 * root.u; y: root.sends-y + 5 * root.u; height: 14 * root.u; text: "Return"; color: #ffffff4d; font-size: 10 * root.u; font-weight: 600; letter-spacing: -0.2 * root.u; vertical-alignment: center;
     }
     // Gain row: pan knob (32 pt cell, 5 pt in) and the gain readout pill.
     Knob {

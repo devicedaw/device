@@ -573,13 +573,14 @@ fn parse_args() -> Result<Args, String> {
                     a.open_mixer = true;
                     a.returns_review = 1;
                 }
-                st @ ("review-groups" | "review-groups-folded" | "review-groups-mixer") => {
+                st @ ("review-groups" | "review-groups-folded" | "review-groups-mixer" | "review-group-sends") => {
                     a.reference_default = true;
-                    a.open_mixer = st == "review-groups-mixer";
+                    a.open_mixer = matches!(st, "review-groups-mixer" | "review-group-sends");
                     a.groups_review = match st {
                         "review-groups" => 1,
                         "review-groups-folded" => 2,
-                        _ => 3,
+                        "review-groups-mixer" => 3,
+                        _ => 4,
                     };
                 }
                 "review-returns-strip" => {
@@ -2224,6 +2225,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             && args.groups_review == 2
         {
             c.toggle_group_folded(g);
+        }
+        // The group sends half its signal into a new return.
+        if args.groups_review == 4
+            && let Some(g) = c.project().tracks.iter().find(|t| t.is_group()).map(|t| t.id)
+            && let Some(r) = c.add_return_track(false)
+        {
+            c.set_send_level(g, r, 0.5);
+            c.routing.sends_open = true;
+            c.send_gesture_end();
+            c.select_track(g);
         }
     }
     if args.strip_review {
