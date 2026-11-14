@@ -748,6 +748,7 @@ impl Controller {
                 .collect(),
         };
         let xml = live_set::to_xml(&set);
+        live_set::mark_project(folder).map_err(|e| e.to_string())?;
         live_set::validate(&xml, Some(folder)).map_err(|e| format!("the Live set failed its structure check: {e}"))?;
         let als = folder.join(format!("{name}.als"));
         let bytes = live_set::gzip(&xml).map_err(|e| e.to_string())?;
