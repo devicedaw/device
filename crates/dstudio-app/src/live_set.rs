@@ -20,6 +20,16 @@ const SCENES: usize = 8;
 const ENVELOPE_START: &str = "-63072000";
 const MIDI_CONTROLLERS: usize = 131;
 
+/// The folder that makes a directory a Live project. Live resolves a sample's project-relative
+/// path (RelativePathType 3) only when the set sits next to it; without it every sample is
+/// offline, even with a correct absolute path. Live 12 opens a project whose folder is empty.
+pub const PROJECT_INFO_DIR: &str = "Ableton Project Info";
+
+/// Marks "folder" as a Live project by creating its [PROJECT_INFO_DIR].
+pub fn mark_project(folder: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(folder.join(PROJECT_INFO_DIR))
+}
+
 pub struct LiveSet {
     pub bpm: f64,
     pub numerator: u32,
@@ -1073,7 +1083,8 @@ fn require(n: roxmltree::Node, paths: &[&str], what: &str) -> Result<(), String>
 }
 
 /// Parse a written set back and check it against Live's structure (see the module docs).
-/// "project_dir" resolves the samples' relative paths; None skips the file check.
+/// "project_dir" resolves the samples' relative paths and must be marked as a Live project
+/// ([mark_project]); None skips the file checks.
 pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, String> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| format!("not well-formed XML: {e}"))?;
     let root = doc.root_element();
@@ -1082,6 +1093,11 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
     }
     let set = child(root, "LiveSet").ok_or("no LiveSet")?;
     require(set, SET_PATHS, "LiveSet")?;
+    if let Some(dir) = project_dir {
+        if !dir.join(PROJECT_INFO_DIR).is_dir() {
+            return Err(format!("the folder has no \"{PROJECT_INFO_DIR}\", so Live would show every sample offline"));
+        }
+    }
     let scenes = path(set, "Scenes").map_or(0, |s| s.children().filter(|c| c.has_tag_name("Scene")).count());
     if scenes == 0 {
         return Err("no scenes".into());
@@ -1428,5 +1444,24 @@ mod tests {
             assert!(validate(b, None).is_err(), "case {i} passed");
         }
         assert!(validate(&xml, Some(Path::new("/nonexistent"))).is_err(), "missing samples are caught");
+    }
+
+    #[test]
+    fn samples_resolve_only_inside_a_marked_project() {
+        // Live 12 shows project-relative samples offline unless the set's folder holds
+        // "Ableton Project Info" (found by opening an export in Live).
+        let dir = std::env::temp_dir().join(format!("dstudio-live-project-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = sample_set();
+        let SetContent::Audio(clips) = &mut s.tracks[0].content else { unreachable!() };
+        let wav = dir.join(&clips[0].relative_path);
+        std::fs::create_dir_all(wav.parent().unwrap()).unwrap();
+        std::fs::write(&wav, [0u8; 44]).unwrap();
+        let xml = to_xml(&s);
+        let err = validate(&xml, Some(&dir)).unwrap_err();
+        assert!(err.contains(PROJECT_INFO_DIR), "{err}");
+        mark_project(&dir).unwrap();
+        assert!(validate(&xml, Some(&dir)).is_ok());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
