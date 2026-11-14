@@ -8,10 +8,13 @@ name: Release
 #   Linux    Device-<version>-linux-x86_64.tar.gz
 #            Device-<version>-linux-aarch64.tar.gz
 #
-# Releasing: set `version` in the root Cargo.toml to X.Y.Z, merge that to main, then push
-# the tag vX.Y.Z on that commit. The tag must be on main and match Cargo.toml, or nothing
-# builds. The release is created as a draft with generated notes; review the packages and
-# publish it by hand.
+# Releasing (docs/building.md > Versions and releases): a release PR sets `version` in the
+# root Cargo.toml to X.Y.Z (SemVer, 0.x while pre-alpha; X.Y.Z-alpha.N, -beta.N or -rc.N for a
+# pre-release) and moves CHANGELOG.md's Unreleased entries under `## [X.Y.Z] - date`. Merge it,
+# then push the tag vX.Y.Z on that commit. The tag must be on main, match Cargo.toml and have a
+# changelog section, or nothing builds. The release is created as a draft whose notes are that
+# section followed by GitHub's generated list of pull requests; a pre-release version is
+# marked as a pre-release. Review the packages and publish it by hand.
 #
 # Other runs build the packages without releasing anything (download them from the run's
 # artifacts):
@@ -73,6 +76,12 @@ jobs:
               echo "::error::tag $GITHUB_REF_NAME does not match the Cargo.toml version $version"
               exit 1
             fi
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+              echo "::error::version $version is not X.Y.Z or X.Y.Z-alpha.N / -beta.N / -rc.N"
+              exit 1
+            fi
+            bash tools/release/changelog-notes.sh "$version" > /dev/null \
+              || { echo "::error::CHANGELOG.md has no section for $version"; exit 1; }
             git fetch --no-tags origin main:refs/remotes/origin/main
             if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
               echo "::error::tag $GITHUB_REF_NAME is not on main; releases are built from main only"
@@ -397,6 +406,12 @@ jobs:
       id-token: write # sign the build provenance (Sigstore, through GitHub's OIDC token)
       attestations: write # store the provenance with the repository
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            CHANGELOG.md
+            tools/release
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
@@ -417,10 +432,17 @@ jobs:
       - name: Create the draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
+          # The changelog section first; --generate-notes appends GitHub's list of pull requests.
+          bash tools/release/changelog-notes.sh "$VERSION" > "$RUNNER_TEMP/notes.md"
+          prerelease=()
+          case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
-            --title "Device ${{ needs.version.outputs.version }}" \
+            "${prerelease[@]}" \
+            --title "Device $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
             --generate-notes \
             --verify-tag
