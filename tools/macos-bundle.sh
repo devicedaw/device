@@ -15,7 +15,7 @@ exe="${DSTUDIO_APP_EXE:-$release/device-studio}"
 scanner="${DSTUDIO_SCANNER_EXE:-}"
 if [ -z "$scanner" ]; then
   # build.rs builds the scanner in the engine's CMake tree under target/.../build.
-  scanner="$(ls -t "$(dirname "$exe")"/build/dstudio-engine-*/out/build/dstudio_plugin_scanner 2>/dev/null | head -1 || true)"
+  scanner="$(bash "$(dirname "$0")/release/find-scanner.sh" "$(dirname "$exe")" 2>/dev/null || true)"
 fi
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 app="$out/Device.app"

@@ -130,12 +130,8 @@ jobs:
           set -euo pipefail
           mkdir -p "build/macos-${{ matrix.arch }}"
           cp "target/${{ matrix.triple }}/release/device-studio" "build/macos-${{ matrix.arch }}/"
-          scanners=(target/${{ matrix.triple }}/release/build/dstudio-engine-*/out/build/dstudio_plugin_scanner)
-          if [ "${#scanners[@]}" -ne 1 ] || [ ! -f "${scanners[0]}" ]; then
-            echo "expected one plugin scanner, found: ${scanners[*]}" >&2
-            exit 1
-          fi
-          cp "${scanners[0]}" "build/macos-${{ matrix.arch }}/"
+          scanner=$(bash tools/release/find-scanner.sh "target/${{ matrix.triple }}/release")
+          cp "$scanner" "build/macos-${{ matrix.arch }}/"
           lipo -info "build/macos-${{ matrix.arch }}"/*
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
