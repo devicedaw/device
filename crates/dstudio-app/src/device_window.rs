@@ -153,11 +153,13 @@ pub(crate) struct Kit {
     pub plot: (f32, f32, f32, f32),
     /// The narrow strip (114 wide, columns of 54) of the field windows; else the EQs' 136.
     narrow: bool,
+    /// Height of the meter strip when it runs past the display (0: the display's).
+    meters_h: f32,
 }
 
 /// Field windows: a display 152 narrower than the window, a 12 pt gap to the control card.
 fn field_kit(w: f32, display_h: f32, left: f32, bottom: f32) -> Kit {
-    Kit { w, display: (INSET, 52.0, w - 152.0, display_h), plot: (left, 25.0, 8.0, bottom), narrow: true }
+    Kit { w, display: (INSET, 52.0, w - 152.0, display_h), plot: (left, 25.0, 8.0, bottom), narrow: true, meters_h: 0.0 }
 }
 
 pub(crate) fn kit(def: &DeviceDef) -> Kit {
@@ -166,6 +168,7 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         display: (INSET, y, WIN_W - 2.0 * INSET - METERS_W - METERS_GAP, h),
         plot: (PLOT_L, PLOT_T, PLOT_R, PLOT_B),
         narrow: false,
+        meters_h: 0.0,
     };
     match def.id {
         "character-eq" => eq(52.0, 346.0),
@@ -174,7 +177,7 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         // Echo: the tape strip above a display of the tail.
         "echo" => Kit { plot: (8.0, 25.0, 8.0, 8.0), ..eq(160.0, 354.0) },
         // Reverb: a 1200 pt window; the tail picture fills the display.
-        "reverb" => Kit { w: 1200.0, display: (INSET, 56.0, 1020.0, 510.0), plot: (8.0, 8.0, 8.0, 8.0), narrow: false },
+        "reverb" => Kit { w: 1200.0, display: (INSET, 56.0, 1020.0, 510.0), plot: (8.0, 8.0, 8.0, 8.0), narrow: false, meters_h: 0.0 },
         // Transient Shaper: the scope fills the display; its legend sits on the caption row.
         "transient-shaper" => field_kit(880.0, 228.0, 8.0, 8.0),
         // Multiband: the band field over the dB ladder, its Hz axis and legend below.
@@ -182,11 +185,12 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         // Waveshapers: the transfer square and the wave over a dB axis and legend.
         "distortion" | "tapesaturation" | "soft-clipper" => field_kit(WAVE_W, 454.0, 60.0, 44.0),
         // Utility: three cards and no display; the meters run the window's height.
-        "utility" => Kit { w: 1200.0, display: (INSET, 52.0, 1042.0, 620.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: false },
+        "utility" => Kit { w: 1200.0, display: (INSET, 52.0, 1042.0, 630.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: true, meters_h: 0.0 },
         // Stereo Widener: the field over the correlation lane.
-        "widener" => Kit { w: 1200.0, display: (INSET, 52.0, 1042.0, 514.0), plot: (36.0, 25.0, 12.0, 8.0), narrow: false },
+        // Its meters run down past the card, as the Bit Crusher's.
+        "widener" => Kit { w: 1200.0, display: (INSET, 52.0, 1042.0, 514.0), plot: (36.0, 25.0, 12.0, 8.0), narrow: true, meters_h: 630.0 },
         // Bit Crusher: one crushed cycle fills the display.
-        "bitcrusher" => field_kit(WAVE_W, 454.0, 8.0, 8.0),
+        "bitcrusher" => Kit { meters_h: 575.0, ..field_kit(WAVE_W, 454.0, 8.0, 8.0) },
         "tremolo" => field_kit(WIN_W, 234.0, 60.0, 44.0),
         "autopanner" => field_kit(WIN_W, 234.0, 40.0, 44.0),
         "chorus" | "flanger" => field_kit(WIN_W, 354.0, 56.0, 44.0),
@@ -692,7 +696,8 @@ impl Controller {
     /// the field windows' is 114, two 54 pt columns with the bar at the left of each.
     fn window_meters(&self, id: DeviceId, k: &Kit) -> (Vec<WinMeter>, Vec<PanelTick>, f32) {
         let m = self.devices.wins.meters.get(&id).cloned().unwrap_or_else(Meters::new);
-        let (dx, y, dw, h) = k.display;
+        let (dx, y, dw, dh) = k.display;
+        let h = if k.meters_h > 0.0 { k.meters_h } else { dh };
         let (top, bar_h) = if k.narrow { (y + 26.2, h - 48.2) } else { (y + 22.0, h - 44.0) };
         let x = dx + dw + if k.narrow { 6.0 } else { METERS_GAP };
         // (bar x, label centre) of each column.
@@ -821,8 +826,12 @@ impl Controller {
                 if self.engine.builtin_correlation(id.0, &mut c).is_err() {
                     c = [2.0; 2];
                 }
-                crate::device_window_widener::push_corr(self.devices.wins.corr.entry(id).or_default(), (t, c[0], c[1]));
-                self.ui_dirty = true;
+                // Both sides empty: no block ran since the last poll, or silence; the lane
+                // breaks across the gap.
+                if c[0] <= 1.0 || c[1] <= 1.0 {
+                    crate::device_window_widener::push_corr(self.devices.wins.corr.entry(id).or_default(), (t, c[0], c[1]));
+                    self.ui_dirty = true;
+                }
             }
             let m = self.devices.wins.meters.entry(id).or_insert_with(Meters::new);
             let before = (m.level, m.hold, m.since_clip[0] < Meters::CLIP_HOLD, m.since_clip[1] < Meters::CLIP_HOLD);

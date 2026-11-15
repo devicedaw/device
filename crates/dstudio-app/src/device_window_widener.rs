@@ -32,6 +32,8 @@ const LANE_H: f32 = 120.0;
 /// Seconds the correlation lane shows, one grid division each.
 pub(crate) const CORR_SPAN: f64 = 6.0;
 const FILL: f32 = 0.22;
+/// Readings further apart than this (s) are not joined.
+const GAP_S: f64 = 0.25;
 /// A correlation reading of a silent side.
 const SILENT: f32 = 1.5;
 
@@ -46,7 +48,7 @@ pub(crate) fn push_corr(h: &mut VecDeque<CorrSample>, s: CorrSample) {
     }
 }
 
-/// Polyline commands of one series, broken where it was silent.
+/// Polyline commands of one series, broken where it was silent or readings stopped.
 fn series(
     h: &VecDeque<CorrSample>,
     now: f64,
@@ -56,12 +58,17 @@ fn series(
 ) -> String {
     let mut out = String::new();
     let mut open = false;
+    let mut last = f64::NEG_INFINITY;
     for s in h.iter().filter(|s| s.0 >= now - CORR_SPAN) {
         let c = pick(s);
         if c > SILENT {
             open = false;
             continue;
         }
+        if s.0 - last > GAP_S {
+            open = false;
+        }
+        last = s.0;
         let (x, y) = (x_of(s.0), y_of(c));
         out.push_str(&format!("{}{x:.1} {y:.1} ", if open { "L" } else { "M" }));
         open = true;
@@ -94,17 +101,17 @@ impl Controller {
         for (f, label) in HZ_TICKS {
             let x = x_of(f).round() + 0.5;
             grid.push_str(&format!("M{x:.1} 0 V{fh:.1} "));
-            texts.push(text(x - 20.0 * Z, fh + 10.0 * Z, 40.0 * Z, label, dim, 10.0 * Z, 1));
+            texts.push(text(x, fh + 10.0 * Z, 40.0 * Z, label, dim, 10.0 * Z, 1));
         }
         for pct in [100.0, 200.0, 300.0] {
             let y = y_of(pct).round() + 0.5;
             grid.push_str(&format!("M0 {y:.1} H{pw:.1} "));
-            texts.push(text(-44.0 * Z, y_of(pct), 36.0 * Z, format!("{pct:.0}"), dim, 10.0 * Z, 2));
+            texts.push(text(-8.0 * Z, y_of(pct), 36.0 * Z, format!("{pct:.0}"), dim, 10.0 * Z, 2));
         }
         grid.push_str(&format!("M0 {fh:.1} H{pw:.1} M{pw:.1} 0 V{fh:.1}"));
         paths.push(stroke(grid, white(0.05), 1.0));
-        texts.push(text(-44.0 * Z, fh + 10.0 * Z, 36.0 * Z, "%", dim, 10.0 * Z, 2));
-        texts.push(text(pw - 40.0 * Z, fh + 10.0 * Z, 40.0 * Z, "Hz", dim, 10.0 * Z, 2));
+        texts.push(text(-8.0 * Z, fh + 10.0 * Z, 36.0 * Z, "%", dim, 10.0 * Z, 2));
+        texts.push(text(pw, fh + 10.0 * Z, 40.0 * Z, "Hz", dim, 10.0 * Z, 2));
 
         // The width curve, lit against 100 %.
         let n = ((pw / Z) / 4.0).round().max(48.0) as usize;
