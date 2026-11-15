@@ -75,6 +75,7 @@ pub(crate) fn spec(id: &str) -> Option<DynSpec> {
         "limiter" => s(12.0, -30.0, 6.0, "ceiling", "Ceiling", false, false, 4.0),
         "gate" => s(12.0, -60.0, 12.0, "threshold", "Threshold", false, false, 4.0),
         "glue-compressor" => s(0.0, -48.0, 6.0, "threshold", "Threshold", false, true, 4.0),
+        "character-compressor" => s(0.0, -60.0, 6.0, "threshold", "Threshold", false, true, 4.0),
         _ => return None,
     })
 }
@@ -375,7 +376,9 @@ impl Controller {
         let out_y = |db: f32| m + (db / -RANGE).clamp(0.0, 1.0) * s;
         let num = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
         let face = def.layout.faces.first().map(|f| f.1);
-        let Some((law, at, knee)) = face.and_then(|f| crate::device_panel::face_law(f, num)) else { return PanelCanvas::default() };
+        let Some((law, at, knee)) = face.and_then(|f| crate::device_panel::face_law(f, num)).or_else(|| behavior_law(def, d)) else {
+            return PanelCanvas::default();
+        };
         let mut paths = Vec::new();
         for i in 1..4 {
             let q = m + i as f32 / 4.0 * s;
@@ -405,6 +408,33 @@ impl Controller {
         paths.push(PanelPath { width: 1.5 * Z, stroke: Color::from_rgb_u8(0x16, 0x18, 0x1a), ..fill(dot, white(1.0)) });
         PanelCanvas { visible: true, w: size, h: size, paths: model(paths), ..Default::default() }
     }
+}
+
+/// The static curve a device's behaviour computes (Character Compressor's models), as a law
+/// over all input levels: unity below the computed span, its last slope above it.
+#[allow(clippy::type_complexity)]
+fn behavior_law(def: &DeviceDef, d: &Device) -> Option<(Box<dyn Fn(f32) -> f32>, f32, (f32, f32))> {
+    let t = dstudio_core::builtin::behavior(def).and_then(|b| (b.transfer)(def, d))?;
+    let pts = t.points;
+    if pts.len() < 2 {
+        return None;
+    }
+    let at = def.param("threshold").map_or(t.bend.0, |p| def.value(d, p));
+    let law = move |x: f32| {
+        let (first, last) = (pts[0], pts[pts.len() - 1]);
+        if x <= first.0 {
+            return x + (first.1 - first.0);
+        }
+        if x >= last.0 {
+            let prev = pts[pts.len() - 2];
+            let slope = (last.1 - prev.1) / (last.0 - prev.0).max(1e-6);
+            return last.1 + slope * (x - last.0);
+        }
+        let i = pts.partition_point(|p| p.0 < x).clamp(1, pts.len() - 1);
+        let (a, b) = (pts[i - 1], pts[i]);
+        a.1 + (b.1 - a.1) * (x - a.0) / (b.0 - a.0).max(1e-6)
+    };
+    Some((Box::new(law), at, t.bend))
 }
 
 /// The accessible value of the display: the reduction now.
