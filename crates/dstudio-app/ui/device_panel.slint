@@ -32,7 +32,7 @@ export global PanelStyle {
 
 // Vertical drag on a parameter: forwards per-event deltas (fine with Shift), Alt-click
 // resets, double-click resets. Rust applies the 3 px start threshold.
-component ParamDrag inherits TouchArea {
+export component ParamDrag inherits TouchArea {
     in property <int> device;
     in property <int> param;
     in property <float> rate: 1 / 160;
@@ -87,7 +87,7 @@ component ParamDragX inherits TouchArea {
 
 // Keyboard for a focused parameter control: arrows step (Shift fine), Return or Space edits
 // the value, everything else stays a window shortcut (undo, transport, Escape...).
-component ParamKeys inherits FocusScope {
+export component ParamKeys inherits FocusScope {
     in property <int> device;
     in property <int> param;
     callback edit();
@@ -101,7 +101,7 @@ component ParamKeys inherits FocusScope {
 }
 
 // Inline value editor (double-click on a value): Enter or blur commits, Escape cancels.
-component ValueEditor inherits FocusScope {
+export component ValueEditor inherits FocusScope {
     in property <int> device;
     in property <int> param;
     in property <string> initial;
@@ -427,15 +427,18 @@ component ZoneDrag inherits TouchArea {
 // Device canvas (View::Custom, View::Eq): optional caption + readout above a recessed well,
 // then path layers, texts, dots, grip pills and drag zones, all computed in Rust; an
 // pointer canvas sends pointer, wheel and keys back to Rust.
-component DeviceCanvas inherits Rectangle {
+export component DeviceCanvas inherits Rectangle {
     in property <int> device;
     in property <PanelCanvas> f;
     in property <color> accent;
+    // In a device window: Rust maps the well with the window's geometry (src/device_window.rs).
+    in property <bool> window;
     property <float> zm: PanelStyle.z;
     property <MouseCursor> mouse-cursor: root.f.cursor == 1 ? MouseCursor.move : root.f.cursor == 2 ? MouseCursor.ew-resize : root.f.cursor == 3 ? MouseCursor.ns-resize
         : root.f.cursor == 4 ? MouseCursor.pointer : root.f.cursor == 5 ? MouseCursor.crosshair : MouseCursor.default;
     keys := FocusScope {
         key-pressed(e) => {
+            Studio.canvas-surface(root.window);
             if (root.f.pointer && Studio.panel-graph-key(root.device, e.text, e.modifiers.shift, e.modifiers.alt)) { return accept; }
             if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, e.repeat)) { return accept; }
             reject
@@ -496,15 +499,17 @@ component DeviceCanvas inherits Rectangle {
             accessible-role: slider; accessible-label: root.f.label; accessible-value: root.f.value;
             mouse-cursor: root.mouse-cursor;
             pointer-event(e) => {
+                Studio.canvas-surface(root.window);
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { keys.focus(); Studio.panel-graph(root.device, 0, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
                 if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) { Studio.panel-graph-menu(root.device, self.mouse-x / 1px, self.mouse-y / 1px, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
                 if (e.kind == PointerEventKind.move) { Studio.panel-graph(root.device, self.pressed ? 1 : 4, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-graph(root.device, 2, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
                 if (e.kind == PointerEventKind.cancel) { Studio.panel-graph(root.device, 3, 0, 0, false, false); }
             }
-            changed has-hover => { if (!self.has-hover && !self.pressed) { Studio.panel-graph(root.device, 5, 0, 0, false, false); } }
-            double-clicked => { Studio.panel-graph(root.device, 6, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
+            changed has-hover => { if (!self.has-hover && !self.pressed) { Studio.canvas-surface(root.window); Studio.panel-graph(root.device, 5, 0, 0, false, false); } }
+            double-clicked => { Studio.canvas-surface(root.window); Studio.panel-graph(root.device, 6, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
             scroll-event(e) => {
+                Studio.canvas-surface(root.window);
                 if (Studio.panel-graph-wheel(root.device, self.mouse-x / 1px, self.mouse-y / 1px, e.delta-y / 1px)) { return accept; }
                 reject
             }

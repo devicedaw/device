@@ -94,6 +94,9 @@ export struct PanelKnob {
     // Knob cell width (0 = the 62 pt default).
     cell: length,
     latch: bool, on: bool, momentary: bool, inert: bool,
+    // Device windows (ui/device_window.slint): ring size 1 = 40 pt, 2 = 48 pt (0 = the card's 32 pt);
+    // x is then the cell's left edge, y the ring's centre and label-y the top of the value line.
+    size: int, label-y: length,
 }
 // One modulation link in a source's target list (LFO targets, macro targets).
 export struct ModTarget { index: int, name: string, amount: string }
@@ -223,6 +226,38 @@ export struct PanelEq {
     cells: [EqCell],
 }
 
+// ---- expanded device window (src/device_window.rs, ui/device_window.slint) ----
+// Every part is placed in the window's content box (below its title strip), in px.
+// Pill kinds: 0 choice segment (win-choice param index), 1 EQ band tab (panel-eq 0 index),
+// 2 on / off toggle (win-choice param, active ? 0 : 1), 3 picker (panel-menu param; label
+// is the value, `name` a caption in front of it; w 0: as wide as its text and centred on x,
+// w < 0: right-aligned at x), 5 window action (win-action param index). dim: an EQ band
+// out of the chain; inert: dimmed and not clickable.
+export struct WinPill { kind: int, param: int, index: int, x: length, y: length, w: length, label: string, name: string, active: bool, dim: bool, inert: bool }
+// Boxes: kind 0 raised control card, 1 hairline rule, 2 pill track, 3 header rule, 4 display well.
+export struct WinBox { kind: int, x: length, y: length, w: length, h: length }
+// In / Out meter column: the bar's box (+12 dB at the top, -50 dB at the foot; zero-h down
+// to 0 dB), the left and right levels and holds (0..1 of the -50..0 dB part), the overs
+// light, the label over it and the readout under it.
+export struct WinMeter { x: length, y: length, w: length, h: length, zero-h: length, l: float, r: float, hold-l: float, hold-r: float, clip: bool, label: string, value: string }
+export struct WinView {
+    visible: bool,
+    w: length, h: length,
+    title: string,
+    // The display's plot (x, y: its top-left in the content box); rulers and legend overhang it.
+    display: PanelCanvas,
+    // A small picture in a control card (an EQ band's own shape); paths and texts in its box.
+    square: PanelCanvas,
+    boxes: [WinBox],
+    pills: [WinPill],
+    knobs: [PanelKnob],
+    texts: [PanelText],
+    meters: [WinMeter],
+    // Meter ticks (bar relative y) and the numerals column x.
+    ticks: [PanelTick],
+    ticks-x: length,
+}
+
 export struct DeviceCard {
     id: int,
     x: length,
@@ -272,6 +307,8 @@ export struct DeviceCard {
     canvas: PanelCanvas,
     eq: PanelEq,
     buttons: [PanelButton],
+    // Expanded device window (built for the cards in device-window-cards only).
+    win: WinView,
 }
 
 // Settings › Plugins list rows. warn: drawn with the orange "Missing"/failure badge.
@@ -1064,6 +1101,9 @@ export global Studio {
     callback device-ask(int);                                // header spark: ask the assistant about this device
     callback device-window-moved(int, length, length);       // device window dragged: its new offset, kept per device
     callback device-window(int);                             // header arrow: open / close the device's floating window
+    callback win-choice(int, int, int);                       // device window choice pill: device, param index, choice
+    callback win-action(int, int, int);                       // device window action (src/device_window.rs ACT_*): device, action, value
+    callback canvas-surface(bool);                           // the next canvas event comes from a device window (true) or a card
     callback device-fold(int);                               // fold / unfold the card (header double-click, minus)
     callback device-collapse(int);                           // chain head: hide / show its members
     callback device-swap-menu(int, length, length);          // "Choose effect plugin" from the card name

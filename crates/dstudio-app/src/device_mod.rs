@@ -92,7 +92,7 @@ fn pct(v: f32) -> String {
     format!("{:.0}%", v * 100.0)
 }
 
-type MenuRows = Vec<(String, String, Option<MenuPick>, bool)>;
+pub(crate) type MenuRows = Vec<(String, String, Option<MenuPick>, bool)>;
 
 /// LFO picture: two cycles of the shape (phase applied) in a w x h box, scaled by depth.
 fn wave_paths(shape: usize, phase: f64, depth: f32, w: f32, h: f32) -> (String, String) {
@@ -182,6 +182,12 @@ impl Controller {
             }
         }
         card.knobs = model(knobs);
+    }
+
+    /// Modulation reach on a built-in device's parameter (see `mod_reach`).
+    pub(crate) fn mod_reach_of(&self, device: DeviceId, param: &str, base: f32) -> Option<(f32, f32, f32, slint::Color)> {
+        let t = self.track_of(device)?;
+        self.mod_reach(t, device, &ModParam::Builtin(param.to_string()), base)
     }
 
     /// Reach of every source on a parameter around its set value `base`
@@ -543,7 +549,10 @@ impl Controller {
         if self.project().device(id).is_none() {
             return;
         }
-        if !self.devices.windows.remove(&id) {
+        if self.devices.windows.remove(&id) {
+            // Closed: the engine stops measuring its In / Out peaks.
+            let _ = self.engine.builtin_set_metering(id.0, false);
+        } else {
             self.devices.windows.insert(id);
         }
         self.ui_dirty = true;

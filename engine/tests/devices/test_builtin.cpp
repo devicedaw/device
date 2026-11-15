@@ -370,3 +370,45 @@ TEST_CASE(builtin_engine_path_does_not_allocate) {
     }
     CHECK_EQ(rt_alloc_count() - before, 0);
 }
+
+TEST_CASE(builtin_metering_reports_in_and_out_peaks_without_allocating) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = load_asset(e, {sine(48000, 440.0, 48000.0, 0.5), sine(48000, 220.0, 48000.0, 0.25)});
+    DeviceSession s;
+    auto& tr = s.add_track(1, a, 48000);
+    DeviceSession::add_device(tr, 10, "compressor", kComp);
+    REQUIRE(s.publish(e) == SE_OK);
+    REQUIRE(se_transport_play(e) == SE_OK);
+    std::vector<float> buf(2 * 256);
+    float lv[4] = {1.f, 1.f, 1.f, 1.f};
+
+    // Off by default: nothing is measured.
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    REQUIRE(se_builtin_levels(e, 10, lv) == SE_OK);
+    for (float v : lv) CHECK_EQ(v, 0.0f);
+
+    REQUIRE(se_builtin_set_metering(e, 10, 1) == SE_OK);
+    const long before = rt_alloc_count();
+    for (int i = 0; i < 8; ++i) {
+        RtAllocGuard g;
+        REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    }
+    CHECK_EQ(rt_alloc_count() - before, 0);
+    REQUIRE(se_builtin_levels(e, 10, lv) == SE_OK);
+    CHECK(lv[0] > 0.45f && lv[0] <= 0.5f); // input left: the 0.5 sine
+    CHECK(lv[1] > 0.2f && lv[1] <= 0.25f); // input right: the 0.25 sine
+    CHECK(lv[2] > 0.0f);
+    CHECK(lv[3] > 0.0f);
+
+    // Reading resets them; switching off stops the measuring.
+    REQUIRE(se_builtin_levels(e, 10, lv) == SE_OK);
+    for (float v : lv) CHECK_EQ(v, 0.0f);
+    REQUIRE(se_builtin_set_metering(e, 10, 0) == SE_OK);
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    REQUIRE(se_builtin_levels(e, 10, lv) == SE_OK);
+    for (float v : lv) CHECK_EQ(v, 0.0f);
+
+    CHECK_EQ(se_builtin_set_metering(e, 999, 1), SE_ERR_NOT_FOUND);
+    CHECK_EQ(se_builtin_levels(e, 999, lv), SE_ERR_NOT_FOUND);
+    CHECK_EQ(se_builtin_levels(e, 10, nullptr), SE_ERR_INVALID_ARG);
+}

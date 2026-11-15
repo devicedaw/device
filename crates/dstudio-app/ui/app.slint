@@ -31,6 +31,7 @@ import { SettingsPanel, ChoiceList } from "settings.slint";
 import { ExportModal, UnsavedPrompt, UpdatesModal, UndoHistoryModal, KeyChangeModal } from "dialogs.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 import { BuiltinCard, FoldedStrip } from "device_panel.slint";
+import { DeviceWindowFace } from "device_window.slint";
 import { TrackHeaderRow, MasterHeaderRow, AutoPill, TrackName } from "track_header.slint";
 import { KeyPicker } from "transport.slint";
 
@@ -1319,22 +1320,33 @@ export component AppWindow inherits Window {
             }
         }
         HighlightOverlay { x: 0; y: 0; width: root.width; height: root.height; }
-        // Device windows: a built-in card opened from its header arrow floats above the
-        // arrangement (the card stays in the chain too) and stays up across track changes;
-        // its title strip moves it, the arrow or the strip's x closes it.
+        // Device windows: a built-in device opened from its card's header arrow floats above
+        // the arrangement (the card stays in the chain too) and stays up across track changes.
+        // Devices with an expanded view (card.win) draw it (ui/device_window.slint); the rest
+        // show their card. The title strip moves a window; its close button or the arrow
+        // closes it.
         for card[i] in Studio.device-window-cards: win := Rectangle {
             property <length> dx: card.win-dx;
             property <length> dy: card.win-dy;
-            x: max(0px, min(root.width - self.width, (root.width - card.width) / 2 + i * 16px + self.dx));
-            y: max(0px, min(root.height - 22px, 120px + i * 16px + self.dy));
-            width: card.width + 8px; height: 265px + 26px;
-            border-radius: 8px; background: #1a1b1e; border-width: 0.5px; border-color: #ffffff1f;
+            property <bool> expanded: card.win.visible;
+            x: max(0px, min(root.width - self.width, (root.width - self.width) / 2 + i * 16px + self.dx));
+            y: max(0px, min(root.height - 22px, (self.expanded ? 72px : 120px) + i * 16px + self.dy));
+            width: self.expanded ? face.width : card.width + 8px;
+            height: self.expanded ? face.height : 265px + 26px;
+            border-radius: self.expanded ? 12px * 0.85 : 8px;
+            background: #1a1b1e; border-width: 0.5px; border-color: #ffffff1f;
             drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: #00000099;
-            Rectangle {
+            face := DeviceWindowFace {
+                visible: win.expanded;
+                card: card;
+                moved(mx, my) => { win.dx += mx; win.dy += my; }
+                released => { Studio.device-window-moved(card.id, win.x - (root.width - win.width) / 2 - i * 16px, win.y - (win.expanded ? 72px : 120px) - i * 16px); }
+            }
+            if !win.expanded: Rectangle {
                 TouchArea {
                     mouse-cursor: MouseCursor.move;
                     moved => { win.dx += self.mouse-x - self.pressed-x; win.dy += self.mouse-y - self.pressed-y; }
-                    pointer-event(e) => { if (e.kind == PointerEventKind.up) { Studio.device-window-moved(card.id, win.x - (root.width - card.width) / 2 - i * 16px, win.y - 120px - i * 16px); } }
+                    pointer-event(e) => { if (e.kind == PointerEventKind.up) { Studio.device-window-moved(card.id, win.x - (root.width - win.width) / 2 - i * 16px, win.y - 120px - i * 16px); } }
                 }
                 Text { x: 10px; y: 0; height: 22px; text: card.name; color: #81838a; font-size: 10px; font-weight: 600; vertical-alignment: center; }
                 Rectangle {

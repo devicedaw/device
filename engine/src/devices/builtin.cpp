@@ -423,9 +423,27 @@ uint32_t BuiltinInstance::readouts(float* out, uint32_t capacity) const noexcept
     return n;
 }
 
+namespace {
+// Peak of a block into a running maximum (RT; the main thread resets it to 0).
+void accumulate_peak(std::atomic<float>& slot, const float* x, uint32_t frames) noexcept {
+    if (x == nullptr) return;
+    float p = 0.0f;
+    for (uint32_t i = 0; i < frames; ++i) p = std::max(p, std::fabs(x[i]));
+    if (!(p > 0.0f)) return; // also drops NaN
+    float cur = slot.load(std::memory_order_relaxed);
+    while (p > cur && !slot.compare_exchange_weak(cur, p, std::memory_order_relaxed)) {
+    }
+}
+} // namespace
+
 void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
                               const RtTransport& transport,
                               const ParamEvent* params, uint32_t param_count) noexcept {
+    const bool metering = metering_.load(std::memory_order_relaxed);
+    if (metering) {
+        accumulate_peak(peaks_[0], l, frames);
+        accumulate_peak(peaks_[1], r, frames);
+    }
     const auto n_params = static_cast<uint32_t>(current_.size());
     float* const cur = current_.data();
     for (uint32_t i = 0; i < n_params; ++i) cur[i] = target_[i].load(std::memory_order_relaxed);
@@ -516,6 +534,10 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     }
     for (std::size_t i = 0; i < readout_scratch_.size(); ++i) readout_atomic_[i].store(ro[i], std::memory_order_relaxed);
     applied_latency_.store(lat, std::memory_order_relaxed);
+    if (metering) {
+        accumulate_peak(peaks_[2], l, frames);
+        accumulate_peak(peaks_[3], r, frames);
+    }
     sc_l_ = sc_r_ = nullptr;
     mods_ = nullptr;
     mod_count_ = 0;

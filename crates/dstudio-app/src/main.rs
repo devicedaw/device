@@ -54,6 +54,7 @@ mod device_fields;
 mod device_mod;
 mod device_panel;
 mod device_views;
+mod device_window;
 mod devices;
 mod devminimap;
 mod dialogs;
@@ -244,6 +245,8 @@ struct Args {
     track_rename_review: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
     device_state: Option<&'static str>,
+    /// window-<built-in device id>: as reference-<id>, with the device's window open.
+    device_window: bool,
     /// Files loaded as if dropped on the window (after the state is set up).
     load_sample: Vec<PathBuf>,
     /// --sampler-tab N: with a sampler state, show that tab (review screenshots).
@@ -648,6 +651,11 @@ fn parse_args() -> Result<Args, String> {
                 s if s.strip_prefix("reference-").and_then(dstudio_core::builtin::find).is_some() => {
                     a.reference_default = true;
                     a.device_state = s.strip_prefix("reference-").and_then(dstudio_core::builtin::find).map(|d| d.id);
+                }
+                s if s.strip_prefix("window-").and_then(dstudio_core::builtin::find).is_some() => {
+                    a.reference_default = true;
+                    a.device_state = s.strip_prefix("window-").and_then(dstudio_core::builtin::find).map(|d| d.id);
+                    a.device_window = true;
                 }
                 "review-settings-plugins" => {
                     a.reference_default = true;
@@ -2260,6 +2268,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(device) = added {
                 c.execute(synth_test_state(device));
             }
+            if args.device_window
+                && let Some(d) = c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id)
+            {
+                c.device_window(d);
+            }
         }
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(8.0);
@@ -3202,6 +3215,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     on!(on_panel_eq, |c, id: i32, action: i32, value: i32| c.panel_eq(dstudio_core::DeviceId(id as u64), action, value));
+    {
+        // Which surface the next canvas event comes from: no view push, it is set before
+        // every pointer event of a canvas.
+        let ctl = ctl.clone();
+        studio.on_canvas_surface(move |window: bool| {
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.devices.panel.canvas.window = window;
+            }
+        });
+    }
+    on!(on_win_choice, |c, id: i32, param: i32, choice: i32| c.win_choice(dstudio_core::DeviceId(id as u64), param, choice));
+    on!(on_win_action, |c, id: i32, action: i32, value: i32| c.win_action(dstudio_core::DeviceId(id as u64), action, value));
     {
         // Canvas wheel / keys (EQ, Auto Filter) answer whether they used the event, so they cannot go through on!.
         let (ctl1, aw1) = (ctl.clone(), app.as_weak());

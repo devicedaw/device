@@ -1264,6 +1264,20 @@ int32_t se_builtin_readouts(se_engine* engine, uint64_t device_id, float* out, s
 int32_t se_builtin_analysis(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count,
                             uint64_t* out_seq);
 
+/* In / Out peak metering of a live built-in device (the meters of its
+ * expanded window). Off by default; while it is on, the audio thread takes
+ * the peak of the device's input and output in every block it processes.
+ * MAIN THREAD. Unknown or non-built-in device -> SE_ERR_NOT_FOUND. */
+int32_t se_builtin_set_metering(se_engine* engine, uint64_t device_id, uint8_t on);
+
+/* In / Out peaks of a live built-in device since the previous call, as linear
+ * amplitude: out[0] input left, out[1] input right, out[2] output left,
+ * out[3] output right. Reading resets them. All zero while metering is off
+ * or the device is not processed.
+ * MAIN THREAD. Unknown or non-built-in device -> SE_ERR_NOT_FOUND; out NULL
+ * -> SE_ERR_INVALID_ARG. */
+int32_t se_builtin_levels(se_engine* engine, uint64_t device_id, float* out);
+
 /* ---- modulation (ABI v1 addition) -----------------------------------------
  * See docs/devices.md ("Modulation") and dstudio_core::modulation.
  *

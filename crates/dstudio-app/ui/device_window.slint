@@ -1,0 +1,404 @@
+// Expanded device window: the large view a built-in effect opens from its card's header
+// arrow. Rust (src/device_window.rs) places every part in the window's content box; this file
+// only draws them and forwards input through the same callbacks the cards use.
+//
+// Look: a title strip with the window buttons, the top bar (power ring + name, preset, header
+// pill groups), a recessed display with In / Out meters beside it, and raised control cards
+// with 40 / 48 pt knobs whose value and name stack under the ring.
+
+import { Studio, DeviceCard, PanelKnob, WinPill, WinBox, WinMeter, PanelTick } from "studio.slint";
+import { PanelStyle, ParamDrag, ParamKeys, ValueEditor, DeviceCanvas } from "device_panel.slint";
+
+export global WinStyle {
+    out property <color> well: #0e0e11;        // window body
+    out property <color> deep: #121214;        // display, pill tracks
+    out property <color> bar: #232426;         // top bar
+    out property <color> raised: #212227;      // control cards
+    out property <color> hover: #292a2f;
+    out property <color> press: #303236;
+    out property <color> text: #e5e5e8;
+    out property <color> mute: #a6a8ad;
+    out property <color> dim: #63656d;
+    out property <color> hairline: #ffffff12;
+    out property <color> hairline-strong: #ffffff1f;
+    out property <color> title-bar: #262629;
+    out property <color> title-text: #a2a2a5;
+}
+
+// Knob of a device window: the ring sizes of the window kit (sm 40 pt, md 48 pt), the value
+// in the track colour over the name in white.
+component WinKnob inherits Rectangle {
+    in property <int> device;
+    in property <PanelKnob> k;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    property <length> ring: (root.k.size == 2 ? 48px : 40px) * zm;
+    property <float> stroke: (root.k.size == 2 ? 2.16 : 2.0) * zm;
+    property <length> body: (root.k.size == 2 ? 40px : 32px) * zm;
+    property <float> tick: (root.k.size == 2 ? 32 : 26) * zm;
+    property <float> rc: root.ring / 1px / 2;
+    property <float> r-arc: root.rc - root.stroke / 2;
+    property <float> angle: -135 + root.k.norm * 270;
+    property <float> from: -135 + root.k.origin * 270;
+    property <float> lo-a: -135 + root.k.mod-lo * 270;
+    property <float> hi-a: -135 + root.k.mod-hi * 270;
+    property <float> now-a: -135 + root.k.mod-now * 270;
+    property <bool> editing;
+    x: root.k.x; y: root.k.y - root.ring / 2;
+    width: root.k.cell; height: root.k.label-y + 32px * zm - root.y;
+    opacity: root.k.inert ? 0.3 : root.k.dim ? 0.55 : 1.0;
+    accessible-role: slider; accessible-label: root.k.label; accessible-value: root.k.value;
+    fs := ParamKeys {
+        enabled: !root.k.inert; device: root.device; param: root.k.param;
+        edit => { root.editing = true; }
+    }
+    dial := Rectangle {
+        x: (root.width - root.ring) / 2; y: 0; width: root.ring; height: root.ring;
+        // Groove: the full 270 degree track.
+        Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            stroke: #ffffff21; stroke-width: root.stroke * 1px; fill: transparent; stroke-line-cap: butt;
+            MoveTo { x: root.rc + root.r-arc * sin(-135deg); y: root.rc - root.r-arc * cos(-135deg); }
+            ArcTo { x: root.rc + root.r-arc * sin(135deg); y: root.rc - root.r-arc * cos(135deg); radius-x: root.r-arc; radius-y: root.r-arc; large-arc: true; sweep: true; }
+        }
+        if abs(root.angle - root.from) > 0.5: Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            stroke: root.accent; stroke-width: root.stroke * 1px; fill: transparent; stroke-line-cap: butt;
+            MoveTo { x: root.rc + root.r-arc * sin(root.from * 1deg); y: root.rc - root.r-arc * cos(root.from * 1deg); }
+            ArcTo {
+                x: root.rc + root.r-arc * sin(root.angle * 1deg); y: root.rc - root.r-arc * cos(root.angle * 1deg);
+                radius-x: root.r-arc; radius-y: root.r-arc;
+                large-arc: abs(root.angle - root.from) > 180; sweep: root.angle > root.from;
+            }
+        }
+        // Body: a flat disc with a soft drop shadow (10 % of the body down, 30 % blur) and a faint rim.
+        Rectangle {
+            x: (parent.width - root.body) / 2; y: (parent.height - root.body) / 2; width: root.body; height: root.body;
+            border-radius: self.width / 2; background: #232426; border-width: root.body * 0.0125; border-color: #ffffff0d;
+            drop-shadow-offset-y: root.body * 0.1; drop-shadow-blur: root.body * 0.3; drop-shadow-color: #00000080;
+        }
+        // Pointer: from 0.398 to 0.575 of the tick size out from the centre.
+        Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            stroke: #ffffff; stroke-width: root.tick * 0.075 * 1px; stroke-line-cap: round;
+            MoveTo { x: root.rc + root.tick * 0.39787 * sin(root.angle * 1deg); y: root.rc - root.tick * 0.39787 * cos(root.angle * 1deg); }
+            LineTo { x: root.rc + root.tick * 0.57454 * sin(root.angle * 1deg); y: root.rc - root.tick * 0.57454 * cos(root.angle * 1deg); }
+        }
+        // Detent marks just outside the ring (the card's 44 pt view box over a 32 pt ring, scaled).
+        if root.k.ticks != "": Path {
+            x: -root.ring * 6 / 32; y: -root.ring * 6 / 32; width: root.ring * 44 / 32; height: root.ring * 44 / 32;
+            viewbox-width: 44; viewbox-height: 44; commands: root.k.ticks;
+            stroke: WinStyle.mute; stroke-width: root.stroke * 0.5px; fill: transparent; stroke-line-cap: butt;
+        }
+        // Modulation range: the source colour at 38 % on the ring, a white dot at the live value.
+        if root.k.mod-on && abs(root.hi-a - root.lo-a) > 0.8: Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            stroke: root.k.mod-color.with-alpha(0.38); stroke-width: root.stroke * 1px; fill: transparent; stroke-line-cap: butt;
+            MoveTo { x: root.rc + root.r-arc * sin(root.lo-a * 1deg); y: root.rc - root.r-arc * cos(root.lo-a * 1deg); }
+            ArcTo {
+                x: root.rc + root.r-arc * sin(root.hi-a * 1deg); y: root.rc - root.r-arc * cos(root.hi-a * 1deg);
+                radius-x: root.r-arc; radius-y: root.r-arc; large-arc: root.hi-a - root.lo-a > 180; sweep: true;
+            }
+        }
+        if root.k.mod-on: Rectangle {
+            x: root.rc * 1px + root.r-arc * 1px * sin(root.now-a * 1deg) - 2px * zm;
+            y: root.rc * 1px - root.r-arc * 1px * cos(root.now-a * 1deg) - 2px * zm;
+            width: 4px * zm; height: 4px * zm; border-radius: 2px * zm;
+            background: #fffffff2; border-width: 0.75px * zm; border-color: #0000008c;
+        }
+        ParamDrag {
+            enabled: !root.k.inert; device: root.device; param: root.k.param;
+            grabbed => { fs.focus(); }
+            double-clicked => { Studio.panel-reset(root.device, root.k.param); }
+        }
+    }
+    Rectangle {
+        x: 0; y: root.k.label-y - root.y; width: root.width; height: 16px * zm;
+        if !root.editing: Text {
+            width: parent.width + 16px * zm; x: -8px * zm;
+            text: root.k.value; color: root.accent; font-size: 12px * zm; font-weight: 600; letter-spacing: -0.04 * 12px * zm;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+        if !root.editing: TouchArea { enabled: !root.k.inert; double-clicked => { root.editing = true; } }
+        if root.editing: ValueEditor {
+            x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.k.param; initial: root.k.edit != "" ? root.k.edit : root.k.value; font-size: 11px * zm;
+            done => { root.editing = false; }
+        }
+    }
+    Text {
+        x: -8px * zm; y: root.k.label-y - root.y + 16px * zm; width: root.width + 16px * zm; height: 16px * zm;
+        text: root.k.label; color: WinStyle.text; font-size: 12px * zm; font-weight: 600; letter-spacing: -0.04 * 12px * zm;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+}
+
+// Pill: a choice segment, an EQ band tab, an on / off toggle, a picker or a window action.
+component WinPillView inherits Rectangle {
+    in property <int> device;
+    in property <WinPill> p;
+    in property <color> accent;
+    in property <color> on-accent;
+    property <float> zm: PanelStyle.z;
+    property <bool> picker: root.p.kind == 3;
+    property <bool> hot: ta.has-hover && !root.p.inert;
+    property <length> auto-w: picker-row.preferred-width;
+    x: root.p.w > 0 ? root.p.x : root.p.w < 0 ? root.p.x - root.width : root.p.x - root.width / 2;
+    y: root.p.y;
+    width: root.p.w > 0 ? root.p.w : root.auto-w;
+    height: 24px * zm;
+    border-radius: self.height / 2;
+    opacity: root.p.inert ? 0.4 : 1.0;
+    background: root.picker ? (root.hot ? WinStyle.hover : transparent)
+        : root.p.active ? (ta.pressed ? root.accent.mix(#000000, 0.84) : root.hot ? root.accent.mix(#000000, 0.93) : root.accent)
+        : ta.pressed ? WinStyle.press : root.hot ? WinStyle.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.p.name != "" ? root.p.name : root.p.label;
+    accessible-value: root.p.label;
+    accessible-checked: root.p.active;
+    accessible-item-selected: root.p.active;
+    if !root.picker: Text {
+        text: root.p.label; font-size: 12px * zm; font-weight: 500; letter-spacing: -0.01 * 12px * zm;
+        color: root.p.active ? root.on-accent : root.p.dim ? WinStyle.dim : root.hot ? WinStyle.text : WinStyle.mute;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    picker-row := HorizontalLayout {
+        visible: root.picker;
+        padding-left: 12px * zm; padding-right: 12px * zm; spacing: 5px * zm; alignment: center;
+        if root.p.name != "": Text {
+            text: root.p.name; font-size: 12px * zm; font-weight: 500; letter-spacing: -0.01 * 12px * zm;
+            color: root.hot ? WinStyle.text : WinStyle.mute; vertical-alignment: center;
+        }
+        Text {
+            text: root.p.label; font-size: 12px * zm; font-weight: 500; letter-spacing: -0.01 * 12px * zm;
+            color: root.hot ? root.accent.mix(#ffffff, 0.7) : root.accent; vertical-alignment: center;
+        }
+        Path {
+            width: 10px * zm; height: 10px * zm; y: (24px * zm - 10px * zm) / 2;
+            viewbox-width: 24; viewbox-height: 24; commands: "M6 9l6 6 6-6"; fill: transparent;
+            stroke: root.hot ? root.accent.mix(#ffffff, 0.7) : root.accent; stroke-width: 1.3px; stroke-line-cap: round; stroke-line-join: round;
+            opacity: root.hot ? 1 : 0.7;
+        }
+    }
+    ta := TouchArea {
+        enabled: !root.p.inert;
+        property <bool> alt-down;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right && root.p.param >= 0 && (root.p.kind == 0 || root.p.kind == 2 || root.p.kind == 3)) {
+                Studio.mod-menu(root.device, root.p.param, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y);
+                return;
+            }
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                self.alt-down = e.modifiers.alt && root.p.param >= 0 && (root.p.kind == 0 || root.p.kind == 2 || root.p.kind == 3);
+                if (self.alt-down) { Studio.panel-reset(root.device, root.p.param); }
+            }
+        }
+        clicked => {
+            if (self.alt-down) { return; }
+            if (root.p.kind == 0) { Studio.win-choice(root.device, root.p.param, root.p.index); }
+            else if (root.p.kind == 1) { Studio.panel-eq(root.device, 0, root.p.index); }
+            else if (root.p.kind == 2) { Studio.win-choice(root.device, root.p.param, root.p.active ? 0 : 1); }
+            else if (root.p.kind == 3) { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); }
+            else if (root.p.kind == 5) { Studio.win-action(root.device, root.p.param, root.p.index); }
+        }
+    }
+}
+
+// In / Out meter: a 16 pt column from +12 dB down to -50 dB holding the left and right
+// bars (gradient over -50..0 dB, red while the signal goes over), the overs region above
+// 0 dB, the hold lines, ticks on its right edge, the label over it and the readout under it.
+component WinMeterView inherits Rectangle {
+    in property <WinMeter> m;
+    in property <[PanelTick]> ticks;
+    property <float> zm: PanelStyle.z;
+    property <length> bar-w: (root.m.w - 1px) / 2;
+    property <length> main-h: root.m.h - root.m.zero-h;
+    Text {
+        x: root.m.x - 19px * zm; y: root.m.y - 22px * zm; width: root.m.w + 38px * zm; height: 16px * zm;
+        text: root.m.label; color: WinStyle.mute; font-size: 12px * zm; font-weight: 700; letter-spacing: -0.04 * 12px * zm;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    Rectangle {
+        x: root.m.x; y: root.m.y; width: root.m.w; height: root.m.h;
+        border-radius: 2px * zm; background: #ffffff08; border-width: 0.5px; border-color: #ffffff0a;
+    }
+    for lv[i] in [root.m.l, root.m.r]: Rectangle {
+        x: root.m.x + i * (root.bar-w + 1px); y: root.m.y + root.m.zero-h; width: root.bar-w; height: root.main-h;
+        border-radius: 2px * zm; background: #141416d9;
+        if lv > 0: Rectangle {
+            y: parent.height * (1 - lv); height: parent.height * lv;
+            border-radius: 1.5px * zm;
+            background: root.m.clip ? #e81d01 : @linear-gradient(0deg, #4ade80 0%, #a3e635 88%, #facc15 100%);
+        }
+        if (i == 0 ? root.m.hold-l : root.m.hold-r) > 0: Rectangle {
+            y: parent.height * (1 - (i == 0 ? root.m.hold-l : root.m.hold-r)) - 0.5px; height: 1px; background: #fafafa;
+        }
+    }
+    if root.m.clip: Rectangle {
+        x: root.m.x; y: root.m.y; width: root.m.w; height: root.m.zero-h - 1px;
+        border-radius: 2px * zm; background: #e81d01b3;
+    }
+    for t in root.ticks: Rectangle {
+        x: root.m.x + root.m.w - 3px * zm; y: root.m.y + t.y - 0.5px; width: 6px * zm; height: 1px; background: #ffffff24;
+    }
+    Text {
+        x: root.m.x - 19px * zm; y: root.m.y + root.m.h + 6px * zm; width: root.m.w + 38px * zm; height: 16px * zm;
+        text: root.m.value; color: WinStyle.text; font-size: 12px * zm; font-weight: 600; letter-spacing: -0.04 * 12px * zm;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+}
+
+// The window: title strip, top bar, display, meters, control cards.
+export component DeviceWindowFace inherits Rectangle {
+    in property <DeviceCard> card;
+    callback moved(length, length);
+    callback released();
+    property <float> zm: PanelStyle.z;
+    property <length> title-h: 32px * zm;
+    property <color> on-accent: root.card.accent.mix(#0c0e11, 0.2);
+    width: root.card.win.w; height: root.card.win.h + root.title-h;
+    border-radius: 12px * zm; background: WinStyle.well; clip: true;
+    accessible-role: groupbox; accessible-label: root.card.win.title;
+
+    // ---- title strip (drags the window) ----
+    Rectangle {
+        x: 0; y: 0; width: root.width; height: root.title-h; background: WinStyle.title-bar;
+        TouchArea {
+            mouse-cursor: MouseCursor.default;
+            moved => { root.moved(self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+            pointer-event(e) => { if (e.kind == PointerEventKind.up) { root.released(); } }
+        }
+        // Window buttons: close (red) and minimise (yellow) both close it; zoom is greyed.
+        for b[i] in [0, 1, 2]: Rectangle {
+            x: (16px + i * 23px - 7px) * zm; y: (root.title-h - 14px * zm) / 2; width: 14px * zm; height: 14px * zm;
+            border-radius: self.width / 2;
+            background: i == 0 ? #e15f4f : i == 1 ? #f3be41 : #4b4b4d;
+            border-width: 0.5px; border-color: #00000033;
+            accessible-role: button;
+            accessible-label: i == 0 ? "Close device window" : "Minimise device window";
+            if i < 2 && light-ta.has-hover: Path {
+                x: 3.5px * zm; y: 3.5px * zm; width: 7px * zm; height: 7px * zm; viewbox-width: 7; viewbox-height: 7;
+                commands: i == 0 ? "M1 1L6 6M6 1L1 6" : "M0.5 3.5L6.5 3.5"; stroke: #00000099; stroke-width: 1.1px; stroke-line-cap: round;
+            }
+            light-ta := TouchArea { enabled: i < 2; clicked => { Studio.device-window(root.card.id); } }
+        }
+        Text {
+            x: 84.5px * zm; y: 0; height: root.title-h;
+            text: root.card.win.title; color: WinStyle.title-text; font-size: 13px * zm; font-weight: 600; letter-spacing: -0.01 * 13px * zm;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle { x: 0; y: root.title-h - 1px; width: root.width; height: 1px; background: #000000; }
+
+    // ---- content ----
+    Rectangle {
+        x: 0; y: root.title-h; width: root.width; height: root.card.win.h;
+        // Top bar: raised, lit along its top edge, shadow below.
+        Rectangle {
+            x: 0; y: 0; width: parent.width; height: 44px * zm; background: WinStyle.bar;
+            drop-shadow-offset-y: 3px * zm; drop-shadow-blur: 6px * zm; drop-shadow-color: #0000009e;
+            Rectangle { x: 0; y: parent.height - 1px; width: parent.width; height: 1px; background: WinStyle.deep; }
+            Rectangle {
+                x: 8px * zm; y: 0; width: parent.width - 16px * zm; height: 1px;
+                background: @linear-gradient(90deg, #ffffff05 0%, #ffffff29 20%, #ffffff29 80%, #ffffff05 100%);
+            }
+            // Power ring and name: one button.
+            power := Rectangle {
+                x: 8px * zm; y: 9.5px * zm; height: 24px * zm; width: name-text.preferred-width + 40px * zm;
+                accessible-role: checkbox; accessible-checked: root.card.enabled; accessible-label: root.card.name;
+                Path {
+                    x: 8px * zm; y: 4px * zm; width: 16px * zm; height: 16px * zm; viewbox-width: 16; viewbox-height: 16;
+                    commands: "M14.25 8A6.25 6.25 0 1 1 1.75 8A6.25 6.25 0 1 1 14.25 8Z";
+                    stroke: root.card.enabled ? root.card.accent : WinStyle.dim; stroke-width: 1.5px * zm; fill: transparent;
+                    opacity: power-ta.has-hover ? 0.85 : 1;
+                }
+                Path {
+                    x: 8px * zm; y: 4px * zm; width: 16px * zm; height: 16px * zm; viewbox-width: 16; viewbox-height: 16;
+                    commands: "M11 8A3 3 0 1 1 5 8A3 3 0 1 1 11 8Z"; stroke-width: 0;
+                    fill: root.card.enabled ? root.card.accent : WinStyle.dim;
+                    opacity: power-ta.has-hover ? 0.85 : 1;
+                }
+                name-text := Text {
+                    x: 32px * zm; height: parent.height;
+                    text: root.card.name; color: root.card.enabled ? root.card.accent : WinStyle.dim;
+                    font-size: 15px * zm; font-weight: 700; letter-spacing: -0.04 * 15px * zm; vertical-alignment: center;
+                }
+                power-ta := TouchArea { clicked => { Studio.device-power(root.card.id); } }
+            }
+            // Preset picker, right of the name.
+            Rectangle {
+                x: power.x + power.width + 12px * zm; y: 10.6px * zm; height: 24px * zm; width: preset-row.preferred-width;
+                accessible-role: combobox; accessible-label: "Preset"; accessible-value: root.card.preset;
+                preset-row := HorizontalLayout {
+                    spacing: 5px * zm;
+                    Text {
+                        text: root.card.preset != "" ? root.card.preset : "Presets"; font-size: 12px * zm; font-weight: 500; letter-spacing: -0.01 * 12px * zm;
+                        color: preset-ta.has-hover ? root.card.accent.mix(#ffffff, 0.7) : root.card.accent; vertical-alignment: center;
+                    }
+                    Path {
+                        width: 10px * zm; height: 10px * zm; y: (24px - 10px) * zm / 2;
+                        viewbox-width: 24; viewbox-height: 24; commands: "M6 9l6 6 6-6"; fill: transparent;
+                        stroke: root.card.accent; stroke-width: 1.3px; stroke-line-cap: round; stroke-line-join: round;
+                        opacity: preset-ta.has-hover ? 1 : 0.7;
+                    }
+                }
+                preset-ta := TouchArea { clicked => { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); } }
+            }
+        }
+        for b in root.card.win.boxes: Rectangle {
+            x: b.x; y: b.y; width: b.w; height: b.h;
+            border-radius: b.kind == 0 || b.kind == 4 ? 8px * zm : b.kind == 2 ? b.h / 2 : 0;
+            background: b.kind == 0 ? WinStyle.raised : b.kind == 1 ? WinStyle.hairline : b.kind == 2 || b.kind == 4 ? WinStyle.deep : WinStyle.hairline-strong;
+            drop-shadow-offset-y: b.kind == 0 ? 1px : 0; drop-shadow-blur: b.kind == 0 ? 6px * zm : 0; drop-shadow-color: #00000059;
+            opacity: (b.kind == 2 || b.kind == 3) && !root.card.enabled ? 0.45 : 1;
+            if b.kind == 0: Rectangle {
+                x: 8px * zm; y: 0; width: parent.width - 16px * zm; height: 1px;
+                background: @linear-gradient(90deg, #ffffff05 0%, #ffffff29 20%, #ffffff29 80%, #ffffff05 100%);
+            }
+            if b.kind == 0: Rectangle { x: 0; y: parent.height - 1px; width: parent.width; height: 1px; background: #00000047; border-radius: 8px * zm; }
+        }
+        if root.card.win.display.visible: DeviceCanvas {
+            x: root.card.win.display.x; y: root.card.win.display.y; width: root.card.win.display.w; height: root.card.win.display.h;
+            device: root.card.id; f: root.card.win.display; accent: root.card.accent; window: true;
+        }
+        if root.card.win.square.visible: Rectangle {
+            x: root.card.win.square.x; y: root.card.win.square.y; width: root.card.win.square.w; height: root.card.win.square.h;
+            border-radius: 6px * zm; background: WinStyle.deep; clip: true;
+            opacity: root.card.enabled ? 1 : 0.45;
+            for p in root.card.win.square.paths: Path {
+                viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+                commands: p.commands; stroke: p.stroke; stroke-width: p.width; fill: p.fill;
+                stroke-line-join: round; stroke-line-cap: butt;
+            }
+            for t in root.card.win.square.texts: Text {
+                x: t.x; y: t.y; width: t.w; height: t.h;
+                text: t.text; color: t.color; font-size: t.size; font-weight: t.weight; vertical-alignment: center;
+            }
+        }
+        Rectangle {
+            opacity: root.card.enabled ? 1 : 0.45;
+            for m in root.card.win.meters: WinMeterView { m: m; ticks: root.card.win.ticks; }
+            for t in root.card.win.ticks: Text {
+                x: root.card.win.ticks-x; y: root.card.win.meters[0].y + t.y - 8px * zm; width: 40px * zm; height: 16px * zm;
+                text: t.text; color: WinStyle.mute; font-size: 10px * zm; font-weight: 600; vertical-alignment: center;
+                opacity: 0.85;
+            }
+        }
+        for t in root.card.win.texts: Text {
+            x: t.x; y: t.y; width: t.w; height: t.h;
+            text: t.text; color: t.color; font-size: t.size; font-weight: t.weight; letter-spacing: -0.04 * t.size;
+            horizontal-alignment: t.align == 0 ? TextHorizontalAlignment.left : t.align == 1 ? TextHorizontalAlignment.center : TextHorizontalAlignment.right;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            opacity: root.card.enabled ? 1 : 0.45;
+            for p in root.card.win.pills: WinPillView { device: root.card.id; p: p; accent: root.card.accent; on-accent: root.on-accent; }
+            for k in root.card.win.knobs: WinKnob { device: root.card.id; k: k; accent: root.card.accent; }
+        }
+    }
+    // Hairline rim over everything.
+    Rectangle { border-radius: root.border-radius; border-width: 0.5px; border-color: #ffffff26; }
+}

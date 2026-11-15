@@ -596,6 +596,17 @@ impl Engine {
         Ok(())
     }
 
+    /// Turns In / Out peak metering of a live built-in device on or off (its expanded window's meters).
+    pub fn builtin_set_metering(&self, device_id: u64, on: bool) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_builtin_set_metering(self.raw, device_id, u8::from(on)) })
+    }
+
+    /// In / Out peaks of a live built-in device since the previous call (linear):
+    /// input left, input right, output left, output right. All zero while metering is off.
+    pub fn builtin_levels(&self, device_id: u64, out: &mut [f32; 4]) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_builtin_levels(self.raw, device_id, out.as_mut_ptr()) })
+    }
+
     /// Newest analysis frame of a live built-in device (bulk visualiser data,
     /// e.g. the Spectrum's band levels; layout per device). Returns the
     /// frame's publish number: 0 = nothing published yet, unchanged = the

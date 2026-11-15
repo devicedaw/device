@@ -362,6 +362,8 @@ pub enum MenuPick {
     AddToChain(DeviceId, Item),
     /// Plugin card: show / hide a parameter.
     CardParam(DeviceId, u32),
+    /// Device window action (src/device_window.rs ACT_*): device, action, value.
+    Window(DeviceId, i32, i32),
 }
 
 #[derive(Debug, Clone)]
@@ -415,6 +417,8 @@ pub struct DevicesUi {
     pub windows: HashSet<DeviceId>,
     /// Drag offset of each device window, kept while its device exists.
     pub window_at: HashMap<DeviceId, (f32, f32)>,
+    /// Expanded device windows: section switches and In / Out meters (src/device_window.rs).
+    pub(crate) wins: crate::device_window::WinUi,
     pub latency: HashMap<DeviceId, u32>,
     last_poll: Option<Instant>,
     /// After opening a project: report load errors that show up in this window.
@@ -452,6 +456,7 @@ impl Default for DevicesUi {
             editors: HashSet::new(),
             windows: HashSet::new(),
             window_at: HashMap::new(),
+            wins: Default::default(),
             latency: HashMap::new(),
             last_poll: None,
             report_until: None,
@@ -1180,6 +1185,17 @@ impl Controller {
         card
     }
 
+    /// Card of a device window: the card, with the expanded view when the device has one.
+    fn window_card(&self, d: &Device) -> DeviceCard {
+        let mut card = self.card_for(d, false);
+        if let Some(def) = dstudio_core::builtin::def_of(d)
+            && let Some(win) = self.window_view(d, def, card.accent)
+        {
+            card.win = win;
+        }
+        card
+    }
+
     fn card_body(&self, d: &Device, instrument: bool) -> DeviceCard {
         if let Some(def) = dstudio_core::builtin::def_of(d) {
             return self.builtin_card(d, def);
@@ -1492,6 +1508,7 @@ impl Controller {
             Some(MenuPick::Preset(device, n)) => return self.panel_load_preset(device, n),
             Some(MenuPick::Choice(device, index, choice)) => return self.panel_choice(device, index, choice),
             Some(MenuPick::View(device, code)) => return self.editor_pick(device, code),
+            Some(MenuPick::Window(device, action, value)) => return self.win_action(device, action, value),
             Some(MenuPick::Param(device, param, v)) => return self.panel_pick_param(device, param, v),
             Some(MenuPick::Mode(device, _, mode)) => return self.panel_pick_mode(device, mode),
             Some(MenuPick::Automate(device, p)) => return self.mod_automate(device, p),
@@ -1688,7 +1705,7 @@ impl Controller {
         let mut ids: Vec<DeviceId> = self.devices.windows.iter().copied().collect();
         ids.sort_by_key(|id| id.0);
         let mut wins: Vec<DeviceCard> =
-            ids.iter().filter_map(|id| self.project().device(*id).cloned()).map(|d| self.card_for(&d, false)).collect();
+            ids.iter().filter_map(|id| self.project().device(*id).cloned()).map(|d| self.window_card(&d)).collect();
         for (i, c) in wins.iter_mut().enumerate() {
             (c.win_dx, c.win_dy) = self.devices.window_at.get(&DeviceId(c.id as u64)).copied().unwrap_or_default();
             if let Some(old) = slint::Model::row_data(&*self.window_cards_model, i) {
