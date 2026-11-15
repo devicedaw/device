@@ -550,8 +550,9 @@ impl Controller {
             return;
         }
         if self.devices.windows.remove(&id) {
-            // Closed: the engine stops measuring its In / Out peaks.
+            // Closed: the engine stops measuring its In / Out peaks and its spectrum.
             let _ = self.engine.builtin_set_metering(id.0, false);
+            let _ = self.engine.builtin_set_spectrum(id.0, 0);
         } else {
             self.devices.windows.insert(id);
         }

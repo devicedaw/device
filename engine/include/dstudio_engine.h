@@ -1278,6 +1278,21 @@ int32_t se_builtin_set_metering(se_engine* engine, uint64_t device_id, uint8_t o
  * -> SE_ERR_INVALID_ARG. */
 int32_t se_builtin_levels(se_engine* engine, uint64_t device_id, float* out);
 
+/* The analyser of a built-in device's expanded window: mode 0 off, 1 the
+ * device's input (Pre), 2 its output (Post). While it is on the audio thread
+ * measures a 128-bin log-spaced level spectrum (20 Hz .. 20 kHz, dBFS, floor
+ * -90) of that signal, about every 20 ms.
+ * MAIN THREAD. Unknown or non-built-in device -> SE_ERR_NOT_FOUND; mode > 2
+ * -> SE_ERR_INVALID_ARG. */
+int32_t se_builtin_set_spectrum(se_engine* engine, uint64_t device_id, uint8_t mode);
+
+/* Newest analyser frame of a built-in device: up to capacity bins into out,
+ * *out_count = bins copied (0 before the first frame), *out_seq = its frame
+ * number (0 = none yet), so a poll can skip a frame it has drawn.
+ * MAIN THREAD. Unknown or non-built-in device -> SE_ERR_NOT_FOUND. */
+int32_t se_builtin_spectrum(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count,
+                            uint64_t* out_seq);
+
 /* ---- modulation (ABI v1 addition) -----------------------------------------
  * See docs/devices.md ("Modulation") and dstudio_core::modulation.
  *

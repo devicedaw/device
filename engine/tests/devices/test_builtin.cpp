@@ -412,3 +412,63 @@ TEST_CASE(builtin_metering_reports_in_and_out_peaks_without_allocating) {
     CHECK_EQ(se_builtin_levels(e, 999, lv), SE_ERR_NOT_FOUND);
     CHECK_EQ(se_builtin_levels(e, 10, nullptr), SE_ERR_INVALID_ARG);
 }
+
+TEST_CASE(builtin_window_spectrum_measures_pre_and_post) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = load_asset(e, {sine(48000, 1000.0, 48000.0, 0.5), sine(48000, 1000.0, 48000.0, 0.5)});
+    DeviceSession s;
+    auto& tr = s.add_track(1, a, 48000);
+    // A compressor with a -24 dB threshold leaves the -6 dBFS tone's frequency
+    // where it is, which is all the bins are checked for.
+    DeviceSession::add_device(tr, 10, "compressor", kComp);
+    REQUIRE(s.publish(e) == SE_OK);
+    REQUIRE(se_transport_play(e) == SE_OK);
+    std::vector<float> buf(2 * 256);
+    float bins[256];
+    size_t n = 99;
+    uint64_t seq = 99;
+
+    // Off by default: no frame.
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    REQUIRE(se_builtin_spectrum(e, 10, bins, 256, &n, &seq) == SE_OK);
+    CHECK_EQ(n, size_t{0});
+    CHECK_EQ(seq, uint64_t{0});
+
+    REQUIRE(se_builtin_set_spectrum(e, 10, 1) == SE_OK); // builds the analyser (main thread)
+    const long before = rt_alloc_count();
+    for (int i = 0; i < 40; ++i) {
+        RtAllocGuard g;
+        REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    }
+    CHECK_EQ(rt_alloc_count() - before, 0);
+    REQUIRE(se_builtin_spectrum(e, 10, bins, 256, &n, &seq) == SE_OK);
+    REQUIRE(n == size_t{128});
+    CHECK(seq > 0);
+    // Bin i is centred on 20 Hz * 1000^(i/127): 1 kHz is bin ~72.
+    int top = 0;
+    for (int i = 1; i < 128; ++i)
+        if (bins[i] > bins[top]) top = i;
+    CHECK(top >= 70 && top <= 74);
+    CHECK(bins[top] > -8.0f && bins[top] < -4.0f); // a 0.5 sine is -6 dBFS
+    CHECK(bins[10] < -60.0f);                      // far from the tone
+    CHECK(bins[125] < -60.0f);
+
+    // Post measures too; reading again without a new frame keeps the number.
+    REQUIRE(se_builtin_set_spectrum(e, 10, 2) == SE_OK);
+    for (int i = 0; i < 40; ++i) REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    uint64_t seq2 = 0;
+    REQUIRE(se_builtin_spectrum(e, 10, bins, 256, &n, &seq2) == SE_OK);
+    CHECK(seq2 > seq);
+    uint64_t seq3 = 0;
+    REQUIRE(se_builtin_spectrum(e, 10, bins, 256, &n, &seq3) == SE_OK);
+    CHECK_EQ(seq3, seq2);
+    // Off: no new frames.
+    REQUIRE(se_builtin_set_spectrum(e, 10, 0) == SE_OK);
+    for (int i = 0; i < 40; ++i) REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    REQUIRE(se_builtin_spectrum(e, 10, bins, 256, &n, &seq3) == SE_OK);
+    CHECK_EQ(seq3, seq2);
+
+    CHECK_EQ(se_builtin_set_spectrum(e, 999, 1), SE_ERR_NOT_FOUND);
+    CHECK_EQ(se_builtin_set_spectrum(e, 10, 3), SE_ERR_INVALID_ARG);
+    CHECK_EQ(se_builtin_spectrum(e, 10, bins, 256, nullptr, &seq3), SE_ERR_INVALID_ARG);
+}

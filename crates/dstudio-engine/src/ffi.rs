@@ -998,6 +998,15 @@ unsafe extern "C" {
     pub fn se_builtin_readouts(engine: *mut se_engine, device_id: u64, out: *mut f32, capacity: usize, out_count: *mut usize) -> i32;
     pub fn se_builtin_set_metering(engine: *mut se_engine, device_id: u64, on: u8) -> i32;
     pub fn se_builtin_levels(engine: *mut se_engine, device_id: u64, out: *mut f32) -> i32;
+    pub fn se_builtin_set_spectrum(engine: *mut se_engine, device_id: u64, mode: u8) -> i32;
+    pub fn se_builtin_spectrum(
+        engine: *mut se_engine,
+        device_id: u64,
+        out: *mut f32,
+        capacity: usize,
+        out_count: *mut usize,
+        out_seq: *mut u64,
+    ) -> i32;
     pub fn se_builtin_analysis(
         engine: *mut se_engine,
         device_id: u64,
