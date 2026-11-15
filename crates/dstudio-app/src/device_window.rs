@@ -77,6 +77,8 @@ pub(crate) const ACT_ANALYZER: i32 = 7;
 pub(crate) const ACT_HOLD: i32 = 8;
 /// Character Mod: play the next take (seed).
 pub(crate) const ACT_SEED: i32 = 9;
+/// Dynamics windows: the history's length (value: index into 1 s, 4 s, 10 s).
+pub(crate) const ACT_SPAN: i32 = 10;
 const PILL_GHOST: i32 = 6;
 /// Character Mod's Mode parameter of each circuit (Ensemble has none).
 const CM_MODES: [Option<&str>; 11] = dstudio_core::builtin::character_mod::MODE_PARAMS;
@@ -88,7 +90,12 @@ pub(crate) const MENU_ANALYZER: i32 = -4;
 
 /// Devices with an expanded window.
 pub(crate) fn has_window(def: &DeviceDef) -> bool {
-    matches!(def.id, "auto-filter" | "channeleq" | "character-eq") || is_field_window(def)
+    matches!(def.id, "auto-filter" | "channeleq" | "character-eq") || is_field_window(def) || is_dynamics_window(def)
+}
+
+/// Windows of the level-history family (src/device_window_dynamics.rs).
+fn is_dynamics_window(def: &DeviceDef) -> bool {
+    crate::device_window_dynamics::spec(def.id).is_some()
 }
 
 /// Windows of the plotted-field family (motion and response pictures).
@@ -127,6 +134,9 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         "phaser" => field_kit(WIN_W, 374.0, 56.0, 44.0),
         "ring-mod" => field_kit(860.0, 254.0, 40.0, 29.0),
         "character-mod" => field_kit(WIN_W, 222.0, 60.0, 44.0),
+        // The level-history family: the plot's ladder in a 52 pt column, the caption band above.
+        "compressor" | "limiter" | "gate" => field_kit(WIN_W, 394.0, 52.0, 6.0),
+        "glue-compressor" => field_kit(WIN_W, 282.0, 52.0, 6.0),
         _ => eq(56.0, 394.0),
     }
 }
@@ -156,6 +166,11 @@ pub(crate) struct WinUi {
     /// Analyser frames of open windows.
     spectra: HashMap<DeviceId, Spectrum>,
     clock: Option<Instant>,
+    /// Level histories of the open dynamics windows, and the window each shows (s).
+    history: HashMap<DeviceId, std::collections::VecDeque<crate::device_window_dynamics::Sample>>,
+    span: HashMap<DeviceId, f32>,
+    /// Start of the histories' clock.
+    epoch: Option<Instant>,
 }
 
 /// Which signal a window's analyser shows.
@@ -541,6 +556,7 @@ impl Controller {
             Some(View::Eq(v)) => self.eq_window_field(d, def, v, accent),
             Some(View::Custom("auto-filter")) => self.auto_filter_window_field(d, def, accent),
             Some(View::Field(f)) => self.field_window_canvas(d, def, f, &k, accent),
+            _ if is_dynamics_window(def) => self.dynamics_window_canvas(d, def, &k, accent),
             _ => PanelCanvas::default(),
         };
         display.x = (dx + k.plot.0) * Z;
@@ -549,6 +565,7 @@ impl Controller {
             "auto-filter" => self.auto_filter_window(d, def, &mut b),
             "channeleq" => self.channel_eq_window(d, def, &mut b),
             "character-eq" => self.character_eq_window(d, def, &mut b),
+            _ if is_dynamics_window(def) => self.dynamics_window(d, def, &mut b, dy + dh + 12.0),
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
         let (meters, ticks, ticks_x) = self.window_meters(d.id, &k);
@@ -644,6 +661,31 @@ impl Controller {
             .filter(|id| self.project().device(*id).and_then(dstudio_core::builtin::def_of).is_some_and(has_window))
             .collect();
         self.devices.wins.meters.retain(|id, _| open.contains(id));
+        self.devices.wins.history.retain(|id, _| open.contains(id));
+        let epoch = *self.devices.wins.epoch.get_or_insert(now);
+        let t = now.duration_since(epoch).as_secs_f64();
+        let mut out = Vec::new();
+        for &id in &open {
+            let Some(sp) = self
+                .project()
+                .device(id)
+                .and_then(dstudio_core::builtin::def_of)
+                .and_then(|def| crate::device_window_dynamics::spec(def.id))
+            else {
+                continue;
+            };
+            if self.devices.wins.held.contains(&id) {
+                continue;
+            }
+            let (i, o, g) = match self.engine.builtin_readouts(id.0, &mut out) {
+                Ok(()) if out.len() >= 3 => (out[0], out[1], out[2].min(0.0)),
+                _ => (-120.0, -120.0, 0.0),
+            };
+            let h = self.devices.wins.history.entry(id).or_default();
+            if crate::device_window_dynamics::push(h, (t, i, o, g), sp.bottom) {
+                self.ui_dirty = true;
+            }
+        }
         self.devices.wins.spectra.retain(|id, _| open.contains(id));
         let mut frame = Vec::new();
         for &id in &open {
@@ -1037,6 +1079,170 @@ impl Controller {
         rack.y + rack.h + 16.0
     }
 
+    // ------------------------------------------------------------ Dynamics family
+
+    pub(crate) fn win_span(&self, id: DeviceId, sp: &crate::device_window_dynamics::DynSpec) -> f32 {
+        self.devices.wins.span.get(&id).copied().unwrap_or(sp.span)
+    }
+
+    pub(crate) fn win_held(&self, id: DeviceId) -> bool {
+        self.devices.wins.held.contains(&id)
+    }
+
+    pub(crate) fn win_history(&self, id: DeviceId) -> Option<&std::collections::VecDeque<crate::device_window_dynamics::Sample>> {
+        self.devices.wins.history.get(&id)
+    }
+
+    /// The histories' clock now (s).
+    pub(crate) fn win_now(&self) -> f64 {
+        self.devices.wins.epoch.map_or(0.0, |e| Instant::now().duration_since(e).as_secs_f64())
+    }
+
+    pub(crate) fn project_playing(&self) -> bool {
+        self.engine.transport().playing
+    }
+
+    /// Header and control cards of a level-history window: the window lengths (and the
+    /// Compressor's Hold view and style), then the device's controls with its transfer square.
+    fn dynamics_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let Some(sp) = crate::device_window_dynamics::spec(def.id) else { return y };
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        // Header, from the right: the style pills, Hold view, then the window lengths.
+        let span = self.win_span(d.id, &sp);
+        let mut x = b.w - INSET;
+        if def.id == "compressor" {
+            let style = val("style").round() as i32;
+            let items: Vec<(String, bool, i32)> = ["Clean", "Opto", "Punch", "Smooth"]
+                .iter()
+                .enumerate()
+                .map(|(i, l)| (l.to_string(), style == i as i32, i as i32))
+                .collect();
+            let w = Builder::row_w(&["Clean", "Opto", "Punch", "Smooth"], 8.0);
+            x -= w;
+            b.pill_row(PILL_CHOICE, idx("style"), x, 7.5, &items, 8.0, true);
+            b.rect(BOX_HEADER_RULE, x - 17.0, 11.5, 1.0, 20.0);
+            x -= 34.0 + 77.5;
+            b.pill(PILL_GHOST_LATCH, ACT_HOLD, 0, x, 10.5, 77.5, "Hold view", self.win_held(d.id));
+            b.rect(BOX_HEADER_RULE, x - 17.0, 11.5, 1.0, 20.0);
+            x -= 34.0;
+        }
+        let widths = [33.2, 36.1, 40.8];
+        x -= widths.iter().sum::<f32>() + 2.0 * 8.0;
+        for (i, (s, w)) in crate::device_window_dynamics::SPANS.iter().zip(widths).enumerate() {
+            b.pill(PILL_GHOST, ACT_SPAN, i as i32, x, 10.5, w, &format!("{s:.0}s"), (span - s).abs() < 1e-3);
+            x += w + 8.0;
+        }
+
+        let sidechain = || {
+            let source = match d.sidechain {
+                None => "None".to_string(),
+                Some(t) => self.project().track(t).map_or_else(|| "Removed".to_string(), |t| t.name.clone()),
+            };
+            Item::Picker(-1, source, "Sidechain", 112.0, false)
+        };
+        let square = Item::Blank(86.0);
+        let row = Row::main(y);
+        let clusters: Vec<(Vec<Item>, f32)> = match def.id {
+            "compressor" => vec![
+                (vec![Item::Knob("threshold", "Threshold", 2, 70.0, false), Item::Knob("ratio", "Ratio", 2, 70.0, false)], 10.0),
+                (
+                    vec![
+                        Item::Knob("attack", "Attack", 1, 52.0, false),
+                        Item::Knob("release", "Release", 1, 52.0, false),
+                        Item::Knob("knee", "Knee", 1, 52.0, false),
+                        Item::Knob("makeup_gain", "Gain", 1, 52.0, false),
+                        Item::Knob("mix", "Mix", 1, 52.0, false),
+                    ],
+                    10.0,
+                ),
+                (vec![sidechain(), Item::Knob("sidechain_gain", "Sidechain Gain", 1, 82.0, d.sidechain.is_none())], 10.0),
+                (vec![square], 10.0),
+                (vec![Item::Knob("output_gain", "Output", 1, 52.0, false)], 10.0),
+            ],
+            "limiter" => vec![
+                (vec![Item::Knob("input_gain", "Input", 1, 64.0, false)], 14.0),
+                (vec![Item::Knob("ceiling", "Ceiling", 2, 70.0, false), Item::Knob("release", "Release", 1, 64.0, false)], 14.0),
+                (vec![Item::Knob("lookahead", "Lookahead", 1, 64.0, false), Item::Toggle("true_peak", "True Peak", false)], 14.0),
+                (vec![square], 14.0),
+                (vec![Item::Knob("mix", "Mix", 1, 64.0, false), Item::Knob("output_gain", "Output", 1, 64.0, false)], 14.0),
+            ],
+            "gate" => vec![
+                (vec![Item::Knob("threshold", "Threshold", 2, 70.0, false), Item::Knob("ratio", "Ratio", 1, 64.0, false)], 14.0),
+                (
+                    vec![
+                        Item::Knob("attack", "Attack", 1, 64.0, false),
+                        Item::Knob("hold", "Hold", 1, 64.0, false),
+                        Item::Knob("release", "Release", 1, 64.0, false),
+                    ],
+                    14.0,
+                ),
+                (vec![square], 14.0),
+                (
+                    vec![
+                        Item::Knob("lookahead", "Lookahead", 1, 64.0, false),
+                        Item::Knob("sidechain_hpf", "Sidechain HPF", 1, 82.0, false),
+                    ],
+                    14.0,
+                ),
+                (vec![Item::Knob("mix", "Mix", 1, 64.0, false)], 14.0),
+            ],
+            _ => {
+                // The unit is in the column's name: the pills carry the numbers alone.
+                let pills = |id: &'static str| -> Vec<(&'static str, f32)> {
+                    def.param(id).map_or_else(Vec::new, |p| {
+                        p.choices.iter().enumerate().map(|(i, c)| (c.split(' ').next().unwrap_or(c), i as f32)).collect()
+                    })
+                };
+                vec![
+                    (vec![Item::Knob("threshold", "Threshold", 2, 64.0, false), Item::Pills("ratio", pills("ratio"), "Ratio", 125.0)], 9.0),
+                    (vec![square], 9.0),
+                    (
+                        vec![
+                            Item::Pills("attack", pills("attack"), "Attack (ms)", 248.0),
+                            Item::Pills("release", pills("release"), "Release (s)", 207.0),
+                        ],
+                        9.0,
+                    ),
+                ]
+            }
+        };
+        // The square's column: find it to place the transfer canvas.
+        let widths: Vec<f32> = clusters
+            .iter()
+            .map(|(items, gap)| items.iter().map(Item::width).sum::<f32>() + gap * (items.len().saturating_sub(1)) as f32)
+            .collect();
+        let sq_at = clusters.iter().position(|(items, _)| items.len() == 1 && matches!(items[0], Item::Blank(w) if w == 86.0));
+        self.win_card(d, def, b, row, clusters);
+        if let Some(i) = sq_at {
+            let (xs, _) = gutter(INSET, b.w - 2.0 * INSET, &widths);
+            let mut sq = self.dynamics_square(d, def, accent_of(b));
+            sq.x = (xs[i] + 4.0) * Z;
+            sq.y = (row.top() + 4.0) * Z;
+            b.square = sq;
+        }
+        if def.id != "glue-compressor" {
+            return row.y + row.h + 16.0;
+        }
+        let pills = |id: &'static str| -> Vec<(&'static str, f32)> {
+            def.param(id).map_or_else(Vec::new, |p| p.choices.iter().enumerate().map(|(i, c)| (*c, i as f32)).collect())
+        };
+        let rack = Row::rack(row.y + row.h + 12.0);
+        self.win_card(
+            d,
+            def,
+            b,
+            rack,
+            vec![
+                (vec![sidechain(), Item::Pills("sc_hpf", pills("sc_hpf"), "SC HPF (Hz)", 207.0)], 9.0),
+                (vec![Item::Knob("range", "Range", 1, 52.0, false), Item::Knob("makeup", "Makeup", 1, 52.0, false)], 9.0),
+                (vec![Item::Knob("color", "Color", 1, 52.0, false), Item::Knob("mix", "Mix", 1, 52.0, false)], 9.0),
+                (vec![Item::Knob("output_gain", "Output", 1, 52.0, false)], 9.0),
+            ],
+        );
+        rack.y + rack.h + 16.0
+    }
+
     // ------------------------------------------------------------ EQs
 
     /// Band pills of an EQ header: the selected band lit, bands out of the chain dimmed.
@@ -1361,6 +1567,10 @@ impl Controller {
                 let next = p.min + (cur + step).rem_euclid(span) as f32;
                 self.panel_commit(Command::SetDeviceParam { device, param: p.id.into(), value: next });
             }
+            (ACT_SPAN, _) => {
+                let span = crate::device_window_dynamics::SPANS[value.clamp(0, 2) as usize];
+                self.devices.wins.span.insert(device, span);
+            }
             (ACT_HOLD, _) => {
                 if !self.devices.wins.held.remove(&device) {
                     self.devices.wins.held.insert(device);
@@ -1553,6 +1763,72 @@ mod tests {
         }
     }
 
+    /// The dynamics windows: the level display with its threshold grip, a transfer square,
+    /// every control once inside the face, and span pills that pick the history window.
+    #[test]
+    fn dynamics_windows_show_levels_and_every_control() {
+        use slint::Model;
+        for id in ["compressor", "limiter", "gate", "glue-compressor"] {
+            let (mut c, did, def) = controller_with(id);
+            assert!(has_window(def), "{id}");
+            let v = view(&c, did, def);
+            assert!(v.display.visible && v.display.zones.row_count() == 1, "{id}: threshold drag");
+            assert!(v.square.visible && v.square.paths.row_count() > 0, "{id}: transfer square");
+            let mut params = std::collections::HashSet::new();
+            for k in v.knobs.iter() {
+                assert!(k.x >= 0.0 && k.x <= v.w && k.y > 0.0 && k.y < v.h, "{id}: {} outside", k.label);
+                assert!(params.insert(k.param), "{id}: {} shown twice", k.label);
+            }
+            let lit = |c: &Controller| {
+                view(c, did, def).pills.iter().filter(|p| p.param == ACT_SPAN && p.active).map(|p| p.label.to_string()).collect::<Vec<_>>()
+            };
+            c.win_action(did, ACT_SPAN, 0);
+            assert_eq!(lit(&c), ["1s"], "{id}");
+            c.win_action(did, ACT_SPAN, 2);
+            assert_eq!(lit(&c), ["10s"], "{id}");
+        }
+    }
+
+    /// A full ten-second history draws as one line per series, however many samples it holds.
+    #[test]
+    fn dynamics_history_draws_once_per_series() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("compressor");
+        let empty = view(&c, did, def).display.paths.row_count();
+        let h: std::collections::VecDeque<_> = (0..600).map(|i| (i as f64 / 60.0, -12.0, -18.0, -6.0)).collect();
+        c.devices.wins.history.insert(did, h);
+        c.devices.wins.epoch = Some(Instant::now() - std::time::Duration::from_secs(10));
+        let full = view(&c, did, def).display.paths.row_count();
+        assert!(full > empty && full < empty + 12, "{empty} -> {full}");
+    }
+
+    /// Cost of rebuilding a dynamics window with a full history, against its card
+    /// (`cargo test -p dstudio-app --release bench_dynamics_windows -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn bench_dynamics_windows() {
+        let n = 500;
+        for id in ["compressor", "limiter", "gate", "glue-compressor"] {
+            let (mut c, did, def) = controller_with(id);
+            let h: std::collections::VecDeque<_> =
+                (0..630).map(|i| (i as f64 / 60.0, -12.0 + (i as f32 * 0.1).sin() * 6.0, -18.0, -6.0)).collect();
+            c.devices.wins.history.insert(did, h);
+            c.devices.wins.epoch = Some(Instant::now() - std::time::Duration::from_millis(10_500));
+            let d = c.project().device(did).unwrap().clone();
+            let t0 = std::time::Instant::now();
+            for _ in 0..n {
+                std::hint::black_box(c.builtin_card(&d, def));
+            }
+            let card = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
+            let t0 = std::time::Instant::now();
+            for _ in 0..n {
+                std::hint::black_box(view(&c, did, def));
+            }
+            let win = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
+            println!("{id:<15} card {card:7.1} us   window {win:7.1} us");
+        }
+    }
+
     /// Character Mod: two cards; the rack drops the artifacts a circuit lacks, and the
     /// Seed pill plays the next take, wrapping at the end.
     #[test]
@@ -1596,7 +1872,7 @@ mod tests {
         assert!(seen[1].iter().any(|n| n == "Threshold"), "{:?}", seen[1]);
         assert!(seen[4].iter().any(|n| n == "Amount"), "{:?}", seen[4]);
         // A device without a window keeps its card.
-        let (c, did, def) = controller_with("compressor");
+        let (c, did, def) = controller_with("device-rack");
         assert!(!has_window(def));
         let d = c.project().device(did).unwrap().clone();
         assert!(c.window_view(&d, def, Color::from_rgb_u8(0, 0, 0)).is_none());

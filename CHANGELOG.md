@@ -37,3 +37,6 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
 - An expanded window for Character Mod: the circuit's motion in its own unit (delay, sweep, gain or pan) with the
   band it travels and a legend, the circuit and LFO controls on one card, and a rack card with Input, the circuit's
   artifacts, Depth-M and Depth-S, Seed (click for the next take), Mono and Output.
+- Expanded windows for Compressor, Limiter, Gate and Glue Compressor: the last 1, 4 or 10 seconds of input, output and
+  gain reduction (Hold view freezes it) under a threshold or ceiling line you can drag, a transfer curve with the live
+  operating point beside the main controls, In and Out meters and every control laid out in rows.

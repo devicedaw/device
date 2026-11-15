@@ -64,7 +64,8 @@ flowchart LR
   expanded window (`device_window.rs`, `ui/device_window.slint`) when the
   device has one (`device_window::has_window`; Auto Filter, Channel EQ,
   Character EQ and the plotted-field family: Tremolo, Auto-Panner, Chorus,
-  Flanger, Phaser, Ring Mod and Character Mod), otherwise the card itself in a window. A
+  Flanger, Phaser, Ring Mod and Character Mod; and the dynamics family:
+  Compressor, Limiter, Gate and Glue Compressor), otherwise the card itself in a window. A
   window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same
@@ -75,7 +76,15 @@ flowchart LR
   series; dragging the plot moves the card field's two parameters. Character
   Mod's picture reads in its circuit's own unit (ms delay, Hz sweep, dB gain or
   pan) with the band its series travel, and its rack card drops the artifacts
-  a circuit lacks; its Seed pill plays the next take (`ACT_SEED`). The
+  a circuit lacks; its Seed pill plays the next take (`ACT_SEED`). A dynamics
+  window's display (`device_window_dynamics.rs`) is a level history: each
+  meter poll appends the device's input, output and gain reduction
+  (`builtin_readouts`) to a ring of the last 10.5 s, and the display draws the
+  span the header pills pick (1, 4 or 10 s, `ACT_SPAN`) as a gain-reduction lane
+  over a dBFS level plot, one pixel per dB in both, with the threshold (or
+  ceiling) as a dashed line you drag. Hold view freezes the history. Each
+  device's first card carries a transfer square: the static curve of the
+  card's law over −48..0 dB with the knee and the live operating point. The
   meters read `se_builtin_set_metering` / `se_builtin_levels`
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app

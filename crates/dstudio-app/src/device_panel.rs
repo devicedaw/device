@@ -441,7 +441,7 @@ pub fn soft_knee_gr(x: f32, threshold: f32, ratio: f32, knee: f32) -> f32 {
 /// Static transfer curve (output dB for input dB) of a knob face, the input
 /// level the axis is laid out around and the span its knee highlight covers.
 /// None for \`Face::Transfer\`, whose curve the device computes.
-fn face_law(face: Face, num: impl Fn(&str) -> f32) -> Option<(Box<dyn Fn(f32) -> f32>, f32, (f32, f32))> {
+pub(crate) fn face_law(face: Face, num: impl Fn(&str) -> f32) -> Option<(Box<dyn Fn(f32) -> f32>, f32, (f32, f32))> {
     Some(match face {
         Face::SoftKneeCurve { threshold, ratio, knee } => {
             let (t, r, k) = (num(threshold), num(ratio), num(knee).max(0.0));
