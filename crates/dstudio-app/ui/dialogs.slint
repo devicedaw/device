@@ -20,12 +20,13 @@ component PillButton inherits Rectangle {
     in property <bool> primary;
     in property <length> font-size: 10.2px;
     callback clicked();
+    preferred-width: label.preferred-width + 27.2px;
     border-radius: self.height / 2;
     background: root.primary ? (ta.has-hover ? #2a66ff : DialogTokens.accent) : (ta.has-hover ? #2e2f34 : DialogTokens.pill);
     drop-shadow-blur: 2.5px; drop-shadow-offset-y: 0.65px; drop-shadow-color: #00000040;
     accessible-role: button; accessible-label: root.text;
     accessible-action-default => { root.clicked(); }
-    Text { text: root.text; color: root.primary ? #ffffff : DialogTokens.pill-text; font-size: root.font-size; font-weight: 600; letter-spacing: -0.2px; horizontal-alignment: center; vertical-alignment: center; }
+    label := Text { text: root.text; color: root.primary ? #ffffff : DialogTokens.pill-text; font-size: root.font-size; font-weight: 600; letter-spacing: -0.2px; horizontal-alignment: center; vertical-alignment: center; }
     ta := TouchArea { clicked => { root.clicked(); } }
 }
 
@@ -218,6 +219,27 @@ export component UpdatesModal inherits Rectangle {
         color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: top;
     }
     PillButton { x: root.width - 17px - 40.8px; y: root.height - 17px - 27.2px; width: 40.8px; height: 27.2px; text: "OK"; primary: true; clicked => { Studio.updates-close(); } }
+}
+
+// "Change project key?" when a project with a key and MIDI clips gets a new key. The same
+// alert modal as Check for Updates (400 pt wide, 24 pt corners, 20 pt padding, 16 pt title,
+// 12 pt body, 32 pt pill buttons 8 pt apart, 16 pt side padding); Transpose MIDI is primary.
+export component KeyChangeModal inherits Rectangle {
+    width: 340px; height: 132.6px;
+    border-radius: 20.4px; background: DialogTokens.surface;
+    border-width: 0.45px; border-color: #ffffff22;
+    drop-shadow-blur: 21px; drop-shadow-offset-y: 6.8px; drop-shadow-color: #00000080;
+    accessible-role: groupbox; accessible-label: "Change project key?";
+    TouchArea { }
+    Text { x: 17px; y: 17px; height: 13.6px; text: "Change project key?"; color: #ffffff; font-size: 13.6px; font-weight: 700; letter-spacing: -0.54px; vertical-alignment: center; }
+    Text {
+        x: 17px; y: 40.8px; width: root.width - 34px; height: 30.6px; wrap: word-wrap;
+        text: Studio.key-change-text;
+        color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: top;
+    }
+    transpose := PillButton { x: root.width - 17px - self.width; y: root.height - 17px - 27.2px; width: self.preferred-width; height: 27.2px; text: "Transpose MIDI"; primary: true; clicked => { Studio.key-change-choose(2); } }
+    keep := PillButton { x: transpose.x - 6.8px - self.width; y: transpose.y; width: self.preferred-width; height: 27.2px; text: "Don’t transpose"; clicked => { Studio.key-change-choose(1); } }
+    PillButton { x: keep.x - 6.8px - self.width; y: transpose.y; width: self.preferred-width; height: 27.2px; text: "Cancel"; clicked => { Studio.key-change-choose(0); } }
 }
 
 component HistoryButton inherits Rectangle {

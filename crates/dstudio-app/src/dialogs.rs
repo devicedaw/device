@@ -397,6 +397,7 @@ impl Controller {
         }
         self.updates_open = false;
         self.undo_history_open = false;
+        self.key_change = None;
         self.ui_dirty = true;
     }
 
@@ -994,6 +995,10 @@ impl Controller {
         s.set_export_open(self.export.open);
         s.set_unsaved_open(self.unsaved_open);
         s.set_updates_open(self.updates_open);
+        s.set_key_change_open(self.key_change.is_some());
+        if let Some(k) = &self.key_change {
+            s.set_key_change_text(k.message().into());
+        }
         s.set_app_version(env!("CARGO_PKG_VERSION").into());
         s.set_undo_history_open(self.undo_history_open);
         s.set_undo_history_current(self.doc.undo_depth() as i32);

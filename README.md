@@ -48,6 +48,7 @@ wgpu.
   several and move, duplicate, copy, paste, disable or delete them together. Drag the square handles at an audio
   clip's top corners to fade it in and out. Set the tempo in the
   transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
+  A new key for a project with MIDI clips offers to transpose them with it.
   Press W to fit the song (or the selected clips) to the width of the timeline, and H to fit every track into its height.
   Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
   Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected
