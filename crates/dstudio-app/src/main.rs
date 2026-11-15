@@ -682,7 +682,10 @@ fn parse_args() -> Result<Args, String> {
                 | "review-shortcuts-unmapped"
                 | "review-shortcuts-tracks"
                 | "review-shortcuts-notes"
-                | "review-shortcuts-transpose") => {
+                | "review-shortcuts-transpose"
+                | "review-shortcuts-strip"
+                | "review-shortcuts-zoom"
+                | "review-shortcuts-move") => {
                     a.reference_default = true;
                     a.shortcuts_review = match st {
                         "review-shortcuts-recording" => 2,
@@ -690,12 +693,15 @@ fn parse_args() -> Result<Args, String> {
                         "review-shortcuts-tracks" => 4,
                         "review-shortcuts-notes" => 5,
                         "review-shortcuts-transpose" => 6,
+                        "review-shortcuts-strip" => 7,
+                        "review-shortcuts-zoom" => 8,
+                        "review-shortcuts-move" => 9,
                         _ => 1,
                     };
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -900,7 +906,8 @@ fn key_name(text: &str) -> Option<String> {
         "\u{7f}" => "Delete",
         "\u{8}" => "Backspace",
         "\u{1b}" => "Escape",
-        "\t" => "Tab",
+        // Slint sends ⇧Tab as Backtab.
+        "\t" | "\u{19}" => "Tab",
         "\u{F700}" => "Up",
         "\u{F701}" => "Down",
         "\u{F702}" => "Left",
@@ -1004,6 +1011,28 @@ pub fn app_keymap() -> Keymap {
     ] {
         let chords = chords.iter().map(|c| Chord::parse(c).expect("valid chord")).collect();
         k.bindings.push(Binding { action: action.into(), chords, when: Condition::MidiEditorFocused });
+    }
+    // Listed with no default key (record one in Settings › Shortcuts).
+    for (action, when) in [
+        ("clip.move_to_track_above", Condition::ClipsSelected),
+        ("clip.move_to_track_below", Condition::ClipsSelected),
+        ("midi.glue", Condition::MidiEditorFocused),
+    ] {
+        k.bindings.push(Binding { action: action.into(), chords: Vec::new(), when });
+    }
+    // The open mixer: ←/↑ and →/↓ select the strip before or after the selected one.
+    // ⇧Tab switches the bottom panel between the clip editor and the devices.
+    // Interface zoom: ⌘= (⌘+, ⌃=) in, ⌘- (⌃-) out, ⌘0 (⌃0) back to 100 %.
+    for (action, chords, when) in [
+        ("mixer.select_prev", &["left", "up"][..], Condition::MixerOpen),
+        ("mixer.select_next", &["right", "down"][..], Condition::MixerOpen),
+        ("view.switch_bottom_tab", &["shift+tab"][..], Condition::ClipOrDevicesFocused),
+        ("view.ui_zoom_in", &["primary+=", "primary+plus", "ctrl+="][..], Condition::Always),
+        ("view.ui_zoom_out", &["primary+-", "ctrl+-"][..], Condition::Always),
+        ("view.ui_zoom_reset", &["primary+0", "ctrl+0"][..], Condition::Always),
+    ] {
+        let chords = chords.iter().map(|c| Chord::parse(c).expect("valid chord")).collect();
+        k.bindings.push(Binding { action: action.into(), chords, when });
     }
     k
 }
@@ -1163,6 +1192,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.ui_dirty = true;
         }
         "clip.reverse" => ctl.borrow_mut().reverse_clip(),
+        "clip.move_to_track_above" => ctl.borrow_mut().move_clips_to_next_track(-1),
+        "clip.move_to_track_below" => ctl.borrow_mut().move_clips_to_next_track(1),
         "transport.loop_selection" => ctl.borrow_mut().loop_selection(),
         "track.add_instrument" => {
             ctl.borrow_mut().add_instrument_track();
@@ -1184,12 +1215,19 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
                 c.group_tracks(&[t]);
             }
         }
+        // 0 or M: mute the selected clips, else the selected track.
         "track.mute" => {
             let mut c = ctl.borrow_mut();
-            if let Some(t) = c.selected_track {
+            if !c.selected_clips().is_empty() {
+                c.toggle_clip_disabled();
+            } else if let Some(t) = c.selected_track {
                 c.toggle_mute(t)
             }
         }
+        "midi.glue" => ctl.borrow_mut().pr_glue(),
+        "mixer.select_prev" => ctl.borrow_mut().select_strip_step(-1),
+        "mixer.select_next" => ctl.borrow_mut().select_strip_step(1),
+        "view.switch_bottom_tab" => ctl.borrow_mut().switch_bottom_tab(),
         "transport.record" => ctl.borrow_mut().record_toggle(),
         "app.settings" => ctl.borrow_mut().toggle_settings(),
         "track.arm" => {
@@ -2451,11 +2489,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if args.shortcuts_review == 2 {
             c.settings.keys.recording = Some("transport.tap_tempo");
         }
-        // Searches that show the Tracks section, the piano roll's note keys and the clip transpose keys.
+        // Searches that show the Tracks section, the piano roll's note keys, the clip transpose
+        // keys, the strip and track selection keys, the zoom keys and the move keys.
         match args.shortcuts_review {
             4 => c.shortcuts_search("track"),
             5 => c.shortcuts_search("notes"),
             6 => c.shortcuts_search("transpose"),
+            7 => c.shortcuts_search("strip"),
+            8 => c.shortcuts_search("zoom"),
+            9 => c.shortcuts_search("move"),
             _ => {}
         }
         if args.shortcuts_review == 3 {
@@ -3227,6 +3269,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     None => return false,
                 },
             };
+            // ⌘+ is ⇧= on most layouts: the chord is "⌘ +", without the shift.
+            let shift = shift && key != "+";
             let chord = Chord { key, primary, shift, alt, ctrl };
             // Settings › Shortcuts is recording keys for an action: this chord is them.
             if !repeat
@@ -3238,12 +3282,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 return true;
             }
-            // View › Zoom In (⌘= / ⌘+), Zoom Out (⌘-), Reset Zoom (⌘0).
-            if primary && !alt && !ctrl {
-                let step = match chord.key.as_str() {
-                    "=" | "+" => Some(1),
-                    "-" | "_" => Some(-1),
-                    "0" if !shift => Some(0),
+            // View › Zoom In (⌘= / ⌘+ / ⌃=), Zoom Out (⌘- / ⌃-), Reset Zoom (⌘0 / ⌃0): any time,
+            // Settings included.
+            {
+                let zoom_action = ctl.try_borrow().ok().and_then(|c| {
+                    c.settings
+                        .keys
+                        .map
+                        .resolve(&chord, &Context { text_input_focused: app_text_focused(&aw), ..Default::default() })
+                        .map(str::to_owned)
+                });
+                let step = match zoom_action.as_deref() {
+                    Some("view.ui_zoom_in") => Some(1),
+                    Some("view.ui_zoom_out") => Some(-1),
+                    Some("view.ui_zoom_reset") => Some(0),
                     _ => None,
                 };
                 if let Some(step) = step {
@@ -3288,12 +3340,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 Context {
                     mixer_open: c.mixer_open,
                     text_input_focused: app_text_focused(&aw),
-                    track_selected: c.selected_track.is_some(),
+                    // A selected clip counts as its track selected (0 / M mute the clip then).
+                    track_selected: c.selected_track.is_some() || !c.selected_clips().is_empty(),
                     track_header_selected: c.selected_track.is_some() && c.selected_clip.is_none() && !c.pr.focused,
                     clips_selected: c.selected_clips().len(),
                     midi_clip_selected: c.selected_clips().iter().any(|id| c.project().midi_clip(*id).is_some()),
                     midi_editor_focused: c.pr_visible() && c.pr.focused,
                     section_selected: c.selected_section.is_some(),
+                    clip_or_devices_focused: c.bottom_panel_shown(),
                     ..Default::default()
                 }
             };

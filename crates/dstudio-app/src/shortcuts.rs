@@ -46,12 +46,13 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("edit.copy", "Copy selected clips"),
             ("edit.paste", "Paste"),
             ("clip.delete", "Delete selected clips"),
-            ("clip.disable", "Mute clip"),
             ("clip.octave_up", "Transpose clip up one octave"),
             ("clip.octave_down", "Transpose clip down one octave"),
             ("clip.transpose_up", "Transpose clip up one semitone"),
             ("clip.transpose_down", "Transpose clip down one semitone"),
             ("clip.quantize", "Quantize notes"),
+            ("clip.move_to_track_above", "Move clips to track above"),
+            ("clip.move_to_track_below", "Move clips to track below"),
         ],
     ),
     (
@@ -65,7 +66,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("track.add_audio", "Add audio track"),
             ("track.arm", "Arm / disarm selected track"),
             ("view.toggle_automation", "Show / hide automation"),
-            ("track.mute", "Mute track"),
+            ("track.mute", "Mute clip / track"),
             ("track.solo", "Solo selected track"),
             ("track.monitor", "Input monitoring on / off"),
             ("track.fold", "Fold / unfold selected tracks"),
@@ -78,11 +79,17 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("view.toggle_bottom_panel", "Show / hide bottom panel"),
             ("view.toggle_mixer", "Show / hide mixer"),
+            ("view.switch_bottom_tab", "Switch between clip editor and devices"),
             ("view.fit_width", "Zoom to fit the song"),
             ("view.fit_height", "Fit track heights to view"),
             ("draw_mode.toggle", "Draw mode (automation pencil)"),
+            ("mixer.select_prev", "Select previous mixer strip"),
+            ("mixer.select_next", "Select next mixer strip"),
             ("track.select_prev", "Select previous track"),
             ("track.select_next", "Select next track"),
+            ("view.ui_zoom_in", "Zoom interface in"),
+            ("view.ui_zoom_out", "Zoom interface out"),
+            ("view.ui_zoom_reset", "Reset interface zoom"),
             ("view.zoom_in", "Zoom timeline in"),
         ],
     ),
@@ -115,6 +122,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("midi.nudge_right", "Move notes right a grid step"),
             ("midi.nudge_bar_left", "Move notes left a bar"),
             ("midi.nudge_bar_right", "Move notes right a bar"),
+            ("midi.glue", "Glue notes"),
             ("midi.select_all", "Select all notes"),
             ("midi.delete_notes", "Delete selected notes"),
             ("midi.reverse", "Reverse selected notes"),
@@ -208,6 +216,40 @@ impl Controller {
             self.select_track(rows[next]);
             self.ui_dirty = true;
         }
+    }
+
+    /// ←/↑ and →/↓ with the mixer open: the strip before or after the selected one (every track
+    /// and return, strips hidden in a folded group skipped). With none selected, the first or last.
+    pub fn select_strip_step(&mut self, dir: i32) {
+        let p = self.project();
+        let strips: Vec<dstudio_core::TrackId> = p.tracks.iter().filter(|t| !self.hidden_by_fold(t)).map(|t| t.id).collect();
+        let Some(&edge) = (if dir < 0 { strips.first() } else { strips.last() }) else { return };
+        let next = match self.selected_track.and_then(|id| strips.iter().position(|t| *t == id)) {
+            Some(cur) => strips[(cur as i32 + dir).clamp(0, strips.len() as i32 - 1) as usize],
+            None => {
+                if dir < 0 {
+                    edge
+                } else {
+                    strips[0]
+                }
+            }
+        };
+        if Some(next) != self.selected_track {
+            self.select_track(next);
+            self.ui_dirty = true;
+        }
+    }
+
+    /// The bottom panel shows the clip editor or the devices (not the mixer, not shut).
+    pub fn bottom_panel_shown(&self) -> bool {
+        !self.mixer_open && self.selected_track.is_some() && !self.bottom_collapsed()
+    }
+
+    /// ⇧Tab: switch the bottom panel between the clip editor and the devices.
+    pub fn switch_bottom_tab(&mut self) {
+        use crate::controller::BottomTab;
+        let tab = if self.bottom_tab == BottomTab::Clip { BottomTab::Devices } else { BottomTab::Clip };
+        self.set_bottom_tab(tab);
     }
 
     /// U: fold or unfold the selected group (or the group the selected track plays into).

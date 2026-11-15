@@ -1650,6 +1650,17 @@ impl Controller {
         self.commit_notes(clip.id, Self::replace_notes(&clip, &changed), Some("Change Velocity"));
     }
 
+    /// Glue notes: the selected notes of each pitch become one note (first start to last end).
+    pub fn pr_glue(&mut self) {
+        let Some(clip) = self.pr_clip().cloned() else { return };
+        let ids: Vec<u32> = self.pr.selected.iter().copied().collect();
+        let notes = midi::glue(&clip.notes, &ids);
+        if notes.len() < clip.notes.len() {
+            self.pr.selected.retain(|id| notes.iter().any(|n| n.id == *id));
+            self.commit_notes(clip.id, notes, Some("Glue Notes"));
+        }
+    }
+
     /// ←/→ one grid step, ⇧←/⇧→ one bar: the selected notes move in time, never before the
     /// clip's start.
     pub fn pr_nudge(&mut self, steps: i32, bar: bool) {

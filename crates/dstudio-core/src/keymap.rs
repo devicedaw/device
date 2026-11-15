@@ -58,6 +58,9 @@ fn normalize_key(k: &str) -> Option<String> {
         "comma",
         "period",
     ];
+    if k == "plus" {
+        return Some("+".into());
+    }
     if k.chars().count() == 1 {
         return Some(k.to_ascii_uppercase());
     }
@@ -85,7 +88,8 @@ impl Chord {
                 s.push_str(m);
             }
         }
-        s.push_str(&self.key.to_ascii_lowercase());
+        // "+" also separates the parts, so it is saved by name.
+        s.push_str(if self.key == "+" { "plus" } else { &self.key }.to_ascii_lowercase().as_str());
         s
     }
 
@@ -200,8 +204,10 @@ impl Condition {
     fn specificity(self) -> u8 {
         match self {
             Condition::Always => 0,
-            Condition::TrackSelected | Condition::MixerOpen | Condition::ClipOrDevicesFocused => 1,
-            Condition::TrackHeaderSelected
+            Condition::TrackSelected | Condition::ClipOrDevicesFocused => 1,
+            // The open mixer's strip keys (←/→, ↑/↓) win over the selected track's ↑/↓.
+            Condition::MixerOpen
+            | Condition::TrackHeaderSelected
             | Condition::ClipsSelected
             | Condition::ClipOrSectionSelected
             | Condition::CatalogFocused
@@ -305,7 +311,6 @@ impl Keymap {
                 b("clip.split_at_range", &["primary+e"], RangeSelected),
                 b("clip.split_at_marker", &["primary+e"], ClipSelected),
                 b("clip.reverse", &["primary+r"], ClipSelected),
-                b("clip.disable", &["0"], ClipsSelected),
                 b("clip.consolidate", &["primary+j"], ClipsSelected),
                 b("clip.bounce_to_track", &["primary+b"], ClipsSelected),
                 b("fx.duplicate", &["primary+d"], FxSlotSelected),
@@ -323,7 +328,8 @@ impl Keymap {
                 b("track.delete", &["delete", "backspace"], TrackHeaderSelected),
                 b("track.add_audio", &["primary+t"], Always),
                 b("track.add_instrument", &["primary+shift+t"], Always),
-                b("track.mute", &["m"], TrackSelected),
+                // Mutes the selected clips, or the selected track when no clip is selected.
+                b("track.mute", &["0", "m"], TrackSelected),
                 b("track.solo", &["s"], TrackSelected),
                 b("file.new", &["primary+n"], Always),
                 b("file.save", &["primary+s"], Always),
@@ -367,13 +373,14 @@ mod tests {
 
     #[test]
     fn spec_round_trips_and_badges_read_in_order() {
-        for s in ["primary+shift+z", "space", "alt+up", "ctrl+alt+k", "primary+comma"] {
+        for s in ["primary+shift+z", "space", "alt+up", "ctrl+alt+k", "primary+comma", "primary+plus", "ctrl+-", "primary+="] {
             let c = ch(s);
             assert_eq!(Chord::parse(&c.spec()), Some(c.clone()), "{s}");
         }
         assert_eq!(ch("primary+shift+up").badges(), ["⌘", "⇧", "↑"]);
         assert_eq!(ch("shift+alt+down").badges(), ["⇧", "⌥", "↓"]);
         assert_eq!(ch("space").badges(), ["Space"]);
+        assert_eq!(ch("primary+plus").badges(), ["⌘", "+"]);
     }
 
     #[test]

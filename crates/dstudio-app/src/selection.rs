@@ -167,6 +167,34 @@ impl Controller {
         self.execute(Command::Batch { label: format!("Move {n} Clips"), commands: cmds });
     }
 
+    /// Move clips to track above / below: every selected clip moves to the nearest track in that
+    /// direction where all of them land on a track of their own kind (audio on audio, MIDI on
+    /// instrument), keeping its start. One undo step; nothing happens at the edge.
+    pub fn move_clips_to_next_track(&mut self, dir: isize) {
+        let places = self.selection_places();
+        if places.is_empty() {
+            return;
+        }
+        let p = self.project();
+        let kinds: Vec<_> = p.tracks.iter().map(|t| t.kind).collect();
+        let starts: Vec<(usize, Ticks)> = places.iter().map(|&(_, t, s, _)| (t, s)).collect();
+        let Some(d) = (1..kinds.len() as isize).map(|i| i * dir).find(|&d| group_offset(0, d, &starts, &kinds).1 == d) else {
+            return;
+        };
+        let cmds: Vec<Command> = places
+            .iter()
+            .map(|&(clip, t, start, midi)| {
+                let track = p.tracks[(t as isize + d) as usize].id;
+                if midi { Command::MoveMidiClip { clip, track, start } } else { Command::MoveClip { clip, track, start } }
+            })
+            .collect();
+        let focus = p.tracks[(places[0].1 as isize + d) as usize].id;
+        let label = if cmds.len() == 1 { "Move Clip".to_string() } else { format!("Move {} Clips", cmds.len()) };
+        if self.execute(Command::Batch { label, commands: cmds }) {
+            self.select_track(focus);
+        }
+    }
+
     /// ⌘D with several clips: copies of all of them right after the selection's span, keeping
     /// their tracks and spacing. The copies become the selection.
     pub(crate) fn duplicate_clips(&mut self) {
