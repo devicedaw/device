@@ -182,9 +182,10 @@ component KeyChord inherits Rectangle {
     border-width: 0.75px;
     border-color: @linear-gradient(180deg, #3a3b3f 0%, #2a2b2e 45%, #222326 100%);
     row := HorizontalLayout {
-        padding-left: 3px; padding-right: 3px; padding-top: 2px; padding-bottom: 2px; spacing: 2.5px;
+        padding-left: 2.5px; padding-right: 2.5px; padding-top: 2px; padding-bottom: 2px; spacing: 2px;
         for p in root.parts: Rectangle {
-            width: max(17px, t.preferred-width + 11px);
+            // One glyph (⌘, L, ↑) is a round badge; a name (Space, Esc) a wider one.
+            width: p.character-count > 1 ? t.preferred-width + 11px : 16.5px;
             height: 13.85px;
             border-radius: 6.9px;
             background: #2b2c30;
@@ -229,9 +230,10 @@ component ShortcutsPage inherits Rectangle {
         if search.text == "": Text { x: 26px; text: "Search actions or keys"; color: #95969b; font-size: 9.5px; vertical-alignment: center; }
         search := TextInput {
             x: 26px; width: parent.width - 34px; height: parent.height;
+            text: Studio.shortcut-search;
             color: Tokens.text-primary; font-size: 9.5px; vertical-alignment: center; single-line: true;
             accessible-label: "Search actions or keys";
-            edited => { Studio.shortcuts-search(self.text); }
+            edited => { Studio.shortcut-search = self.text; Studio.shortcuts-search(self.text); }
             changed has-focus => { Studio.search-focused = self.has-focus; }
         }
     }
@@ -275,9 +277,9 @@ component ShortcutsPage inherits Rectangle {
                     }
                     if !r.recording && r.chords.length == 0: Unmapped { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
                     if !r.recording && r.chords.length > 0: HorizontalLayout {
-                        alignment: center; spacing: 4.5px;
+                        alignment: center; spacing: 3.5px;
                         for c[ci] in r.chords: HorizontalLayout {
-                            spacing: 4.5px;
+                            spacing: 3.5px;
                             if ci > 0: Text { text: "or"; color: #6e6f74; font-size: 9px; font-weight: 500; vertical-alignment: center; }
                             VerticalLayout { alignment: center; KeyChord { parts: c.parts; } }
                         }

@@ -159,6 +159,21 @@ fn key(app: &AppWindow, text: impl Into<SharedString> + Clone, primary: bool, sh
     }
 }
 
+/// Press `text` with Alt (⌥) held, and the primary modifier too when `primary`.
+fn key_alt(app: &AppWindow, text: impl Into<SharedString> + Clone, primary: bool) {
+    let w = app.window();
+    if primary {
+        dispatch(w, WindowEvent::KeyPressed { text: Key::Control.into() });
+    }
+    dispatch(w, WindowEvent::KeyPressed { text: Key::Alt.into() });
+    dispatch(w, WindowEvent::KeyPressed { text: text.clone().into() });
+    dispatch(w, WindowEvent::KeyReleased { text: text.into() });
+    dispatch(w, WindowEvent::KeyReleased { text: Key::Alt.into() });
+    if primary {
+        dispatch(w, WindowEvent::KeyReleased { text: Key::Control.into() });
+    }
+}
+
 fn type_text(app: &AppWindow, s: &str) {
     let w = app.window();
     for ch in s.chars() {
@@ -1088,17 +1103,25 @@ fn midi_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "typing off: the header button is off and A sounds nothing",
+            "typing off: the header button is off and A sounds nothing (it is the Show / hide automation key again)",
             Box::new(move |c, a| {
                 let ok = !c.typing.active && !a.global::<Studio>().get_typing_on() && c.engine.preview().notes == 0 && c.typing.lit() == 0;
-                (ok && c.doc.history_labels().len() == hp5.get()).then_some(()).ok_or(format!(
-                    "active {} held {}",
+                (ok && c.auto.shown && c.doc.history_labels().len() == hp5.get()).then_some(()).ok_or(format!(
+                    "active {} held {} automation shown {}",
                     c.typing.active,
-                    c.engine.preview().notes
+                    c.engine.preview().notes,
+                    c.auto.shown
                 ))
             }),
         ),
-        DoC("pen back on for the sections after", Box::new(|_, ctl| ctl.borrow_mut().pr.pen = true)),
+        DoC(
+            "pen back on and automation hidden for the sections after",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.pr.pen = true;
+                c.auto_toggle_shown();
+            }),
+        ),
         DoC(
             "click the E3 note at beat 0, press Up",
             Box::new(|a, ctl| {
@@ -3911,7 +3934,7 @@ fn steps() -> Vec<Step> {
                     .ok_or(format!("{} tracks", p.tracks.len()))
             }),
         ),
-        Do("Cmd+Shift+X (view.toggle_mixer)", Box::new(|a| key(a, "X", true, true))),
+        Do("Cmd+Opt+M (view.toggle_mixer)", Box::new(|a| key_alt(a, "m", true))),
         Check(
             "mixer closed by the shortcut, bottom panel back",
             Box::new(|c, a| {
@@ -4332,7 +4355,7 @@ fn returns_steps() -> Vec<Step> {
                 ))
             }),
         ),
-        Do("returns: open the mixer (Cmd+Shift+X)", Box::new(|a| key(a, "X", true, true))),
+        Do("returns: open the mixer (Cmd+Opt+M)", Box::new(|a| key_alt(a, "m", true))),
         Check(
             "returns: mixer open, Sends collapsed",
             Box::new(|c, a| {
@@ -4394,7 +4417,7 @@ fn returns_steps() -> Vec<Step> {
         ),
         Do("returns: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         Check("returns: send restored, still pre-fader", Box::new(move |c, _| one_send(c, true))),
-        Do("returns: close the mixer", Box::new(|a| key(a, "X", true, true))),
+        Do("returns: close the mixer", Box::new(|a| key_alt(a, "m", true))),
         DoC(
             "returns: route track 1 to Return A (as an older project could), then delete Return A",
             Box::new(|_, ctl| {
@@ -4723,9 +4746,9 @@ fn recording_steps() -> Vec<Step> {
                 (c.project().tracks[0].monitor && a.global::<Studio>().get_sel_monitor()).then_some(()).ok_or("monitor off".into())
             }),
         ),
-        Do("rec: Shift+I (track.monitor)", Box::new(|a| key(a, "I", false, true))),
+        Do("rec: I (track.monitor)", Box::new(|a| key(a, "i", false, false))),
         Check(
-            "rec: ⇧I turned monitoring off, one undo step",
+            "rec: the I key turned monitoring off, one undo step",
             Box::new(move |c, _| {
                 one(&h8, c, "Input Monitoring Change")?;
                 (!c.project().tracks[0].monitor).then_some(()).ok_or("monitor on".into())
@@ -12597,6 +12620,172 @@ fn shortcut_page_steps() -> Vec<Step> {
     ]
 }
 
+fn default_key_steps() -> Vec<Step> {
+    use Step::*;
+    let clip: Rc<Cell<Option<dstudio_core::ClipId>>> = Rc::new(Cell::new(None));
+    let (c0, c1, c2, c3, c4) = (clip.clone(), clip.clone(), clip.clone(), clip.clone(), clip.clone());
+    let tracks = Rc::new(Cell::new(0usize));
+    let (t0, t1, t2) = (tracks.clone(), tracks.clone(), tracks.clone());
+    fn notes(c: &Controller, id: Option<dstudio_core::ClipId>) -> Vec<dstudio_core::midi::Note> {
+        id.and_then(|id| c.project().midi_clip(id)).map(|m| m.notes.clone()).unwrap_or_default()
+    }
+    fn last_label(c: &Controller) -> String {
+        c.doc.history_labels().last().cloned().unwrap_or_default()
+    }
+    vec![
+        DoC(
+            "keys: a MIDI clip with a C4 on the Instrument track, selected on the timeline",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.mixer_open = false;
+                let Some(track) = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id) else { return };
+                let mut m = dstudio_core::MidiClip::empty(96 * dstudio_core::PPQ, 4 * dstudio_core::PPQ);
+                m.notes = vec![dstudio_core::midi::Note { id: 1, pitch: 60, start: 0, length: dstudio_core::PPQ, velocity: 100 }];
+                c.execute(dstudio_core::Command::AddMidiClip { track, clip: m });
+                let Some(id) =
+                    c.project().track(track).and_then(|t| t.midi_clips.iter().find(|m| m.start == 96 * dstudio_core::PPQ)).map(|m| m.id)
+                else {
+                    return;
+                };
+                c.select_track(track);
+                c.select_clip(Some(id));
+                c.pr.focused = false;
+                c0.set(Some(id));
+            }),
+        ),
+        Do("keys: ⇧↑ (transpose clip up one semitone)", Box::new(|a| key(a, Key::UpArrow, false, true))),
+        Check(
+            "keys: the clip's C4 is a C♯4, one undo step \"Transpose Clip\"",
+            Box::new(move |c, _| {
+                let n = notes(c, c1.get());
+                (n.first().is_some_and(|n| n.pitch == 61) && last_label(c) == "Transpose Clip")
+                    .then_some(())
+                    .ok_or(format!("notes {n:?} last {:?}", last_label(c)))
+            }),
+        ),
+        Do("keys: ⌘⇧↓ (transpose clip down one octave)", Box::new(|a| key(a, Key::DownArrow, true, true))),
+        Check(
+            "keys: down an octave to C♯3",
+            Box::new(move |c, _| {
+                let n = notes(c, c2.get());
+                n.first().is_some_and(|n| n.pitch == 49).then_some(()).ok_or(format!("notes {n:?}"))
+            }),
+        ),
+        DoC(
+            "keys: focus the piano roll, select the note, ⌘↑ then ⇧→",
+            Box::new(|a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    c.pr.focused = true;
+                    c.pr_select_all();
+                }
+                key(a, Key::UpArrow, true, false);
+                key(a, Key::RightArrow, false, true);
+            }),
+        ),
+        Check(
+            "keys: velocity 101 and the note a bar later; the clip itself was not transposed",
+            Box::new(move |c, _| {
+                let n = notes(c, c3.get());
+                let bar = c.project().ticks_per_bar();
+                n.first().is_some_and(|n| n.velocity == 101 && n.start == bar && n.pitch == 49).then_some(()).ok_or(format!("notes {n:?}"))
+            }),
+        ),
+        DoC(
+            "keys: back on the timeline, select the first track, press ↓",
+            Box::new(move |a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    c.pr.focused = false;
+                    c.select_clip(None);
+                    let first = c.project().tracks[0].id;
+                    c.select_track(first);
+                    if let Some(id) = c4.get() {
+                        c.execute(dstudio_core::Command::RemoveMidiClip { clip: id });
+                    }
+                }
+                key(a, Key::DownArrow, false, false);
+            }),
+        ),
+        Check(
+            "keys: ↓ selected the second track",
+            Box::new(|c, _| {
+                let want = c.project().tracks.get(1).map(|t| t.id);
+                (c.selected_track == want).then_some(()).ok_or(format!("selected {:?} want {want:?}", c.selected_track))
+            }),
+        ),
+        Do("keys: ↑", Box::new(|a| key(a, Key::UpArrow, false, false))),
+        Check(
+            "keys: ↑ went back to the first track",
+            Box::new(|c, _| {
+                (c.selected_track == Some(c.project().tracks[0].id)).then_some(()).ok_or(format!("selected {:?}", c.selected_track))
+            }),
+        ),
+        DoC(
+            "keys: ⌘⇧D on the first track's header",
+            Box::new(move |a, ctl| {
+                t0.set(ctl.borrow().project().tracks.len());
+                key(a, "d", true, true);
+            }),
+        ),
+        Check(
+            "keys: a copy of the track with its clips, one undo step",
+            Box::new(move |c, _| {
+                (c.project().tracks.len() == t1.get() + 1).then_some(()).ok_or(format!("{} tracks", c.project().tracks.len()))
+            }),
+        ),
+        DoC(
+            "keys: undo the copy, group the first track, U",
+            Box::new(|a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    c.undo();
+                    let first = c.project().tracks[0].id;
+                    c.group_tracks(&[first]);
+                    if let Some(g) = c.project().tracks.iter().find(|t| t.is_group()).map(|t| t.id) {
+                        c.select_track(g);
+                    }
+                }
+                key(a, "u", false, false);
+            }),
+        ),
+        Check(
+            "keys: U folded the group",
+            Box::new(move |c, _| {
+                let g = c.project().tracks.iter().find(|t| t.is_group()).map(|t| t.id);
+                (g.is_some_and(|g| c.collapsed.contains(&g)) && c.project().tracks.len() == t2.get() + 1)
+                    .then_some(())
+                    .ok_or(format!("group {g:?} collapsed {:?}", c.collapsed))
+            }),
+        ),
+        Do(
+            "keys: U, then ⌘⇧G",
+            Box::new(|a| {
+                key(a, "u", false, false);
+                key(a, "g", true, true);
+            }),
+        ),
+        Check(
+            "keys: unfolded, and ⌘⇧G ungrouped it",
+            Box::new(|c, _| {
+                (c.collapsed.is_empty() && !c.project().tracks.iter().any(|t| t.is_group()))
+                    .then_some(())
+                    .ok_or(format!("collapsed {:?}", c.collapsed))
+            }),
+        ),
+        DoC(
+            "keys: A",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().auto.shown = false;
+                key(a, "a", false, false);
+            }),
+        ),
+        Check("keys: A showed automation", Box::new(|c, _| c.auto.shown.then_some(()).ok_or("automation hidden".into()))),
+        Do("keys: A again", Box::new(|a| key(a, "a", false, false))),
+        Check("keys: A hid it", Box::new(|c, _| (!c.auto.shown).then_some(()).ok_or("automation shown".into()))),
+    ]
+}
+
 fn automation_lane_steps() -> Vec<Step> {
     use Step::*;
     use dstudio_core::{AutoPoint, AutomationLane, AutomationTarget};
@@ -15622,6 +15811,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(key_change_steps());
     all.extend(automation_lane_steps());
     all.extend(shortcut_page_steps());
+    all.extend(default_key_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());
