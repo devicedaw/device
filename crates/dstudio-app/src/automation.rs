@@ -370,6 +370,8 @@ pub fn touch_merge(base: &AutomationLane, start: Ticks, end: Ticks, new: &[(Tick
 #[derive(Debug, Clone)]
 pub struct Picker {
     pub key: LaneKey,
+    /// Opened from an expanded row's pill: the pick replaces that extra lane.
+    pub extra: Option<usize>,
     /// Window position of the popup's top-left corner.
     pub pos: (f32, f32),
     pub query: String,
@@ -409,6 +411,9 @@ pub struct AutoUi {
     /// Parameter shown per track (UI state, not saved). Default: Track › Volume.
     pub targets: HashMap<LaneKey, AutomationTarget>,
     pub expanded: HashSet<TrackId>,
+    /// The extra lanes of an expanded track once they were changed with + / × or the picker
+    /// (UI state, not saved). Until then a track's extra lanes are its other lanes with points.
+    pub extra: HashMap<TrackId, Vec<AutomationTarget>>,
     pub picker: Option<Picker>,
     /// Selected points: lane and point indices.
     pub sel: Option<(LaneKey, AutomationTarget, Vec<usize>)>,
@@ -433,6 +438,7 @@ impl AutoUi {
         self.targets.clear();
         self.device_names.borrow_mut().clear();
         self.expanded.clear();
+        self.extra.clear();
         self.picker = None;
         self.sel = None;
         self.gesture = None;
@@ -576,13 +582,81 @@ impl Controller {
         }
     }
 
-    /// Other lanes of a track with points (the expandable "automated lanes").
+    /// The rows an expanded track shows below it: the lanes added with + (or changed with the
+    /// picker), else its other lanes with points. Never the lane the track row shows.
     pub fn extra_targets(&self, track: TrackId) -> Vec<AutomationTarget> {
         let shown = self.auto_target(Some(track));
+        if let Some(list) = self.auto.extra.get(&track) {
+            return list.iter().filter(|t| **t != shown).cloned().collect();
+        }
         self.project()
             .track(track)
             .map(|t| t.automation.iter().filter(|l| !l.points.is_empty() && l.target != shown).map(|l| l.target.clone()).collect())
             .unwrap_or_default()
+    }
+
+    /// The first parameter in the picker's order that the track shows in no row yet.
+    fn next_free_target(&self, track: TrackId) -> Option<AutomationTarget> {
+        let mut used = self.extra_targets(track);
+        used.push(self.auto_target(Some(track)));
+        self.pick_categories(Some(track)).into_iter().flat_map(|(_, e)| e).filter_map(|e| e.target).find(|t| !used.contains(t))
+    }
+
+    /// + below an expanded row: a lane for the next free parameter right after row `index`.
+    pub fn auto_add_extra(&mut self, track: TrackId, index: usize) {
+        let Some(t) = self.next_free_target(track) else { return };
+        let mut list = self.extra_targets(track);
+        list.insert((index + 1).min(list.len()), t);
+        self.auto.extra.insert(track, list);
+        self.auto_sync_view();
+        self.ui_dirty = true;
+    }
+
+    /// × on an expanded row, or the row menu's Close lane: the row goes, its automation stays.
+    /// Closing the last row folds the track's lanes.
+    pub fn auto_close_extra(&mut self, track: TrackId, index: usize) {
+        let mut list = self.extra_targets(track);
+        if index >= list.len() {
+            return;
+        }
+        list.remove(index);
+        if list.is_empty() {
+            self.auto.expanded.remove(&track);
+            self.auto.extra.remove(&track);
+        } else {
+            self.auto.extra.insert(track, list);
+        }
+        self.auto.sel = None;
+        self.auto_sync_view();
+        self.ui_dirty = true;
+    }
+
+    /// The row menu's Delete <parameter> automation: the lane's points go (one step), the row stays.
+    pub fn auto_delete_extra(&mut self, track: TrackId, index: usize) {
+        let Some(target) = self.extra_targets(track).get(index).cloned() else { return };
+        // Keep the row while its lane goes.
+        let list = self.extra_targets(track);
+        self.auto.extra.insert(track, list);
+        if self.model_lane(Some(track), &target).is_some() {
+            self.auto.sel = None;
+            self.execute(Command::SetAutomationLane { track: Some(track), target, lane: None });
+        }
+        self.ui_dirty = true;
+    }
+
+    /// Right-click on an expanded row's pill: Delete <parameter> automation (when it has
+    /// points) and Close lane.
+    pub fn open_auto_lane_menu(&mut self, track: TrackId, index: usize, wx: f32, wy: f32) {
+        let Some(target) = self.extra_targets(track).get(index).cloned() else { return };
+        let has_points = self.model_lane(Some(track), &target).is_some_and(|l| !l.points.is_empty());
+        let mut items = Vec::new();
+        if has_points {
+            items.push((crate::controller::MenuAction::AutoLaneDelete, true));
+        }
+        items.push((crate::controller::MenuAction::AutoLaneClose, true));
+        let win = self.devices.win;
+        self.open_menu(items, wx, wy, win);
+        self.menu.auto_lane = Some((track, index));
     }
 
     /// Mirror the row layout into the view (expanded rows, master height).
@@ -853,9 +927,16 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// The chevron under a track's pill. Expanding a track with no extra lanes opens one for
+    /// the next free parameter (Pan on a fresh track).
     pub fn auto_toggle_expanded(&mut self, track: TrackId) {
         if !self.auto.expanded.remove(&track) {
             self.auto.expanded.insert(track);
+            if self.extra_targets(track).is_empty()
+                && let Some(t) = self.next_free_target(track)
+            {
+                self.auto.extra.insert(track, vec![t]);
+            }
         }
         self.auto_sync_view();
         self.ui_dirty = true;
@@ -942,7 +1023,8 @@ impl Controller {
 
     /// Open the "Automation parameter" popup below a pill (window coordinates of its bottom-left).
     pub fn auto_open_picker(&mut self, key: LaneKey, x: f32, y: f32) {
-        self.auto.picker = Some(Picker { key, pos: (x, y + 1.5), query: String::new(), sub: None, rows: Vec::new(), sub_rows: Vec::new() });
+        self.auto.picker =
+            Some(Picker { key, extra: None, pos: (x, y + 1.5), query: String::new(), sub: None, rows: Vec::new(), sub_rows: Vec::new() });
         self.ui_dirty = true;
     }
 
@@ -961,6 +1043,19 @@ impl Controller {
     }
 
     pub(crate) fn auto_choose(&mut self, key: LaneKey, target: AutomationTarget) {
+        // From an expanded row's pill: that row shows the parameter instead.
+        if let (Some(track), Some(i)) = (key, self.auto.picker.as_ref().and_then(|p| p.extra)) {
+            let mut list = self.extra_targets(track);
+            if i < list.len() && !list.contains(&target) && target != self.auto_target(key) {
+                list[i] = target;
+                self.auto.extra.insert(track, list);
+            }
+            self.auto.picker = None;
+            self.auto.sel = None;
+            self.auto_sync_view();
+            self.ui_dirty = true;
+            return;
+        }
         self.auto.targets.insert(key, target);
         // Choosing a parameter from a control's menu shows the lanes, so the pick is visible.
         self.auto.shown = true;
@@ -981,6 +1076,14 @@ impl Controller {
         if let Some(Some(t)) = p.rows.get(i).cloned() {
             let key = p.key;
             self.auto_choose(key, t);
+        }
+    }
+
+    /// An expanded row's pill: the parameter picker for that lane.
+    pub fn auto_open_extra_picker(&mut self, track: TrackId, index: usize, x: f32, y: f32) {
+        self.auto_open_picker(Some(track), x, y);
+        if let Some(p) = &mut self.auto.picker {
+            p.extra = Some(index);
         }
     }
 
@@ -1705,6 +1808,8 @@ impl Controller {
     }
 
     fn push_picker(&mut self, s: &Studio) {
+        s.set_auto_picker_track(self.auto.picker.as_ref().map_or(-2, |p| p.key.map_or(-1, |t| t.0 as i32)));
+        s.set_auto_picker_extra(self.auto.picker.as_ref().and_then(|p| p.extra).map_or(-1, |i| i as i32));
         let Some(mut pk) = self.auto.picker.clone() else {
             s.set_picker_open(false);
             // The search field is destroyed with the popup without a focus-change callback.
@@ -1714,7 +1819,10 @@ impl Controller {
         const ROW: f32 = 21.0;
         const TOP: f32 = 30.5;
         let cats = self.pick_categories(pk.key);
-        let current = self.auto_target(pk.key);
+        let current = match (pk.key, pk.extra) {
+            (Some(t), Some(i)) => self.extra_targets(t).get(i).cloned().unwrap_or_else(|| self.auto_target(pk.key)),
+            _ => self.auto_target(pk.key),
+        };
         let item = |label: String, submenu: bool, enabled: bool, checked: bool, i: usize, top: f32| MenuItem {
             swatch: Default::default(),
             label: label.into(),

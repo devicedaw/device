@@ -1116,6 +1116,13 @@ export global Studio {
     callback auto-power(int, int);              // track id (-1 master), extra row index (-1 = shown lane)
     callback auto-expand(int);                  // track id
     callback auto-show-extra(int, int);         // track id, extra row index
+    callback auto-open-extra-picker(int, int, length, length); // track id, row index, window x, y of the pill's bottom-left
+    callback auto-add-extra(int, int);          // + below a row: track id, row index
+    callback auto-close-extra(int, int);        // × on a row: track id, row index
+    callback auto-lane-menu(int, int, length, length); // right-click on a row's pill: track id, row index, window x, y
+    in property <int> auto-picker-track: -2;    // the open picker's track id (-1 master)
+    in property <int> auto-picker-extra: -1;    // the open picker's expanded row, -1 for the track row
+    in property <int> auto-extra-shown-hot: -1; // review screenshots: this expanded row shows its × and + as if hovered
     callback auto-open-picker(int, length, length); // track id (-1 master), window x, y of the pill's bottom-left
     in property <bool> picker-open;
     // Height of the in-window menu bar (Linux; 0 on macOS and Windows, whose menu bars are native).

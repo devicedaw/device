@@ -12439,6 +12439,153 @@ fn key_change_steps() -> Vec<Step> {
         ),
     ]
 }
+/// Expanded automation rows: expanding a track without other lanes opens Pan, + adds the next
+/// parameter below a row, × closes a row (its automation stays), and a row's right-click menu
+/// deletes its automation or closes it. The added track and the UI state are put back at the end.
+fn automation_lane_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::{AutoPoint, AutomationLane, AutomationTarget};
+    let start: Rc<std::cell::Cell<usize>> = Rc::new(std::cell::Cell::new(0));
+    let (s1, s2) = (start.clone(), start.clone());
+    let was_shown: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
+    let (w1, w2, w3) = (was_shown.clone(), was_shown.clone(), was_shown);
+    fn last(c: &Controller) -> dstudio_core::TrackId {
+        let n = c.project().ordinary_track_count();
+        c.project().tracks[n - 1].id
+    }
+    fn rows(c: &Controller) -> Vec<AutomationTarget> {
+        c.extra_targets(last(c))
+    }
+    vec![
+        DoC(
+            "automation rows: show lanes, add an audio track at the end and expand its lanes",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                s1.set(c.doc.history_labels().len());
+                w1.set(c.auto.shown);
+                if !c.auto.shown {
+                    c.auto_toggle_shown();
+                }
+                let t = dstudio_core::Track::new(dstudio_core::TrackId(0), TrackKind::Audio, "Lanes", dstudio_core::ColorIndex(2));
+                let index = Some(c.project().ordinary_track_count());
+                c.execute(dstudio_core::Command::AddTrack { index, track: t });
+                let id = last(&c);
+                c.auto_toggle_expanded(id);
+            }),
+        ),
+        Check(
+            "automation rows: one row, Pan, and the header lists it",
+            Box::new(|c, a| {
+                let id = last(c);
+                let extras = a.global::<Studio>().get_auto_extras();
+                let shown = (0..extras.row_count()).filter_map(|i| extras.row_data(i)).filter(|e| e.track_id == id.0 as i32).count();
+                (rows(c) == vec![AutomationTarget::Pan] && c.auto.expanded.contains(&id) && shown == 1)
+                    .then_some(())
+                    .ok_or(format!("rows {:?} shown {shown}", rows(c)))
+            }),
+        ),
+        DoC(
+            "automation rows: + below Pan",
+            Box::new(|a, ctl| {
+                let id = last(&ctl.borrow());
+                a.global::<Studio>().invoke_auto_add_extra(id.0 as i32, 0);
+            }),
+        ),
+        Check(
+            "automation rows: Mute below Pan, no edit step",
+            Box::new(move |c, _| {
+                (rows(c) == vec![AutomationTarget::Pan, AutomationTarget::Mute] && c.doc.undo_label() == Some("Add Audio Track"))
+                    .then_some(())
+                    .ok_or(format!("rows {:?} undo {:?}", rows(c), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "automation rows: × on Pan",
+            Box::new(|a, ctl| {
+                let id = last(&ctl.borrow());
+                a.global::<Studio>().invoke_auto_close_extra(id.0 as i32, 0);
+            }),
+        ),
+        Check(
+            "automation rows: only Mute is left",
+            Box::new(|c, _| (rows(c) == vec![AutomationTarget::Mute]).then_some(()).ok_or(format!("rows {:?}", rows(c)))),
+        ),
+        DoC(
+            "automation rows: give Mute two points, right-click its pill",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let id = last(&c);
+                let pt = |beat: i64, value: f32| AutoPoint { time: beat * dstudio_core::PPQ, value, curve: 0.0 };
+                c.auto_commit(
+                    Some(id),
+                    AutomationLane { target: AutomationTarget::Mute, enabled: true, points: vec![pt(0, 0.0), pt(4, 1.0)] },
+                );
+                c.open_auto_lane_menu(id, 0, 300.0, 300.0);
+            }),
+        ),
+        Check(
+            "automation rows: the menu reads Delete Mute automation, Close lane",
+            Box::new(|c, a| {
+                let m = a.global::<Studio>().get_menu_items();
+                let labels: Vec<String> = (0..m.row_count()).filter_map(|i| m.row_data(i)).map(|r| r.label.to_string()).collect();
+                (c.menu.open && labels == ["Delete Mute automation", "Close lane"]).then_some(()).ok_or(format!("labels {labels:?}"))
+            }),
+        ),
+        DoC("automation rows: pick Delete Mute automation", Box::new(|_, ctl| ctl.borrow_mut().menu_activate(0))),
+        Check(
+            "automation rows: Mute's points are gone (one step), its row stays",
+            Box::new(|c, _| {
+                let id = last(c);
+                (c.model_lane(Some(id), &AutomationTarget::Mute).is_none()
+                    && rows(c) == vec![AutomationTarget::Mute]
+                    && c.doc.undo_label() == Some("Delete Mute Automation"))
+                .then_some(())
+                .ok_or(format!("rows {:?} undo {:?}", rows(c), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "automation rows: right-click Mute again, pick Close lane",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let id = last(&c);
+                c.open_auto_lane_menu(id, 0, 300.0, 300.0);
+                let n = c.menu.items.len();
+                c.menu_activate(n - 1);
+            }),
+        ),
+        Check(
+            "automation rows: the last row closed, so the track's lanes fold",
+            Box::new(|c, _| {
+                let id = last(c);
+                (!c.auto.expanded.contains(&id) && rows(c).is_empty() && !c.menu.open).then_some(()).ok_or(format!(
+                    "expanded {} rows {:?}",
+                    c.auto.expanded.contains(&id),
+                    rows(c)
+                ))
+            }),
+        ),
+        DoC(
+            "automation rows: undo back to the start, hide lanes",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                for _ in s2.get()..c.doc.history_labels().len() {
+                    c.undo();
+                }
+                if c.auto.shown != w2.get() {
+                    c.auto_toggle_shown();
+                }
+            }),
+        ),
+        Check(
+            "automation rows: the project is as it was",
+            Box::new(move |c, _| {
+                (c.doc.history_labels().len() == start.get() && c.auto.shown == w3.get())
+                    .then_some(())
+                    .ok_or(format!("history {}", c.doc.history_labels().len()))
+            }),
+        ),
+    ]
+}
 /// Zoom to fit: W fits the song, then the selected clip, to the lanes' width; H sizes the
 /// track rows to fill the lanes' height. The view and row heights are put back at the end.
 fn zoom_fit_steps() -> Vec<Step> {
@@ -15318,6 +15465,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(group_steps());
     all.extend(zoom_fit_steps());
     all.extend(key_change_steps());
+    all.extend(automation_lane_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());

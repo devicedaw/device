@@ -72,6 +72,8 @@ impl MenuAction {
             MenuAction::Ask => "Ask",
             MenuAction::Paste => "Paste",
             MenuAction::InsertMidiClip => "Insert MIDI clip",
+            MenuAction::AutoLaneDelete => "Delete automation",
+            MenuAction::AutoLaneClose => "Close lane",
             MenuAction::SectionRename => "Rename…",
             MenuAction::SectionColor => "Color",
             MenuAction::SectionInsert => "Insert",
@@ -691,7 +693,19 @@ impl Controller {
         self.menu.lane = None;
         self.menu.track = None;
         self.menu.count_in = false;
+        self.menu.auto_lane = None;
         self.ui_dirty = true;
+    }
+
+    /// An entry's text: its label, or "Delete Pan automation" naming the row's parameter.
+    fn menu_label(&self, a: MenuAction) -> String {
+        match (a, self.menu.auto_lane) {
+            (MenuAction::AutoLaneDelete, Some((track, i))) => {
+                let name = self.extra_targets(track).get(i).map(|t| t.labels().1.to_string()).unwrap_or_default();
+                format!("Delete {name} automation")
+            }
+            _ => a.label().to_string(),
+        }
     }
 
     pub fn menu_close(&mut self) {
@@ -703,6 +717,7 @@ impl Controller {
             self.menu.lane = None;
             self.menu.track = None;
             self.menu.count_in = false;
+            self.menu.auto_lane = None;
             self.ui_dirty = true;
         }
     }
@@ -722,6 +737,15 @@ impl Controller {
         }
         if self.menu.count_in {
             self.count_in_menu_activate(action);
+            return;
+        }
+        if let Some((track, i)) = self.menu.auto_lane {
+            self.menu_close();
+            match action {
+                MenuAction::AutoLaneDelete => self.auto_delete_extra(track, i),
+                MenuAction::AutoLaneClose => self.auto_close_extra(track, i),
+                _ => {}
+            }
             return;
         }
         if let Some((track, at)) = self.menu.lane {
@@ -1147,7 +1171,7 @@ impl Controller {
         s.set_menu_open(self.menu.open);
         if self.menu.open {
             let (items, h) = layout_items(
-                self.menu.items.iter().map(|&(a, en)| (a.label().to_string(), self.menu_shortcut(a), en, a.separated(), a.submenu())),
+                self.menu.items.iter().map(|&(a, en)| (self.menu_label(a), self.menu_shortcut(a), en, a.separated(), a.submenu())),
             );
             let sub_for = self.menu.sub_for.unwrap_or(MenuAction::Transpose);
             let sub_y = items.iter().zip(&self.menu.items).find(|(_, (a, _))| *a == sub_for).map(|(m, _)| m.y).unwrap_or(0.0);

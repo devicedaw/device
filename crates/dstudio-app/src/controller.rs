@@ -358,6 +358,9 @@ pub enum MenuAction {
     /// A group track's menu: remove the group, keeping its tracks.
     TrackUngroup,
     TrackDelete,
+    /// An expanded automation row's menu (src/automation.rs).
+    AutoLaneDelete,
+    AutoLaneClose,
     /// Record button menu (src/count_in.rs): count-in off, one bar, two bars.
     CountInOff,
     CountIn1,
@@ -376,6 +379,8 @@ pub struct MenuState {
     pub track: Option<TrackId>,
     /// The record button's count-in menu is open.
     pub count_in: bool,
+    /// An expanded automation row's menu: the track and row index.
+    pub auto_lane: Option<(TrackId, usize)>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
     /// The entry whose submenu `sub_open` shows (Transpose or Bounce).

@@ -244,6 +244,8 @@ export component AutoPill inherits Rectangle {
     in property <bool> open-state;
     callback power();
     callback open(length, length);
+    // Right-click (window position); only expanded rows use it.
+    callback context(length, length);
     property <bool> hot: ta.has-hover || root.open-state;
     height: 17px;
     border-radius: 8.5px;
@@ -256,7 +258,12 @@ export component AutoPill inherits Rectangle {
         y: 0.32px; width: root.width; height: root.height - 0.32px; border-radius: root.border-radius;
         background: root.hot ? #2f3035 : #292a2f;
     }
-    ta := TouchArea { clicked => { root.open(self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + root.height); } }
+    ta := TouchArea {
+        clicked => { root.open(self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + root.height); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+        }
+    }
     power-ta := TouchArea {
         x: 0.85px; width: 15.3px;
         accessible-role: checkbox; accessible-label: root.state == 1 ? "Bypass automation" : "Enable automation"; accessible-checked: root.state == 1;

@@ -557,6 +557,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.automation_review = 3;
                 }
+                st @ ("review-automation-lanes" | "review-automation-lane-menu") => {
+                    a.reference_default = true;
+                    a.automation_review = if st == "review-automation-lanes" { 4 } else { 5 };
+                }
                 "reference-devices-effects" => {
                     a.reference_default = true;
                     a.devices_effects_state = true;
@@ -1881,6 +1885,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.auto_open_picker(Some(inst), 262.0 + 42.0, y);
             c.auto_picker_pick(1);
         }
+        // Audio's rows: Pan (it has points), then + adds Mute below it; the first row shows
+        // its × and + (4), or its menu is open (5).
+        if args.automation_review >= 4 {
+            c.auto_add_extra(audio, 0);
+            if args.automation_review == 4 {
+                app.global::<Studio>().set_auto_extra_shown_hot(0);
+            }
+            if args.automation_review == 5 {
+                let y = 78.0 + 66.5 + c.view.track_offset(0) + c.view.pitch(0) + 20.0;
+                c.open_auto_lane_menu(audio, 0, 380.0, y);
+            }
+        }
         if args.automation_review == 3
             && let Some(dev) = c.synth_device()
         {
@@ -2595,6 +2611,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .auto_power((id >= 0).then_some(TrackId(id as u64)), (extra >= 0).then_some(extra as usize)));
     on!(on_auto_expand, |c, id: i32| c.auto_toggle_expanded(TrackId(id as u64)));
     on!(on_auto_show_extra, |c, id: i32, i: i32| c.auto_show_extra(TrackId(id as u64), i.max(0) as usize));
+    on!(on_auto_open_extra_picker, |c, id: i32, i: i32, x: f32, y: f32| c.auto_open_extra_picker(
+        TrackId(id as u64),
+        i.max(0) as usize,
+        x,
+        y
+    ));
+    on!(on_auto_add_extra, |c, id: i32, i: i32| c.auto_add_extra(TrackId(id as u64), i.max(0) as usize));
+    on!(on_auto_close_extra, |c, id: i32, i: i32| c.auto_close_extra(TrackId(id as u64), i.max(0) as usize));
+    on!(on_auto_lane_menu, |c, id: i32, i: i32, x: f32, y: f32| c.open_auto_lane_menu(TrackId(id as u64), i.max(0) as usize, x, y));
     on!(on_auto_open_picker, |c, id: i32, x: f32, y: f32| c.auto_open_picker((id >= 0).then_some(TrackId(id as u64)), x, y));
     on!(on_picker_edited, |c, t: slint::SharedString| c.auto_picker_query(t.as_str()));
     on!(on_picker_pick, |c, i: i32| c.auto_picker_pick(i.max(0) as usize));
