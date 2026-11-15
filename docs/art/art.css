@@ -67,15 +67,17 @@ body { font-family: "Inter", system-ui, sans-serif; color: var(--text); -webkit-
 .feature p { margin: 0; max-width: 920px; font-size: 22px; line-height: 1.45; color: var(--text-2); }
 .feature .crop { position: absolute; left: 64px; right: 64px; top: 266px; height: 392px; }
 
-/* Fine Signal: a shared raster material for public artwork. App views stay untouched. */
+/* Dither: a shared ordered-dither material for public artwork (tools/art/dither.mjs).
+   Each texel is shown as a crisp 3 px square; app views stay untouched. */
 .art { isolation: isolate; }
 .art::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: url("textures/fine-signal.png") right center / cover no-repeat;
-  opacity: 0.85;
+  background: url("textures/dither.png") right bottom / 1440px 1080px no-repeat;
+  image-rendering: pixelated;
+  opacity: 0.9;
   pointer-events: none;
 }
 .art.feature::before,
