@@ -10,4 +10,4 @@ Plan: [plan.md](plan.md)
 - [x] T6. Core: arm/monitor on instrument tracks, `midi_record` — verify: A4
 - [x] T7. App: R/I, recording pass, live clip, focus, Settings › MIDI, preferences — verify: A6, A7
 - [x] T8. Docs: README, PROGRESS.md, architecture, engine README, building — verify: read them against the change
-- [ ] T9. Evidence: screenshots and bench numbers in the pull requests; manual Core MIDI check on the Mac mini — verify: `spec-verify`
+- [x] T9. Evidence: screenshots and bench numbers in the pull requests; manual Core MIDI check on a Mac (MacBook Air M4, USB MIDI controller, Nov 15 2026: all six checks in #30 passed) — verify: `spec-verify`
