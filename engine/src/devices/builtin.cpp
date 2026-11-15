@@ -450,6 +450,26 @@ void accumulate_peak(std::atomic<float>& slot, const float* x, uint32_t frames) 
     while (p > cur && !slot.compare_exchange_weak(cur, p, std::memory_order_relaxed)) {
     }
 }
+// A block's (sum LR, sum LL, sum RR) added to three running sums (RT; the main thread
+// resets them to 0). Mono input (r == nullptr) counts as fully correlated.
+void accumulate_correlation(std::atomic<float>* slot, const float* l, const float* r, uint32_t frames) noexcept {
+    if (l == nullptr) return;
+    const float* rr = r != nullptr ? r : l;
+    float s[3] = {0.0f, 0.0f, 0.0f};
+    for (uint32_t i = 0; i < frames; ++i) {
+        s[0] += l[i] * rr[i];
+        s[1] += l[i] * l[i];
+        s[2] += rr[i] * rr[i];
+    }
+    for (int k = 0; k < 3; ++k) {
+        if (!std::isfinite(s[k])) return;
+    }
+    for (int k = 0; k < 3; ++k) {
+        float cur = slot[k].load(std::memory_order_relaxed);
+        while (!slot[k].compare_exchange_weak(cur, cur + s[k], std::memory_order_relaxed)) {
+        }
+    }
+}
 } // namespace
 
 void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
@@ -459,6 +479,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     if (metering) {
         accumulate_peak(peaks_[0], l, frames);
         accumulate_peak(peaks_[1], r, frames);
+        accumulate_correlation(&corr_[0], l, r, frames);
     }
     const int spec_mode = spectrum_mode_.load(std::memory_order_relaxed);
     WindowSpectrum* const spec = spec_mode != 0 ? spectrum_rt_.load(std::memory_order_acquire) : nullptr;
@@ -556,6 +577,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     if (metering) {
         accumulate_peak(peaks_[2], l, frames);
         accumulate_peak(peaks_[3], r, frames);
+        accumulate_correlation(&corr_[3], l, r, frames);
     }
     if (spec != nullptr && spec_mode == 2) spec->push(l, r, frames);
     sc_l_ = sc_r_ = nullptr;

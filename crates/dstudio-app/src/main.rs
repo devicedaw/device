@@ -60,6 +60,7 @@ mod device_window_fields;
 mod device_window_multiband;
 mod device_window_shaper;
 mod device_window_wave;
+mod device_window_widener;
 mod devices;
 mod devminimap;
 mod dialogs;

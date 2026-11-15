@@ -123,6 +123,7 @@ pub(crate) fn has_window(def: &DeviceDef) -> bool {
         def.id,
         "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb" | "echo"
     ) || is_wave_window(def)
+        || matches!(def.id, "utility" | "widener")
         || def.id == "bitcrusher"
         || is_field_window(def)
         || is_dynamics_window(def)
@@ -180,6 +181,10 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         "multiband-compressor" => field_kit(WIN_W, 336.0, 52.0, 43.0),
         // Waveshapers: the transfer square and the wave over a dB axis and legend.
         "distortion" | "tapesaturation" | "soft-clipper" => field_kit(WAVE_W, 454.0, 60.0, 44.0),
+        // Utility: three cards and no display; the meters run the window's height.
+        "utility" => Kit { w: 1200.0, display: (INSET, 52.0, 1042.0, 620.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: false },
+        // Stereo Widener: the field over the correlation lane.
+        "widener" => Kit { w: 1200.0, display: (INSET, 52.0, 1042.0, 514.0), plot: (36.0, 25.0, 12.0, 8.0), narrow: false },
         // Bit Crusher: one crushed cycle fills the display.
         "bitcrusher" => field_kit(WAVE_W, 454.0, 8.0, 8.0),
         "tremolo" => field_kit(WIN_W, 234.0, 60.0, 44.0),
@@ -229,6 +234,8 @@ pub(crate) struct WinUi {
     loud_from: HashMap<DeviceId, f64>,
     /// Start of the histories' clock.
     epoch: Option<Instant>,
+    /// Stereo Widener: input and output correlation of the open windows.
+    pub(crate) corr: HashMap<DeviceId, std::collections::VecDeque<crate::device_window_widener::CorrSample>>,
 }
 
 /// Which signal a window's analyser shows.
@@ -594,6 +601,8 @@ enum Item {
     Momentary(&'static str, &'static str, &'static str, f32),
     /// Two choice pickers stacked in one column: (parameter, label) of each, name, width, inert.
     Pickers2([(i32, String); 2], &'static str, f32, bool),
+    /// A latch pill with a fixed label (lit while on): parameter, label, name, width, inert.
+    Latch(&'static str, &'static str, &'static str, f32, bool),
     /// Fixed blank (keeps a column's width).
     Blank(f32),
 }
@@ -612,6 +621,7 @@ impl Item {
             Item::LatchPicker(.., w) => *w,
             Item::Pickers2(_, _, w, _) => *w,
             Item::Momentary(.., w) => *w,
+            Item::Latch(.., w, _) => *w,
             Item::Blank(w) => *w,
         }
     }
@@ -626,7 +636,9 @@ impl Controller {
         let k = kit(def);
         let mut b = Builder::new(accent, k.w);
         let (dx, dy, dw, dh) = k.display;
-        b.rect(BOX_DISPLAY, dx, dy, dw, dh);
+        if def.id != "utility" {
+            b.rect(BOX_DISPLAY, dx, dy, dw, dh);
+        }
         let mut display = match def.layout.view {
             Some(View::Eq(v)) => self.eq_window_field(d, def, v, accent),
             Some(View::Custom("auto-filter")) => self.auto_filter_window_field(d, def, accent),
@@ -636,6 +648,7 @@ impl Controller {
             _ if def.id == "multiband-compressor" => self.multiband_window_canvas(d, def, &k, accent),
             _ if is_wave_window(def) => self.wave_window_canvas(d, def, &k, accent),
             _ if def.id == "bitcrusher" => self.crush_window_canvas(d, def, &k, accent),
+            _ if def.id == "widener" => self.widener_window_canvas(d, def, &k, accent),
             Some(View::Custom(_)) if crate::panel_fields::field_name(def).is_some() => self.field_window_display(d, def, &k),
             _ => PanelCanvas::default(),
         };
@@ -652,6 +665,8 @@ impl Controller {
             "reverb" => self.reverb_window(d, def, &mut b, dy + dh + 12.0),
             "echo" => self.echo_window(d, def, &mut b, dy + dh + 12.0),
             _ if is_wave_window(def) || def.id == "bitcrusher" => self.wave_window(d, def, &mut b, dy + dh + 12.0),
+            "utility" => self.utility_window(d, def, &mut b),
+            "widener" => self.widener_window(d, def, &mut b, dy + dh + 12.0),
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
         let (meters, ticks, ticks_x) = self.window_meters(d.id, &k);
@@ -748,6 +763,7 @@ impl Controller {
             .collect();
         self.devices.wins.meters.retain(|id, _| open.contains(id));
         self.devices.wins.history.retain(|id, _| open.contains(id));
+        self.devices.wins.corr.retain(|id, _| open.contains(id));
         let epoch = *self.devices.wins.epoch.get_or_insert(now);
         let t = now.duration_since(epoch).as_secs_f64();
         let mut out = Vec::new();
@@ -797,6 +813,16 @@ impl Controller {
             let mut raw = [0.0f32; 4];
             if self.engine.builtin_levels(id.0, &mut raw).is_err() {
                 raw = [0.0; 4];
+            }
+            if self.project().device(id).and_then(dstudio_core::builtin::def_of).is_some_and(|def| def.id == "widener")
+                && !self.devices.wins.held.contains(&id)
+            {
+                let mut c = [2.0f32; 2];
+                if self.engine.builtin_correlation(id.0, &mut c).is_err() {
+                    c = [2.0; 2];
+                }
+                crate::device_window_widener::push_corr(self.devices.wins.corr.entry(id).or_default(), (t, c[0], c[1]));
+                self.ui_dirty = true;
             }
             let m = self.devices.wins.meters.entry(id).or_insert_with(Meters::new);
             let before = (m.level, m.hold, m.since_clip[0] < Meters::CLIP_HOLD, m.since_clip[1] < Meters::CLIP_HOLD);
@@ -956,6 +982,13 @@ impl Controller {
                             let p = b.pill(PILL_PICKER, param, 0, x + w / 2.0, top + dy, 0.0, &label, false);
                             p.inert = inert;
                         }
+                        b.name(x, w, row.name_y(), name, inert);
+                    }
+                    Item::Latch(id, label, name, w, inert) => {
+                        let pw = pill_w(label) + 12.0;
+                        b.rect(BOX_TRACK, x + (w - pw - 4.0) / 2.0, top + row.pill - 2.0, pw + 4.0, 28.0);
+                        let p = b.pill(PILL_TOGGLE, idx(id), 0, x + (w - pw) / 2.0, top + row.pill, pw, label, val(id) >= 0.5);
+                        p.inert = inert;
                         b.name(x, w, row.name_y(), name, inert);
                     }
                     Item::Blank(_) => {}
@@ -1542,6 +1575,74 @@ impl Controller {
             b.w = kit(def).display.2 + 2.0 * INSET;
         }
         self.win_card(d, def, b, row, clusters);
+        b.w = full;
+        row.y + row.h + 16.0
+    }
+
+    /// Utility: three cards in the face's left part, each its controls centred: Channel
+    /// Mode and the two phase switches; Width, Mono, Bass Mono with its frequency and
+    /// Listen; Gain, Balance, Mute and DC Filter.
+    fn utility_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder) -> f32 {
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let label = |id: &str| def.param(id).map_or_else(String::new, |p| p.format(self.panel_value(d, def, p)));
+        let knob = |id, name, size, w, inert| Item::Knob(id, name, size, w, inert);
+        let full = b.w;
+        b.w = kit(def).display.2 + 2.0 * INSET;
+        let bass = val("bass_mono") >= 0.5;
+        let rows = [
+            (
+                Row { y: 60.0, h: 96.0, dial: 28.0, value: 45.0, pill: 11.0, picker: 11.0 },
+                vec![
+                    Item::Picker(idx("channel_mode"), label("channel_mode"), "Channel Mode", 116.0, false),
+                    Item::ToggleW("phase_l", "Phase L", 100.0),
+                    Item::ToggleW("phase_r", "Phase R", 56.0),
+                ],
+            ),
+            (
+                Row { y: 168.0, h: 112.0, dial: 29.0, value: 54.0, pill: 27.0, picker: 27.0 },
+                vec![
+                    knob("width", "Width", 1, 78.0, false),
+                    Item::ToggleW("mono", "Mono", 78.0),
+                    Item::ToggleW("bass_mono", "Bass Mono", 106.0),
+                    knob("bass_mono_freq", "Frequency", 1, 52.0, !bass),
+                    Item::Latch("bass_mono_audition", "Listen", "Audition", 120.0, !bass),
+                ],
+            ),
+            (
+                Row { y: 292.0, h: 118.0, dial: 32.0, value: 59.0, pill: 35.0, picker: 35.0 },
+                vec![
+                    knob("gain", "Gain", 2, 81.0, false),
+                    knob("balance", "Balance", 1, 87.0, false),
+                    Item::ToggleW("mute", "Mute", 92.0),
+                    Item::ToggleW("dc_filter", "DC Filter", 64.0),
+                ],
+            ),
+        ];
+        for (row, items) in rows {
+            self.win_card(d, def, b, row, vec![(items, 0.0)]);
+        }
+        b.w = full;
+        700.0
+    }
+
+    /// Stereo Widener: one card under the display: Width and Low Cut, Mid and Side Gain, Mix.
+    fn widener_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let knob = |id, name, size, w| Item::Knob(id, name, size, w, false);
+        let full = b.w;
+        b.w = kit(def).display.2 + 2.0 * INSET;
+        let row = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (vec![knob("width2", "Width", 2, 76.0), knob("lowcut", "Low Cut", 2, 76.0)], 10.0),
+                (vec![knob("midgain", "Mid Gain", 1, 76.0), knob("sidegain", "Side Gain", 1, 76.0)], 2.0),
+                (vec![knob("mix", "Mix", 2, 76.0)], 10.0),
+            ],
+        );
         b.w = full;
         row.y + row.h + 16.0
     }
@@ -3046,6 +3147,56 @@ mod tests {
         assert!(((card.x + card.w) / Z - (dx + dw)).abs() < 0.5, "{}", (card.x + card.w) / Z);
     }
 
+    /// Utility: no display, three cards with every control, the meters down the face.
+    #[test]
+    fn utility_window_shows_three_cards_and_every_control() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("utility");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 700.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert!(!v.boxes.iter().any(|b| b.kind == BOX_DISPLAY));
+        assert_eq!(v.boxes.iter().filter(|b| b.kind == BOX_CARD).count(), 3);
+        let idx = |p: &str| def.index_of(p).unwrap() as i32;
+        for k in ["width", "bass_mono_freq", "gain", "balance"] {
+            assert!(v.knobs.iter().any(|n| n.param == idx(k)), "{k}");
+        }
+        for t in ["channel_mode", "phase_l", "phase_r", "mono", "bass_mono", "bass_mono_audition", "mute", "dc_filter"] {
+            assert!(v.pills.iter().any(|p| p.param == idx(t)), "{t}");
+        }
+        // The bass-mono controls are inert until Bass Mono is on.
+        assert!(v.pills.iter().any(|p| p.param == idx("bass_mono_audition") && p.inert));
+        c.execute(Command::SetDeviceParam { device: did, param: "bass_mono".into(), value: 1.0 });
+        let v = view(&c, did, def);
+        assert!(v.pills.iter().any(|p| p.param == idx("bass_mono_audition") && !p.inert && p.label == "Listen"));
+        assert!(v.meters.iter().all(|m| m.h / Z > 500.0));
+    }
+
+    /// Stereo Widener: the field caption reads the width at the top of the axis, and the
+    /// correlation lane draws its two series once there is history.
+    #[test]
+    fn widener_window_draws_the_field_and_the_correlation_lane() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("widener");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 700.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert!(v.display.texts.iter().any(|t| t.text == "Stereo Field"));
+        assert!(v.display.texts.iter().any(|t| t.text == "Correlation"));
+        let before = v.display.paths.row_count();
+        let h = c.devices.wins.corr.entry(did).or_default();
+        for i in 0..360 {
+            crate::device_window_widener::push_corr(h, (i as f64 / 60.0, 0.8, 0.2));
+        }
+        let after = view(&c, did, def).display.paths.row_count();
+        assert_eq!(after, before + 2);
+        let idx = |p: &str| def.index_of(p).unwrap() as i32;
+        for k in ["width2", "lowcut", "midgain", "sidegain", "mix"] {
+            assert!(v.knobs.iter().any(|n| n.param == idx(k)), "{k}");
+        }
+        assert!(v.display.zones.iter().any(|z| z.param_y == idx("width2")));
+    }
+
     /// A full ten-second history draws as one line per series, however many samples it holds.
     #[test]
     fn dynamics_history_draws_once_per_series() {
@@ -3081,6 +3232,8 @@ mod tests {
             "tapesaturation",
             "soft-clipper",
             "bitcrusher",
+            "utility",
+            "widener",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =
