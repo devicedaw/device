@@ -55,6 +55,7 @@ mod device_mod;
 mod device_panel;
 mod device_views;
 mod device_window;
+mod device_window_dynamics;
 mod device_window_fields;
 mod devices;
 mod devminimap;

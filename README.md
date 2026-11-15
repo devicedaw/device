@@ -123,8 +123,9 @@ Device comes with 44 devices of its own. Each one is a single declarative defini
 factory presets) that the model, undo, saving, automation, engine and panel all derive from, with a C++ DSP kernel
 behind it. Auto Filter, Channel EQ and Character EQ also open an expanded window with a large display and live analyser,
 In and Out meters and every control laid out in rows, and so do Tremolo, Auto-Panner, Chorus, Flanger, Phaser,
-Ring Mod and Character Mod, whose window plots their motion or response with a time or frequency axis and a legend; the other devices
-open their card in a window for now.
+Ring Mod and Character Mod, whose window plots their motion or response with a time or frequency axis and a legend, and
+Compressor, Limiter, Gate and Glue Compressor, whose window scrolls the last 1, 4 or 10 seconds of input, output and gain
+reduction under a draggable threshold, beside a transfer curve; the other devices open their card in a window for now.
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |
