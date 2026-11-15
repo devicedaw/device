@@ -12499,9 +12499,9 @@ fn shortcut_page_steps() -> Vec<Step> {
                     && play.is_some_and(|p| p.context == "Always")
                     && keys == Some(vec!["Space".into()])
                     && !s.get_shortcut_reset_enabled()
-                    && r.iter().filter(|r| r.header).count() == crate::shortcuts::SECTIONS.len())
-                .then_some(())
-                .ok_or(format!("page {} first {:?} play keys {keys:?}", s.get_settings_page(), r.first().map(|h| h.label.clone())))
+                    && r.iter().filter(|r| r.header).count() == crate::shortcuts::SECTIONS.len() + 1)
+                    .then_some(())
+                    .ok_or(format!("page {} first {:?} play keys {keys:?}", s.get_settings_page(), r.first().map(|h| h.label.clone())))
             }),
         ),
         DoC(
@@ -12586,10 +12586,12 @@ fn shortcut_page_steps() -> Vec<Step> {
         ),
         Do("shortcuts: search \"loop\"", Box::new(|a| a.global::<Studio>().invoke_shortcuts_search("loop".into()))),
         Check(
-            "shortcuts: only Transport › Loop selection and Loop on / off are left",
+            "shortcuts: only Transport › Loop selection, Loop on / off and the clip loop gesture are left",
             Box::new(|_, a| {
                 let labels: Vec<String> = rows(a).iter().map(|r| r.label.to_string()).collect();
-                (labels == ["Transport", "Loop selection", "Loop on / off"]).then_some(()).ok_or(format!("{labels:?}"))
+                (labels == ["Transport", "Loop selection", "Loop on / off", "Mouse & modifiers", "Loop / extend clip"])
+                    .then_some(())
+                    .ok_or(format!("{labels:?}"))
             }),
         ),
         Do("shortcuts: search \"zzz\"", Box::new(|a| a.global::<Studio>().invoke_shortcuts_search("zzz".into()))),
@@ -12617,6 +12619,201 @@ fn shortcut_page_steps() -> Vec<Step> {
             }),
         ),
         DoC("shortcuts: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
+    ]
+}
+
+/// Mouse & modifiers: ⌥-drag copies a clip, ⇧-drag on its right edge time-stretches it, the
+/// top-right corner loops it, ⌥ + scroll changes the track heights, and a double-click deletes
+/// a piano roll note. Driven through the controller's pointer entry points.
+fn gesture_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::{ClipId, Command, MidiClip, Track, TrackId};
+    const B: i64 = dstudio_core::PPQ;
+    /// Lane point on the clip: (x, y) at the fraction `fx` of its width, `fy` of its height.
+    fn at(c: &mut Controller, id: ClipId, fx: f32, fy: f32) -> (f32, f32) {
+        c.rebuild_vis();
+        let i = c.clip_ids.iter().position(|&k| k == id).unwrap_or(0);
+        let (x, y, w, h) = c.clip_vis[i].rect(&c.view);
+        (x + w * fx, y + h * fy)
+    }
+    fn last_label(c: &Controller) -> String {
+        c.doc.history_labels().last().cloned().unwrap_or_default()
+    }
+    let ids = Rc::new(Cell::new((TrackId(0), ClipId(0))));
+    let (_, i2, i3, i4, i5, i6, i7, i8) =
+        (ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone());
+    let heights = Rc::new(Cell::new(0f32));
+    let (h1, h2) = (heights.clone(), heights.clone());
+    let span = Rc::new(Cell::new((0i64, 0i64)));
+    let (p1, p2, p3, p4) = (span.clone(), span.clone(), span.clone(), span.clone());
+    let i0 = ids.clone();
+    vec![
+        DoC(
+            "gestures: a 2 s sine on a new audio track",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.mixer_open {
+                    c.toggle_mixer();
+                }
+                let d = run_dir().join("gestures");
+                let _ = std::fs::remove_dir_all(&d);
+                std::fs::create_dir_all(&d).unwrap();
+                let s: Vec<f32> = (0..96_000).map(|i| 0.3 * (std::f32::consts::TAU * 220.0 * i as f32 / 48_000.0).sin()).collect();
+                crate::wavgen::write_wav_pcm(&d.join("g.wav"), 48_000, 1, 24, &s).unwrap();
+                c.view.start_beats = 0.0;
+                c.view.scroll_y = 0.0;
+                c.import_files(vec![d.join("g.wav")], crate::controller::ImportTarget::NewTrack, Some(4 * B));
+            }),
+        ),
+        DoC(
+            "gestures: ⌥-drag the clip four beats to the right",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                // The import finishes in the background, so find its clip (the newest one) now.
+                let found = c.project().tracks.iter().flat_map(|t| t.clips.iter().map(move |k| (t.id, k.id))).max_by_key(|&(_, k)| k.0);
+                if let Some((t, k)) = found {
+                    i0.set((t, k));
+                    let s0 = c.project().clip(k).map_or(0, |k| k.start);
+                    let l0 = c.project().clip(k).map_or(0, |clip| c.project().clip_length_ticks(clip));
+                    p1.set((s0, l0));
+                    let top = c.project().track_index(t).map_or(0.0, |i| c.view.track_top(i) as f64);
+                    c.view.scroll_y = (top - 40.0).max(0.0);
+                }
+                let (_, k) = i2.get();
+                let (x, y) = at(&mut c, k, 0.5, 0.7);
+                let dx = 4.0 * c.view.px_per_beat as f32;
+                c.snap.bypass = false;
+                c.pointer_mods(0, x, y, false, true);
+                c.pointer_mods(1, x + dx, y, false, false);
+                c.pointer_mods(2, x + dx, y, false, false);
+            }),
+        ),
+        Check(
+            "gestures: the original stays put and a copy starts four beats later, one undo step \"Duplicate Clip\"",
+            Box::new(move |c, _| {
+                let (t, k) = i3.get();
+                let (s0, _) = p2.get();
+                let starts: Vec<i64> = c.project().track(t).map(|t| t.clips.iter().map(|k| k.start).collect()).unwrap_or_default();
+                let orig = c.project().clip(k).map(|k| k.start);
+                (starts.len() == 2 && orig == Some(s0) && starts.contains(&(s0 + 4 * B)) && last_label(c) == "Duplicate Clip")
+                    .then_some(())
+                    .ok_or(format!("starts {starts:?} orig {orig:?} last {:?}", last_label(c)))
+            }),
+        ),
+        DoC(
+            "gestures: undo, then ⇧-drag the clip's right edge two beats in",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.undo();
+                let (_, k) = i4.get();
+                let (x, y) = at(&mut c, k, 1.0, 0.7);
+                let dx = 2.0 * c.view.px_per_beat as f32;
+                c.pointer_mods(0, x - 2.0, y, true, false);
+                c.pointer_mods(1, x - 2.0 - dx, y, false, false);
+                c.pointer_mods(2, x - 2.0 - dx, y, false, false);
+            }),
+        ),
+        Check(
+            "gestures: warp on, the clip two beats shorter and faster to match, one undo step \"Stretch Clip\"",
+            Box::new(move |c, _| {
+                let (_, k) = i5.get();
+                let (_, l0) = p3.get();
+                let want = l0 as f64 / (l0 - 2 * B) as f64;
+                let clip = c.project().clip(k).ok_or("no clip")?;
+                let len = c.project().clip_length_ticks(clip);
+                (clip.warp.enabled
+                    && (clip.warp.speed - want).abs() < 0.05
+                    && (len - (l0 - 2 * B)).abs() < B / 8
+                    && last_label(c) == "Stretch Clip")
+                    .then_some(())
+                    .ok_or(format!("warp {} speed {} len {len} last {:?}", clip.warp.enabled, clip.warp.speed, last_label(c)))
+            }),
+        ),
+        DoC(
+            "gestures: undo, then drag the clip's top-right corner four beats out",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.undo();
+                let (_, k) = i6.get();
+                let (x, y) = at(&mut c, k, 1.0, 0.0);
+                let dx = 4.0 * c.view.px_per_beat as f32;
+                c.pointer_mods(0, x - 2.0, y + 2.0, false, false);
+                c.pointer_mods(1, x - 2.0 + dx, y + 2.0, false, false);
+                c.pointer_mods(2, x - 2.0 + dx, y + 2.0, false, false);
+            }),
+        ),
+        Check(
+            "gestures: the clip loops its whole content over four more beats, one undo step \"Clip Loop\"",
+            Box::new(move |c, _| {
+                let (_, k) = i7.get();
+                let (_, l0) = p4.get();
+                let l = c.project().clip(k).and_then(|k| k.clip_loop);
+                l.is_some_and(|l| {
+                    l.on && (l.end - l.start - l0).abs() < B / 8 && (l.length - (l0 + 4 * B)).abs() < B / 8 && last_label(c) == "Clip Loop"
+                })
+                .then_some(())
+                .ok_or(format!("loop {l:?} last {:?}", last_label(c)))
+            }),
+        ),
+        DoC(
+            "gestures: ⌥ + scroll over the lanes",
+            Box::new(move |a, ctl| {
+                let t = i8.get().0;
+                h1.set(ctl.borrow().project().track(t).map_or(0.0, |t| t.height));
+                a.global::<Studio>().invoke_lane_scroll(0.0, 40.0, 100.0, 2);
+            }),
+        ),
+        Check(
+            "gestures: every row is taller by the same factor",
+            Box::new(move |c, _| {
+                let t = ids.get().0;
+                let h = c.project().track(t).map_or(0.0, |t| t.height);
+                let want = (h2.get() * 0.4f32.exp()).min(dstudio_core::Track::HEIGHT_RANGE.1);
+                ((h - want).abs() < 0.01).then_some(()).ok_or(format!("height {h} want {want}"))
+            }),
+        ),
+        Do("gestures: ⌥ + scroll back", Box::new(|a| a.global::<Studio>().invoke_lane_scroll(0.0, -40.0, 100.0, 2))),
+        DoC(
+            "gestures: a MIDI clip with two notes open in the piano roll; double-click the first note",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let n = c.project().next_id;
+                let (t, k) = (TrackId(n), ClipId(n + 1));
+                let note = |id, start| dstudio_core::midi::Note { id, pitch: 60, start, length: B, velocity: 100 };
+                c.execute(Command::Batch {
+                    label: "gesture test".into(),
+                    commands: vec![
+                        Command::AddTrack {
+                            index: None,
+                            track: Track::new(t, dstudio_core::TrackKind::Instrument, "Notes", dstudio_core::ColorIndex::FIRST),
+                        },
+                        Command::AddMidiClip {
+                            track: t,
+                            clip: MidiClip { id: k, notes: vec![note(1, 0), note(2, 2 * B)], ..MidiClip::empty(0, 4 * B) },
+                        },
+                    ],
+                });
+                c.select_track(t);
+                c.select_clip(Some(k));
+                c.set_bottom_tab(crate::controller::BottomTab::Clip);
+                c.pr.selected.clear();
+                let v = c.pr_view();
+                let (x, y) = (v.x_of(0.5), v.y_of(60) + crate::pianoroll::ROW_H / 2.0);
+                c.pr.last_down = None;
+                for kind in [0, 2, 0, 2] {
+                    c.pr_pointer(kind, x, y, false, false, false);
+                }
+            }),
+        ),
+        Check(
+            "gestures: the first note is gone, the second kept, one undo step \"Delete Note\"",
+            Box::new(|c, _| {
+                let notes: Vec<u32> = c.pr_clip().map(|m| m.notes.iter().map(|n| n.id).collect()).unwrap_or_default();
+                (notes == vec![2] && last_label(c) == "Delete Note")
+                    .then_some(())
+                    .ok_or(format!("notes {notes:?} last {:?}", last_label(c)))
+            }),
+        ),
     ]
 }
 
@@ -16231,6 +16428,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(shortcut_page_steps());
     all.extend(default_key_steps());
     all.extend(more_key_steps());
+    all.extend(gesture_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());

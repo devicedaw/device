@@ -54,6 +54,21 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// ⌥ + scroll: every shown track row taller (scrolling up) or shorter, by the same factor.
+    pub fn zoom_track_heights(&mut self, dy: f32) {
+        let (lo, hi) = dstudio_core::Track::HEIGHT_RANGE;
+        let factor = (dy * 0.01).exp();
+        let p = self.project();
+        let n = p.tracks.len().min(self.view.pinned_from);
+        let rows: Vec<_> = p.tracks[..n].iter().filter(|t| !self.hidden_by_fold(t)).map(|t| (t.id, t.height)).collect();
+        for (id, h) in rows {
+            let _ = self.doc.set_track_height(id, (h * factor).clamp(lo, hi));
+        }
+        let n = self.lane_tracks();
+        self.view.clamp_scroll(n, self.lanes_size.1);
+        self.ui_dirty = true;
+    }
+
     /// H: every shown track row (not the pinned return rows, not the rows of folded groups)
     /// sized to fill the lanes' height, scrolled to the top.
     pub fn zoom_to_fit_height(&mut self) {
