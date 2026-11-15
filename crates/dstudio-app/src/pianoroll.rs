@@ -1640,6 +1640,55 @@ impl Controller {
         }
     }
 
+    /// ⌘↑/⌘↓ (±1) and ⌥↑/⌥↓ (±10): the selected notes' velocity, kept in 1..=127.
+    pub fn pr_velocity_step(&mut self, delta: i32) {
+        if self.pr_clip().is_none() || self.pr.selected.is_empty() {
+            return;
+        }
+        let (clip, target) = self.pr_target();
+        let changed: Vec<Note> = target.iter().map(|n| Note { velocity: (n.velocity as i32 + delta).clamp(1, 127) as u8, ..*n }).collect();
+        self.commit_notes(clip.id, Self::replace_notes(&clip, &changed), Some("Change Velocity"));
+    }
+
+    /// ←/→ one grid step, ⇧←/⇧→ one bar: the selected notes move in time, never before the
+    /// clip's start.
+    pub fn pr_nudge(&mut self, steps: i32, bar: bool) {
+        if self.pr_clip().is_none() || self.pr.selected.is_empty() {
+            return;
+        }
+        let step = if bar { self.project().ticks_per_bar() } else { self.pr_snap_ticks(&self.pr_view()).max(1) };
+        let (clip, target) = self.pr_target();
+        let earliest = target.iter().map(|n| n.start).min().unwrap_or(0);
+        let dt = (steps as Ticks * step).max(-earliest);
+        if dt == 0 {
+            return;
+        }
+        let changed: Vec<Note> = target.iter().map(|n| Note { start: n.start + dt, ..*n }).collect();
+        self.commit_notes(clip.id, Self::replace_notes(&clip, &changed), Some("Move Notes"));
+    }
+
+    /// ⇧↑/⇧↓ (±1) and ⌘⇧↑/⌘⇧↓ (±12) on the timeline: every note of each selected MIDI clip.
+    /// One undo step; clips whose notes would leave the MIDI range stay as they are.
+    pub fn transpose_selected_clips(&mut self, semis: i32) {
+        let mut commands = Vec::new();
+        let mut blocked = false;
+        for id in self.selected_clips() {
+            let Some(clip) = self.project().midi_clip(id) else { continue };
+            match midi::transpose(&clip.notes, semis) {
+                Some(notes) if notes != clip.notes => commands.push(Command::SetMidiNotes { clip: id, notes }),
+                Some(_) => {}
+                None => blocked = true,
+            }
+        }
+        if blocked {
+            self.set_status("Transpose: notes would leave the MIDI range", 3);
+        }
+        if !commands.is_empty() {
+            let label = if commands.len() == 1 { "Transpose Clip" } else { "Transpose Clips" };
+            self.execute(Command::Batch { label: label.into(), commands });
+        }
+    }
+
     /// Delete the selected notes. Returns false when there was nothing to delete.
     pub fn pr_delete_notes(&mut self) -> bool {
         let Some(clip) = self.pr_clip().cloned() else { return false };

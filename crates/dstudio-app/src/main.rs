@@ -181,7 +181,8 @@ struct Args {
     midi_recording_review: bool,
     /// review-settings-midi: Settings › MIDI with a SCREENSHOT-ONLY fake input list.
     settings_midi_review: bool,
-    /// Settings › Shortcuts: 1 the page, 2 recording keys for Tap tempo, 3 Tap tempo unmapped.
+    /// Settings › Shortcuts: 1 the page, 2 recording keys for Tap tempo, 3 Tap tempo unmapped,
+    /// 4-6 searching "track", "notes", "transpose".
     shortcuts_review: u8,
     /// reference-automation: Instrument track 1 (MIDI clip at bar 6), Audio track 2 selected,
     /// playhead at bar 6, automation lanes shown (Track Volume at +0.0).
@@ -676,17 +677,25 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_midi_review = true;
                 }
-                st @ ("review-shortcuts" | "review-shortcuts-recording" | "review-shortcuts-unmapped") => {
+                st @ ("review-shortcuts"
+                | "review-shortcuts-recording"
+                | "review-shortcuts-unmapped"
+                | "review-shortcuts-tracks"
+                | "review-shortcuts-notes"
+                | "review-shortcuts-transpose") => {
                     a.reference_default = true;
                     a.shortcuts_review = match st {
                         "review-shortcuts-recording" => 2,
                         "review-shortcuts-unmapped" => 3,
+                        "review-shortcuts-tracks" => 4,
+                        "review-shortcuts-notes" => 5,
+                        "review-shortcuts-transpose" => 6,
                         _ => 1,
                     };
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -850,6 +859,39 @@ struct Frame {
     bench: bool,
 }
 
+/// macOS turns ⌥+letter into another character (⌥M = "µ"). Map the US layout's ones back
+/// to their key so ⌥ shortcuts (⌘⌥M, ⌘⌥4) work there. Dead keys (⌥E, ⌥I, ⌥N, ⌥U, ⌥`) type
+/// nothing and can't be mapped.
+fn option_base(text: &str) -> Option<&'static str> {
+    const LETTERS: [(&str, &str); 22] = [
+        ("å", "A"),
+        ("∫", "B"),
+        ("ç", "C"),
+        ("∂", "D"),
+        ("ƒ", "F"),
+        ("©", "G"),
+        ("˙", "H"),
+        ("∆", "J"),
+        ("˚", "K"),
+        ("¬", "L"),
+        ("µ", "M"),
+        ("ø", "O"),
+        ("π", "P"),
+        ("œ", "Q"),
+        ("®", "R"),
+        ("ß", "S"),
+        ("†", "T"),
+        ("√", "V"),
+        ("∑", "W"),
+        ("≈", "X"),
+        ("¥", "Y"),
+        ("Ω", "Z"),
+    ];
+    const DIGITS: [(&str, &str); 10] =
+        [("¡", "1"), ("™", "2"), ("£", "3"), ("¢", "4"), ("∞", "5"), ("§", "6"), ("¶", "7"), ("•", "8"), ("ª", "9"), ("º", "0")];
+    LETTERS.iter().chain(DIGITS.iter()).find(|(c, _)| *c == text).map(|(_, k)| *k)
+}
+
 /// Slint key text -> keymap key name.
 fn key_name(text: &str) -> Option<String> {
     let k = match text {
@@ -876,8 +918,7 @@ fn key_name(text: &str) -> Option<String> {
 pub fn app_keymap() -> Keymap {
     use dstudio_core::keymap::{Binding, Condition};
     let mut k = Keymap::default_preset();
-    for (action, chord) in
-        [("view.toggle_mixer", "primary+shift+x"), ("view.toggle_assistant", "primary+shift+a"), ("view.escape", "escape")]
+    for (action, chord) in [("view.toggle_mixer", "primary+alt+m"), ("view.toggle_assistant", "primary+shift+a"), ("view.escape", "escape")]
     {
         k.bindings.push(Binding {
             action: action.into(),
@@ -887,9 +928,7 @@ pub fn app_keymap() -> Keymap {
     }
     // Arm / input monitoring on the selected track (the core preset has no bindings for them).
     // Added only if the core lacks them.
-    for (action, chord) in
-        [("track.arm", "shift+r"), ("track.monitor", "shift+i"), ("track.rename", "primary+r"), ("track.group", "primary+g")]
-    {
+    for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "i"), ("track.rename", "primary+r"), ("track.group", "primary+g")] {
         if k.chords_for(action).is_empty() {
             k.bindings.push(Binding {
                 action: action.into(),
@@ -898,13 +937,39 @@ pub fn app_keymap() -> Keymap {
             });
         }
     }
-    // Zoom to fit: W the song's width, H the tracks' height (View menu).
-    for (action, chord) in [("view.fit_width", "w"), ("view.fit_height", "h")] {
-        k.bindings.push(Binding {
-            action: action.into(),
-            chords: vec![Chord::parse(chord).expect("valid chord")],
-            when: Condition::Always,
-        });
+    // Zoom to fit: W (or Z, ⇧W) the song's width, H (or ⇧H) the tracks' height (View menu).
+    // A shows or hides automation, P (⌘⌥4, ⇧P) the bottom panel.
+    for (action, chords) in [
+        ("view.fit_width", &["w", "z", "shift+w"][..]),
+        ("view.fit_height", &["h", "shift+h"][..]),
+        ("view.toggle_automation", &["a"][..]),
+        ("view.toggle_bottom_panel", &["p", "primary+alt+4", "shift+p"][..]),
+    ] {
+        let chords = chords.iter().map(|c| Chord::parse(c).expect("valid chord")).collect();
+        k.bindings.push(Binding { action: action.into(), chords, when: Condition::Always });
+    }
+    // Tracks: ↑/↓ select the track above or below, U folds the selected group.
+    for (action, chords) in [("track.select_prev", "up"), ("track.select_next", "down"), ("track.fold", "u")] {
+        let chords = vec![Chord::parse(chords).expect("valid chord")];
+        k.bindings.push(Binding { action: action.into(), chords, when: Condition::TrackSelected });
+    }
+    // With a track header selected (no clip): duplicate it, with or without its clips, or ungroup it.
+    for (action, chord) in
+        [("track.duplicate", "primary+d"), ("track.duplicate_with_clips", "primary+shift+d"), ("track.ungroup", "primary+shift+g")]
+    {
+        let chords = vec![Chord::parse(chord).expect("valid chord")];
+        k.bindings.push(Binding { action: action.into(), chords, when: Condition::TrackHeaderSelected });
+    }
+    // A MIDI clip selected on the timeline: transpose its notes, quantize them.
+    for (action, chords) in [
+        ("clip.transpose_up", &["shift+up"][..]),
+        ("clip.transpose_down", &["shift+down"][..]),
+        ("clip.octave_up", &["primary+shift+up"][..]),
+        ("clip.octave_down", &["primary+shift+down"][..]),
+        ("clip.quantize", &["primary+u", "q"][..]),
+    ] {
+        let chords = chords.iter().map(|c| Chord::parse(c).expect("valid chord")).collect();
+        k.bindings.push(Binding { action: action.into(), chords, when: Condition::MidiClipSelected });
     }
     // Tap tempo from the keyboard (the transport bar's TAP).
     k.bindings.push(Binding {
@@ -922,10 +987,18 @@ pub fn app_keymap() -> Keymap {
     // and the other chords). While typing is on, its keys are taken before these.
     for (action, chords) in [
         ("midi.delete_notes", &["delete", "backspace"][..]),
-        ("midi.transpose_up", &["up"][..]),
-        ("midi.transpose_down", &["down"][..]),
-        ("midi.octave_up", &["shift+up"][..]),
-        ("midi.octave_down", &["shift+down"][..]),
+        ("midi.transpose_up", &["up", "primary+alt+up"][..]),
+        ("midi.transpose_down", &["down", "primary+alt+down"][..]),
+        ("midi.octave_up", &["shift+up", "primary+shift+up", "shift+alt+up"][..]),
+        ("midi.octave_down", &["shift+down", "primary+shift+down", "shift+alt+down"][..]),
+        ("midi.velocity_up", &["primary+up"][..]),
+        ("midi.velocity_down", &["primary+down"][..]),
+        ("midi.velocity_up_10", &["alt+up"][..]),
+        ("midi.velocity_down_10", &["alt+down"][..]),
+        ("midi.nudge_left", &["left"][..]),
+        ("midi.nudge_right", &["right"][..]),
+        ("midi.nudge_bar_left", &["shift+left"][..]),
+        ("midi.nudge_bar_right", &["shift+right"][..]),
         ("midi.select_all", &["primary+a"][..]),
         ("midi.reverse", &["r"][..]),
     ] {
@@ -1015,6 +1088,31 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.transpose_down" => ctl.borrow_mut().pr_transpose(-1),
         "midi.octave_up" => ctl.borrow_mut().pr_transpose(12),
         "midi.octave_down" => ctl.borrow_mut().pr_transpose(-12),
+        "midi.velocity_up" => ctl.borrow_mut().pr_velocity_step(1),
+        "midi.velocity_down" => ctl.borrow_mut().pr_velocity_step(-1),
+        "midi.velocity_up_10" => ctl.borrow_mut().pr_velocity_step(10),
+        "midi.velocity_down_10" => ctl.borrow_mut().pr_velocity_step(-10),
+        "midi.nudge_left" => ctl.borrow_mut().pr_nudge(-1, false),
+        "midi.nudge_right" => ctl.borrow_mut().pr_nudge(1, false),
+        "midi.nudge_bar_left" => ctl.borrow_mut().pr_nudge(-1, true),
+        "midi.nudge_bar_right" => ctl.borrow_mut().pr_nudge(1, true),
+        "clip.transpose_up" => ctl.borrow_mut().transpose_selected_clips(1),
+        "clip.transpose_down" => ctl.borrow_mut().transpose_selected_clips(-1),
+        "clip.octave_up" => ctl.borrow_mut().transpose_selected_clips(12),
+        "clip.octave_down" => ctl.borrow_mut().transpose_selected_clips(-12),
+        "clip.quantize" => ctl.borrow_mut().pr_action("quantize"),
+        "track.select_prev" => ctl.borrow_mut().select_track_step(-1),
+        "track.select_next" => ctl.borrow_mut().select_track_step(1),
+        "track.fold" => ctl.borrow_mut().fold_selected_group(),
+        "track.ungroup" => ctl.borrow_mut().ungroup_selected(),
+        "track.duplicate" | "track.duplicate_with_clips" => {
+            let mut c = ctl.borrow_mut();
+            if let Some(t) = c.selected_track {
+                c.duplicate_track(t, action == "track.duplicate_with_clips");
+            }
+        }
+        "view.toggle_automation" => ctl.borrow_mut().auto_toggle_shown(),
+        "view.toggle_bottom_panel" => ctl.borrow_mut().toggle_bottom_collapse(),
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "midi.reverse" => ctl.borrow_mut().pr_action("reverse"),
         "view.musical_typing" => ctl.borrow_mut().typing_toggle(),
@@ -2353,6 +2451,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if args.shortcuts_review == 2 {
             c.settings.keys.recording = Some("transport.tap_tempo");
         }
+        // Searches that show the Tracks section, the piano roll's note keys and the clip transpose keys.
+        match args.shortcuts_review {
+            4 => c.shortcuts_search("track"),
+            5 => c.shortcuts_search("notes"),
+            6 => c.shortcuts_search("transpose"),
+            _ => {}
+        }
         if args.shortcuts_review == 3 {
             // SCREENSHOT-ONLY: a changed keymap (prefs are never saved in --state runs).
             c.settings.keys.map.set_chords("transport.tap_tempo", Vec::new());
@@ -3115,7 +3220,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let zm = zoom.clone();
         studio.on_key(move |text, primary, shift, alt, ctrl, repeat| {
-            let Some(key) = key_name(text.as_str()) else { return false };
+            let key = match option_base(text.as_str()).filter(|_| alt) {
+                Some(k) => k.to_string(),
+                None => match key_name(text.as_str()) {
+                    Some(k) => k,
+                    None => return false,
+                },
+            };
             let chord = Chord { key, primary, shift, alt, ctrl };
             // Settings › Shortcuts is recording keys for an action: this chord is them.
             if !repeat
@@ -3179,8 +3290,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     text_input_focused: app_text_focused(&aw),
                     track_selected: c.selected_track.is_some(),
                     track_header_selected: c.selected_track.is_some() && c.selected_clip.is_none() && !c.pr.focused,
-                    clips_selected: c.selected_clip.is_some() as usize,
-                    midi_clip_selected: c.pr_visible(),
+                    clips_selected: c.selected_clips().len(),
+                    midi_clip_selected: c.selected_clips().iter().any(|id| c.project().midi_clip(*id).is_some()),
                     midi_editor_focused: c.pr_visible() && c.pr.focused,
                     section_selected: c.selected_section.is_some(),
                     ..Default::default()
@@ -3958,6 +4069,13 @@ fn save_snapshot(app: &AppWindow, path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn option_characters_map_back_to_their_keys() {
+        assert_eq!(super::option_base("µ"), Some("M"));
+        assert_eq!(super::option_base("¢"), Some("4"));
+        assert_eq!(super::option_base("m"), None);
+    }
+
+    #[test]
     fn app_keymap_adds_panel_toggles_without_conflicts() {
         let k = super::app_keymap();
         assert!(k.conflicts().is_empty(), "{:?}", k.conflicts());
@@ -3968,6 +4086,26 @@ mod tests {
         assert_eq!(k.chords_for("track.rename").len(), 1);
         assert_eq!(k.chords_for("transport.record").len(), 1);
         assert_eq!(k.chords_for("app.settings").len(), 1);
+    }
+
+    #[test]
+    fn piano_roll_keys_win_over_the_selected_clips() {
+        use dstudio_core::keymap::{Chord, Context};
+        let k = super::app_keymap();
+        let ch = |s: &str| Chord::parse(s).unwrap();
+        let timeline = Context { track_selected: true, clips_selected: 1, midi_clip_selected: true, ..Default::default() };
+        let editor = Context { midi_editor_focused: true, ..timeline };
+        assert_eq!(k.resolve(&ch("shift+up"), &timeline), Some("clip.transpose_up"));
+        assert_eq!(k.resolve(&ch("shift+up"), &editor), Some("midi.octave_up"));
+        assert_eq!(k.resolve(&ch("primary+shift+down"), &timeline), Some("clip.octave_down"));
+        assert_eq!(k.resolve(&ch("up"), &timeline), Some("track.select_prev"));
+        assert_eq!(k.resolve(&ch("up"), &editor), Some("midi.transpose_up"));
+        assert_eq!(k.resolve(&ch("q"), &timeline), Some("clip.quantize"));
+        let header = Context { track_selected: true, track_header_selected: true, ..Default::default() };
+        assert_eq!(k.resolve(&ch("primary+d"), &header), Some("track.duplicate"));
+        assert_eq!(k.resolve(&ch("primary+d"), &timeline), Some("clip.duplicate"));
+        assert_eq!(k.resolve(&ch("i"), &header), Some("track.monitor"));
+        assert_eq!(k.resolve(&ch("primary+alt+m"), &Context::default()), Some("view.toggle_mixer"));
     }
 
     #[test]

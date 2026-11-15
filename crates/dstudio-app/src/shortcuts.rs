@@ -47,30 +47,43 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("edit.paste", "Paste"),
             ("clip.delete", "Delete selected clips"),
             ("clip.disable", "Mute clip"),
+            ("clip.octave_up", "Transpose clip up one octave"),
+            ("clip.octave_down", "Transpose clip down one octave"),
+            ("clip.transpose_up", "Transpose clip up one semitone"),
+            ("clip.transpose_down", "Transpose clip down one semitone"),
+            ("clip.quantize", "Quantize notes"),
         ],
     ),
     (
         "Tracks",
         &[
             ("track.group", "Group tracks"),
+            ("track.ungroup", "Ungroup tracks"),
+            ("track.duplicate_with_clips", "Duplicate tracks with clips"),
+            ("track.duplicate", "Duplicate tracks"),
             ("track.add_instrument", "Add instrument track"),
             ("track.add_audio", "Add audio track"),
-            ("track.rename", "Rename track"),
-            ("track.delete", "Delete track"),
             ("track.arm", "Arm / disarm selected track"),
+            ("view.toggle_automation", "Show / hide automation"),
             ("track.mute", "Mute track"),
             ("track.solo", "Solo selected track"),
             ("track.monitor", "Input monitoring on / off"),
+            ("track.fold", "Fold / unfold selected tracks"),
+            ("track.rename", "Rename track"),
+            ("track.delete", "Delete track"),
         ],
     ),
     (
         "Navigation",
         &[
+            ("view.toggle_bottom_panel", "Show / hide bottom panel"),
             ("view.toggle_mixer", "Show / hide mixer"),
             ("view.fit_width", "Zoom to fit the song"),
             ("view.fit_height", "Fit track heights to view"),
-            ("view.zoom_in", "Zoom timeline in"),
             ("draw_mode.toggle", "Draw mode (automation pencil)"),
+            ("track.select_prev", "Select previous track"),
+            ("track.select_next", "Select next track"),
+            ("view.zoom_in", "Zoom timeline in"),
         ],
     ),
     (
@@ -94,6 +107,14 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("midi.transpose_down", "Move notes down a semitone"),
             ("midi.octave_up", "Move notes up an octave"),
             ("midi.octave_down", "Move notes down an octave"),
+            ("midi.velocity_up", "Raise note velocity by 1"),
+            ("midi.velocity_down", "Lower note velocity by 1"),
+            ("midi.velocity_up_10", "Raise note velocity by 10"),
+            ("midi.velocity_down_10", "Lower note velocity by 10"),
+            ("midi.nudge_left", "Move notes left a grid step"),
+            ("midi.nudge_right", "Move notes right a grid step"),
+            ("midi.nudge_bar_left", "Move notes left a bar"),
+            ("midi.nudge_bar_right", "Move notes right a bar"),
             ("midi.select_all", "Select all notes"),
             ("midi.delete_notes", "Delete selected notes"),
             ("midi.reverse", "Reverse selected notes"),
@@ -175,6 +196,36 @@ fn matches(query: &str, label: &str, context: &str, chords: &[&Chord]) -> bool {
 }
 
 impl Controller {
+    /// ↑/↓ with a track selected: the track drawn above or below it on the timeline (tracks in
+    /// a folded group and hidden return rows are skipped).
+    pub fn select_track_step(&mut self, dir: i32) {
+        let p = self.project();
+        let rows: Vec<dstudio_core::TrackId> =
+            p.tracks[..self.lane_tracks()].iter().filter(|t| !self.hidden_by_fold(t)).map(|t| t.id).collect();
+        let Some(cur) = self.selected_track.and_then(|id| rows.iter().position(|t| *t == id)) else { return };
+        let next = (cur as i32 + dir).clamp(0, rows.len() as i32 - 1) as usize;
+        if next != cur {
+            self.select_track(rows[next]);
+            self.ui_dirty = true;
+        }
+    }
+
+    /// U: fold or unfold the selected group (or the group the selected track plays into).
+    pub fn fold_selected_group(&mut self) {
+        let Some(t) = self.selected_track.and_then(|id| self.project().track(id)) else { return };
+        let group = if t.is_group() { Some(t.id) } else { t.output.filter(|g| self.project().track(*g).is_some_and(|g| g.is_group())) };
+        if let Some(g) = group {
+            self.toggle_group_folded(g);
+        }
+    }
+
+    /// ⌘⇧G: ungroup the selected group.
+    pub fn ungroup_selected(&mut self) {
+        if let Some(g) = self.selected_track.filter(|id| self.project().track(*id).is_some_and(|t| t.is_group())) {
+            self.ungroup(g);
+        }
+    }
+
     /// Startup: apply the saved shortcut changes.
     pub fn shortcuts_load(&mut self) {
         self.settings.keys.map = keymap_with(&self.settings.prefs.shortcuts);
@@ -292,6 +343,9 @@ impl Controller {
         s.set_shortcut_recording(keys.recording.is_some());
         s.set_shortcut_reset_enabled(!self.settings.prefs.shortcuts.is_empty());
         s.set_shortcut_empty(empty);
+        if s.get_shortcut_search().as_str() != keys.search {
+            s.set_shortcut_search(keys.search.as_str().into());
+        }
     }
 }
 

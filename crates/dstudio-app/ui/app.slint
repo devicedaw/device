@@ -191,7 +191,7 @@ component Header inherits Rectangle {
     IconButton { x: root.width - 147px; y: 39px; width: 25px; height: 25px; icon: Icons.assistant; filled: true; icon-size: 15px;
         ink: Studio.assistant-open ? #e5e5e8 : #767678; tooltip: "Toggle assistant panel (⇧⌘A)"; clicked => { Studio.toggle-assistant(); } }
     IconButton { x: root.width - 119px; y: 39px; width: 25px; height: 25px; icon: Icons.mixer;
-        ink: Studio.mixer-open ? #e5e5e8 : #767678; tooltip: "Toggle mixer panel (⇧⌘X)"; clicked => { Studio.toggle-mixer(); } }
+        ink: Studio.mixer-open ? #e5e5e8 : #767678; tooltip: "Toggle mixer panel (⌘⌥M)"; clicked => { Studio.toggle-mixer(); } }
     IconButton { x: root.width - 91px; y: 39px; width: 25px; height: 25px; icon: Icons.panel-bottom; ink: #b4b5b8; tooltip: "Switch between clip editor and devices"; clicked => { Studio.toggle-clip-devices(); } }
     IconButton { x: root.width - 63px; y: 39px; width: 25px; height: 25px; icon: Icons.piano;
         ink: Studio.typing-on ? #e5e5e8 : #767678; tooltip: "Musical typing (K / ⇧K)"; clicked => { Studio.toggle-typing(); } }

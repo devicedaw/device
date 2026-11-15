@@ -206,8 +206,11 @@ impl Condition {
             | Condition::ClipOrSectionSelected
             | Condition::CatalogFocused
             | Condition::ChatFocused => 2,
-            Condition::ClipSelected | Condition::SectionSelected | Condition::FxSlotSelected | Condition::MidiEditorFocused => 3,
+            Condition::ClipSelected | Condition::SectionSelected | Condition::FxSlotSelected => 3,
             Condition::RangeSelected | Condition::MidiClipSelected => 4,
+            // The piano roll has focus: its keys win over the selected clip's (⇧↑ moves the
+            // selected notes up an octave there, and transposes the whole clip on the timeline).
+            Condition::MidiEditorFocused => 5,
         }
     }
 }
