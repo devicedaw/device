@@ -34,6 +34,8 @@ namespace dstudio {
 // buffer of float frames. The audio thread fills begin() and publish()es a
 // frame; the main thread copies the newest complete frame with read().
 // One writer (the processor) and one reader (the main thread).
+class WindowSpectrum;
+
 class AnalysisChannel {
 public:
     explicit AnalysisChannel(uint32_t capacity);
@@ -244,6 +246,12 @@ public:
     void take_levels(float* out) noexcept {
         for (int i = 0; i < 4; ++i) out[i] = peaks_[i].exchange(0.0f, std::memory_order_relaxed);
     }
+    // Main thread: the expanded window's analyser: 0 off, 1 the input (Pre),
+    // 2 the output (Post). The analyser is built on first use and kept.
+    void set_spectrum(int mode);
+    // Main thread: newest analyser frame (WindowSpectrum::kBins dBFS levels);
+    // 0 before the first one.
+    uint32_t spectrum(float* out, uint32_t capacity, uint64_t& seq) noexcept;
     // Main thread: newest analysis frame (see AnalysisChannel::read); 0 when
     // the processor publishes none.
     uint32_t analysis(float* out, uint32_t capacity, uint64_t& seq) noexcept;
@@ -311,6 +319,10 @@ private:
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
     std::atomic<bool> metering_{false};
     std::atomic<float> peaks_[4] = {}; // in L, in R, out L, out R since the last take_levels
+    std::unique_ptr<WindowSpectrum> spectrum_;           // built by the main thread, kept
+    std::atomic<WindowSpectrum*> spectrum_rt_{nullptr}; // published to the audio thread
+    std::atomic<int> spectrum_mode_{0};                  // 0 off, 1 input, 2 output
+    double sample_rate_ = 48000.0;
     std::vector<float> readout_scratch_;
     std::vector<float> readout_segment_; // later automation segments, merged into readout_scratch_
     std::vector<MidiEvent> midi_scratch_; // MIDI events of one automation segment

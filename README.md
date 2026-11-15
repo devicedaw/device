@@ -120,8 +120,8 @@ framed by <code>tools/art/render.mjs</code>.</sub>
 
 Device comes with 44 devices of its own. Each one is a single declarative definition (parameters, panel layout and
 factory presets) that the model, undo, saving, automation, engine and panel all derive from, with a C++ DSP kernel
-behind it. Auto Filter, Channel EQ and Character EQ also open an expanded window with a large display, In and Out
-meters and every control laid out in rows; the other devices open their card in a window for now.
+behind it. Auto Filter, Channel EQ and Character EQ also open an expanded window with a large display and live analyser,
+In and Out meters and every control laid out in rows; the other devices open their card in a window for now.
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |

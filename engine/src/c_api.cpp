@@ -806,6 +806,31 @@ int32_t se_builtin_levels(se_engine* engine, uint64_t device_id, float* out) {
     });
 }
 
+int32_t se_builtin_set_spectrum(se_engine* engine, uint64_t device_id, uint8_t mode) {
+    SE_REQUIRE_ENGINE(engine);
+    if (mode > 2) return fail(SE_ERR_INVALID_ARG, "mode must be 0 (off), 1 (pre) or 2 (post)");
+    return guarded([&]() -> int32_t {
+        const int32_t rc = engine->impl->builtin_set_spectrum(device_id, mode);
+        return rc == SE_OK ? rc : fail(rc, "no live built-in device with this id");
+    });
+}
+
+int32_t se_builtin_spectrum(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count,
+                            uint64_t* out_seq) {
+    SE_REQUIRE_ENGINE(engine);
+    if ((out == nullptr && capacity > 0) || out_count == nullptr || out_seq == nullptr)
+        return fail(SE_ERR_INVALID_ARG, "out, out_count or out_seq is NULL");
+    return guarded([&]() -> int32_t {
+        std::size_t count = 0;
+        uint64_t seq = 0;
+        const int32_t rc = engine->impl->builtin_spectrum(device_id, out, capacity, count, seq);
+        if (rc != SE_OK) return fail(rc, "no live built-in device with this id");
+        *out_count = count;
+        *out_seq = seq;
+        return SE_OK;
+    });
+}
+
 int32_t se_builtin_note(se_engine* engine, uint64_t device_id, uint8_t pitch, uint8_t velocity) {
     SE_REQUIRE_ENGINE(engine);
     return guarded([&]() -> int32_t {

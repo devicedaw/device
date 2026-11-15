@@ -310,6 +310,36 @@ enum Legend {
     Sweep(bool),
     /// The response curve.
     Response,
+    /// The analyser's wash (dimmed while nothing is drawn); its label carries its floor.
+    Analyzer(bool),
+}
+
+/// The analyser's ruler in a window: 0 dBFS at the top of the plot, this many dB down at
+/// its foot (a mix's bands sit 10 to 40 dB under its broadband peak).
+const LEVEL_SPAN_DB: f32 = 72.0;
+/// The analyser's ink (the shared mid ink, never the accent: that is the parameters').
+const WASH_INK: Color = Color::from_rgb_u8(0xa6, 0xa8, 0xad);
+
+/// The analyser's wash: a body of energy standing off the plot's floor, brighter where it
+/// is loud, with a hairline along its top; bins are log spaced across the whole plot.
+/// "Analyzer held" in the top right while the frame is held.
+fn win_analyzer(p: &Plot, bins: &[f32], held: bool, accent: Color, paths: &mut Vec<PanelPath>, texts: &mut Vec<PanelText>) {
+    let n = bins.len();
+    if n < 2 {
+        return;
+    }
+    let x = |i: usize| p.w * i as f32 / (n - 1) as f32;
+    let y = |db: f32| -db.clamp(-LEVEL_SPAN_DB, 0.0) / LEVEL_SPAN_DB * p.h;
+    let mut edge = String::with_capacity(n * 16);
+    for (i, db) in bins.iter().enumerate() {
+        edge.push_str(&format!("{}{:.1} {:.1} ", if i == 0 { 'M' } else { 'L' }, x(i), y(*db)));
+    }
+    let body = format!("M0 {:.1} L{} L{:.1} {:.1} Z", p.h, &edge[1..], p.w, p.h);
+    paths.push(PanelPath { fill2: rgba(WASH_INK, 0.1), ..fill(body, rgba(WASH_INK, 0.5)) });
+    paths.push(stroke(edge, rgba(WASH_INK, 0.9), 1.0));
+    if held {
+        texts.push(text(p.w - 8.0 * Z, 14.0 * Z, 120.0 * Z, "Analyzer held", accent, 11.0 * Z, 2));
+    }
 }
 
 /// The legend row under the axis: a glyph and a name per entry.
@@ -350,10 +380,26 @@ fn win_legend(p: &Plot, entries: &[(Legend, &str)], accent: Color, paths: &mut V
                 paths.push(stroke(hline(y, x, x + glyph), accent, 1.75 * Z));
                 true
             }
+            Legend::Analyzer(shown) => {
+                paths.push(fill(
+                    format!("M{x:.1} {:.1} h{glyph:.1} v{:.1} h{:.1} Z", y - 4.0 * Z, 8.0 * Z, -glyph),
+                    dim(rgba(WASH_INK, 0.3), *shown),
+                ));
+                paths.push(stroke(hline(y - 3.5 * Z, x, x + glyph), dim(rgba(WASH_INK, 0.9), *shown), 1.0));
+                *shown
+            }
         };
         let tx = x + glyph + gap;
-        let w = crate::text_measure::value_width(label) * Z;
+        let mut w = crate::text_measure::value_width(label) * Z;
         texts.push(text(tx, y, w + 10.0 * Z, *label, dim(MUTE_TEXT, on), 10.0 * Z, 0));
+        if let Legend::Analyzer(_) = kind {
+            // The wash's floor, as a second, dimmer run.
+            let floor = format!("\u{2212}{LEVEL_SPAN_DB:.0} dBFS");
+            let fx = tx + w + 5.0 * Z;
+            let fw = crate::text_measure::value_width(&floor) * Z;
+            texts.push(text(fx, y, fw + 10.0 * Z, floor, dim(rgba(MUTE_TEXT, 0.6), on), 10.0 * Z, 0));
+            w += 5.0 * Z + fw;
+        }
         x = tx + w + entry_gap;
     }
 }
@@ -497,7 +543,11 @@ impl Controller {
         };
         if win {
             win_grid(&p, &win_ticks(v.top_db, v.bottom_db), !self.engine.transport().playing, &mut paths, &mut texts);
-            let mut legend = vec![(Legend::Band, "Band")];
+            let spec = self.window_spectrum(d.id);
+            if let Some((bins, held)) = spec {
+                win_analyzer(&p, bins, held, accent, &mut paths, &mut texts);
+            }
+            let mut legend = vec![(Legend::Analyzer(spec.is_some()), "Analyzer"), (Legend::Band, "Band")];
             if v.bands.iter().any(|b| b.dyn_on.is_some()) {
                 legend.push((Legend::Dynamic, "Dynamic"));
             }
@@ -828,6 +878,9 @@ impl Controller {
         let mut texts = Vec::new();
         if win {
             win_grid(&p, &win_ticks(AF_TOP_DB, AF_BOTTOM_DB), !self.engine.transport().playing, &mut paths, &mut texts);
+            if let Some((bins, held)) = self.window_spectrum(d.id) {
+                win_analyzer(&p, bins, held, accent, &mut paths, &mut texts);
+            }
         } else {
             let rungs: Vec<f32> =
                 [12.0, 0.0, -12.0, -24.0].into_iter().filter(|db| p.y(*db) > 9.0 * Z && p.y(*db) < p.h - AF_AXIS * Z).collect();
@@ -950,7 +1003,14 @@ impl Controller {
             let cw = crate::text_measure::value_width(caption) * 1.1 * Z;
             texts.push(text(8.0 * Z, 12.0 * Z, 80.0 * Z, caption, accent, 11.0 * Z, 0));
             texts.push(text(8.0 * Z + cw + 5.0 * Z, 12.0 * Z, 80.0 * Z, value, accent, 11.0 * Z, 0));
-            win_legend(&p, &[(Legend::Sweep(sweep), "Sweep"), (Legend::Response, "Response")], accent, &mut paths, &mut texts);
+            let wash = self.window_spectrum(d.id).is_some();
+            win_legend(
+                &p,
+                &[(Legend::Analyzer(wash), "Analyzer"), (Legend::Sweep(sweep), "Sweep"), (Legend::Response, "Response")],
+                accent,
+                &mut paths,
+                &mut texts,
+            );
         }
         PanelCanvas {
             visible: true,

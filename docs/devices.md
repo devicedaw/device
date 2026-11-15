@@ -72,6 +72,15 @@ flowchart LR
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app
   takes them every frame (5 ms attack, 120 ms release, 1.5 s peak hold).
+  The display's analyser reads `se_builtin_set_spectrum` / `se_builtin_spectrum`
+  (`window_spectrum.hpp`): while a window is open and its view is Pre or Post,
+  the audio thread measures a 128-bin log-spaced level spectrum of the
+  device's input or output (4096-point FFT, a frame every ~21 ms). The window
+  follows it with a 45 ms attack and 190 ms release, lets it drain at 42 dB/s
+  once frames stop, and freezes it while Hold view is latched; its ruler runs
+  0 to -72 dBFS over the plot. The view (Pre, Post, Off) and Hold view are
+  window state, not parameters. `--state review-window-<id>` runs a test signal
+  through the device for screenshots.
 - **Project key.** `Transport::key` (`ProjectKey { root, minor }`, set with
   `Command::SetProjectKey`, "Key Change"). A device with `key_follow`
   (Manual / Project), `key` and `scale` parameters runs with the project key

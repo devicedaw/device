@@ -67,8 +67,20 @@ pub(crate) const ACT_TAME_BAND: i32 = 2;
 pub(crate) const ACT_BAND_ON: i32 = 3;
 pub(crate) const ACT_LISTEN: i32 = 4;
 pub(crate) const ACT_SELECT_BAND: i32 = 5;
+/// Character EQ: the selected band's drive step (Off, Low, Medium, High).
+pub(crate) const ACT_DRIVE: i32 = 6;
+/// Band drive steps, in percent.
+const DRIVE_STEPS: [f32; 4] = [0.0, 25.0, 50.0, 75.0];
+/// The analyser's view (value: index into Pre, Post, Off).
+pub(crate) const ACT_ANALYZER: i32 = 7;
+/// The analyser's Hold view latch.
+pub(crate) const ACT_HOLD: i32 = 8;
+const PILL_GHOST: i32 = 6;
+const PILL_GHOST_LATCH: i32 = 7;
 /// panel-menu code of the band picker (a menu of the EQ's bands).
 pub(crate) const MENU_BANDS: i32 = -3;
+/// Panel-menu code of the analyser view picker (Character EQ).
+pub(crate) const MENU_ANALYZER: i32 = -4;
 
 /// Devices with an expanded window.
 pub(crate) fn has_window(def: &DeviceDef) -> bool {
@@ -100,7 +112,107 @@ pub(crate) struct WinUi {
     tame_band: HashMap<DeviceId, usize>,
     /// In / Out meters of open windows.
     meters: HashMap<DeviceId, Meters>,
+    /// Analyser view per window (absent = Post).
+    analyzer: HashMap<DeviceId, Analyzer>,
+    /// Windows whose analyser frame is held (Hold view).
+    held: std::collections::HashSet<DeviceId>,
+    /// Analyser frames of open windows.
+    spectra: HashMap<DeviceId, Spectrum>,
     clock: Option<Instant>,
+}
+
+/// Which signal a window's analyser shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Analyzer {
+    Pre,
+    #[default]
+    Post,
+    Off,
+}
+
+impl Analyzer {
+    const ALL: [Analyzer; 3] = [Analyzer::Pre, Analyzer::Post, Analyzer::Off];
+
+    fn label(self) -> &'static str {
+        match self {
+            Analyzer::Pre => "Pre",
+            Analyzer::Post => "Post",
+            Analyzer::Off => "Off",
+        }
+    }
+
+    /// The engine's analyser mode (0 off, 1 input, 2 output).
+    fn engine_mode(self) -> u8 {
+        match self {
+            Analyzer::Pre => 1,
+            Analyzer::Post => 2,
+            Analyzer::Off => 0,
+        }
+    }
+}
+
+/// The level of an analyser bin with nothing in it (dBFS).
+pub(crate) const SPECTRUM_FLOOR_DB: f32 = -90.0;
+
+/// The frame a window's analyser draws: follows the engine's newest frame with an attack
+/// and release, falls to the floor at a fixed rate once frames stop, stands still while held.
+#[derive(Debug, Clone, Default)]
+struct Spectrum {
+    shown: Vec<f32>,
+    target: Vec<f32>,
+    seq: u64,
+    /// Seconds since the last new frame.
+    since_frame: f32,
+}
+
+impl Spectrum {
+    const ATTACK: f32 = 0.045;
+    const RELEASE: f32 = 0.190;
+    const DECAY_DB: f32 = 42.0;
+    /// Frames arrive every ~20 ms while audio runs; longer than this without one is silence.
+    const STALE: f32 = 0.15;
+
+    /// One poll: `frame` is a new engine frame (if any), `dt` seconds since the last poll.
+    /// Returns whether the shown frame moved.
+    fn advance(&mut self, frame: Option<&[f32]>, dt: f32, held: bool) -> bool {
+        if let Some(f) = frame {
+            self.target.clear();
+            self.target.extend(f.iter().map(|v| if v.is_finite() { v.max(SPECTRUM_FLOOR_DB) } else { SPECTRUM_FLOOR_DB }));
+            if self.shown.len() != self.target.len() {
+                self.shown = vec![SPECTRUM_FLOOR_DB; self.target.len()];
+            }
+            self.since_frame = 0.0;
+        } else {
+            self.since_frame += dt;
+        }
+        if held {
+            return false;
+        }
+        let mut moved = false;
+        if self.since_frame < Self::STALE {
+            let (ka, kr) = (1.0 - (-dt / Self::ATTACK).exp(), 1.0 - (-dt / Self::RELEASE).exp());
+            for (s, t) in self.shown.iter_mut().zip(&self.target) {
+                let next = *s + (t - *s) * if *t > *s { ka } else { kr };
+                moved |= (next - *s).abs() > 0.01;
+                *s = next;
+            }
+        } else {
+            let step = Self::DECAY_DB * dt;
+            for s in &mut self.shown {
+                if *s > SPECTRUM_FLOOR_DB {
+                    *s = (*s - step).max(SPECTRUM_FLOOR_DB);
+                    moved = true;
+                }
+            }
+        }
+        moved
+    }
+
+    /// Whether anything is above the floor (the wash, its legend entry and the held badge
+    /// show only then).
+    fn on_screen(&self) -> bool {
+        self.shown.iter().any(|v| *v > SPECTRUM_FLOOR_DB)
+    }
 }
 
 /// Ballistics of one window's In / Out meters (linear amplitude), per channel.
@@ -156,6 +268,12 @@ impl Meters {
             }
         }
     }
+}
+
+/// The drive step a band's drive (percent) sits on: 0 Off, 1 Low, 2 Medium, 3 High;
+/// `usize::MAX` (no pill lit) for a value between steps, as a preset can hold.
+fn drive_step(pct: f32) -> usize {
+    DRIVE_STEPS.iter().position(|s| (s - pct).abs() < 0.01).unwrap_or(usize::MAX)
 }
 
 /// Position of a level on the meter's -50..0 dB column (0 = foot, 1 = 0 dB).
@@ -343,8 +461,8 @@ enum Item {
     Picker(i32, String, &'static str, f32, bool),
     /// Pill row column: parameter, labels with their values, name, width.
     Pills(&'static str, Vec<(&'static str, f32)>, &'static str, f32),
-    /// Pill row of window actions: action, labels, selected index, name, width.
-    ActionPills(i32, Vec<&'static str>, usize, &'static str, f32),
+    /// Pill row of window actions: action, labels, selected index, name, width, inert.
+    ActionPills(i32, Vec<&'static str>, usize, &'static str, f32, bool),
     /// Fixed blank (keeps a column's width).
     Blank(f32),
 }
@@ -356,7 +474,7 @@ impl Item {
             Item::Toggle(..) => 56.0,
             Item::Picker(_, _, _, w, _) => *w,
             Item::Pills(.., w) => *w,
-            Item::ActionPills(.., w) => *w,
+            Item::ActionPills(_, _, _, _, w, _) => *w,
             Item::Blank(w) => *w,
         }
     }
@@ -442,8 +560,22 @@ impl Controller {
     }
 
     /// Engine peaks -> meter ballistics of every open window (each poll tick).
+    /// The analyser frame a window draws (dBFS, log spaced 20 Hz .. 20 kHz) and whether it is
+    /// held; None while the analyser is off or has nothing above its floor.
+    pub(crate) fn window_spectrum(&self, id: DeviceId) -> Option<(&[f32], bool)> {
+        if self.devices.wins.analyzer.get(&id).copied().unwrap_or_default() == Analyzer::Off {
+            return None;
+        }
+        let sp = self.devices.wins.spectra.get(&id)?;
+        sp.on_screen().then(|| (sp.shown.as_slice(), self.devices.wins.held.contains(&id)))
+    }
+
     pub(crate) fn poll_window_meters(&mut self) {
-        let now = Instant::now();
+        self.poll_window_meters_at(Instant::now());
+    }
+
+    /// One meter and analyser poll at `now` (reviews step a clock of their own).
+    pub(crate) fn poll_window_meters_at(&mut self, now: Instant) {
         let dt = self.devices.wins.clock.map_or(1.0 / 60.0, |t| now.duration_since(t).as_secs_f32());
         self.devices.wins.clock = Some(now);
         let open: Vec<DeviceId> = self
@@ -454,6 +586,25 @@ impl Controller {
             .filter(|id| self.project().device(*id).and_then(dstudio_core::builtin::def_of).is_some_and(has_window))
             .collect();
         self.devices.wins.meters.retain(|id, _| open.contains(id));
+        self.devices.wins.spectra.retain(|id, _| open.contains(id));
+        let mut frame = Vec::new();
+        for &id in &open {
+            let view = self.devices.wins.analyzer.get(&id).copied().unwrap_or_default();
+            // Set every tick: a rebuilt instance starts with its analyser off.
+            let _ = self.engine.builtin_set_spectrum(id.0, view.engine_mode());
+            let held = self.devices.wins.held.contains(&id);
+            let sp = self.devices.wins.spectra.entry(id).or_default();
+            let fresh = match self.engine.builtin_spectrum(id.0, &mut frame) {
+                Ok(seq) if seq != 0 && seq != sp.seq && !frame.is_empty() && view != Analyzer::Off => {
+                    sp.seq = seq;
+                    Some(frame.as_slice())
+                }
+                _ => None,
+            };
+            if sp.advance(fresh, dt, held) {
+                self.ui_dirty = true;
+            }
+        }
         for id in open {
             // Set every tick: a rebuilt instance starts with metering off.
             let _ = self.engine.builtin_set_metering(id.0, true);
@@ -570,12 +721,16 @@ impl Controller {
                         b.pill_row(PILL_CHOICE, idx(id), x + (w - rw) / 2.0, top + row.pill - 2.0, &items, 2.0, true);
                         b.name(x, w, row.name_y(), name, false);
                     }
-                    Item::ActionPills(action, labels, sel, name, w) => {
+                    Item::ActionPills(action, labels, sel, name, w, inert) => {
                         let items: Vec<(String, bool, i32)> =
                             labels.iter().enumerate().map(|(i, l)| (l.to_string(), i == sel, i as i32)).collect();
                         let rw = Builder::row_w(&labels, 2.0);
+                        let from = b.pills.len();
                         b.pill_row(PILL_ACTION, action, x + (w - rw) / 2.0, top + row.pill - 2.0, &items, 2.0, true);
-                        b.name(x, w, row.name_y(), name, false);
+                        for p in &mut b.pills[from..] {
+                            p.inert = inert;
+                        }
+                        b.name(x, w, row.name_y(), name, inert);
                     }
                     Item::Blank(_) => {}
                 }
@@ -772,6 +927,18 @@ impl Controller {
         let from = b.pills.len();
         self.win_header(b, vec![(PILL_BAND, -1, self.eq_band_pills(d, def, v), 8.0, true)]);
         self.dim_parked(d, def, v, b, from);
+        // Left of the band strip: the analyser's view and its Hold view latch.
+        let strip_x = b.boxes.last().map_or(WIN_W, |r| r.x / Z);
+        b.rect(BOX_HEADER_RULE, strip_x - 17.0, 11.5, 1.0, 20.0);
+        let view = self.devices.wins.analyzer.get(&d.id).copied().unwrap_or_default();
+        let hold_x = strip_x - 33.0 - 77.5;
+        b.pill(PILL_GHOST_LATCH, ACT_HOLD, 0, hold_x, 10.5, 77.5, "Hold view", self.devices.wins.held.contains(&d.id));
+        let widths = [41.0, 48.0, 38.0];
+        let mut x = hold_x - 33.0 - (widths.iter().sum::<f32>() + 2.0 * 8.0);
+        for (i, (a, w)) in Analyzer::ALL.iter().zip(widths).enumerate() {
+            b.pill(PILL_GHOST, ACT_ANALYZER, i as i32, x, 10.5, w, a.label(), *a == view);
+            x += w + 8.0;
+        }
         let row = Row::main(462.0);
         let (knobs, pickers) = self.eq_band_items(d, def, v, 72.0, 62.0);
         let mut first = vec![Item::Blank(172.0)];
@@ -804,7 +971,8 @@ impl Controller {
         p.name = s("Bank");
         p.w = -1.0; // right-aligned at x
 
-        // Main card: band field + band knobs | type, slope | output, auto gain.
+        // Main card: band field + band knobs | type, slope | output, auto gain, analyser view.
+        let view = self.devices.wins.analyzer.get(&d.id).copied().unwrap_or_default();
         let row = Row::main(410.0);
         let (knobs, pickers) = self.eq_band_items(d, def, v, 72.0, 60.0);
         let mut first = vec![Item::Blank(168.0)];
@@ -818,10 +986,17 @@ impl Controller {
             vec![
                 (first, 10.0),
                 (pickers, 10.0),
-                (vec![Item::Knob(v.output, "Output", 1, 60.0, false), Item::Toggle(auto, "Auto Gain", false)], 10.0),
+                (
+                    vec![
+                        Item::Knob(v.output, "Output", 1, 60.0, false),
+                        Item::Toggle(auto, "Auto Gain", false),
+                        Item::Picker(MENU_ANALYZER, view.label().to_string(), "Analyzer", 60.0, false),
+                    ],
+                    10.0,
+                ),
             ],
         );
-        let (xs, _) = gutter(INSET, WIN_W - 2.0 * INSET, &[168.0 + 72.0 * 2.0 + 60.0 + 30.0, 98.0 * 2.0 + 10.0, 60.0 + 56.0 + 10.0]);
+        let (xs, _) = gutter(INSET, WIN_W - 2.0 * INSET, &[168.0 + 72.0 * 2.0 + 60.0 + 30.0, 98.0 * 2.0 + 10.0, 60.0 + 56.0 + 60.0 + 20.0]);
         self.eq_band_field(d, def, v, b, row, xs[0], 168.0);
 
         // Rack card: the section switch and the selected section's controls.
@@ -829,7 +1004,8 @@ impl Controller {
         let section = self.devices.wins.section.get(&d.id).copied().unwrap_or(0);
         let sel = self.eq_selected(d, v);
         let band = &v.bands[sel];
-        let sections = Item::ActionPills(ACT_SECTION, vec!["Band", "Dynamics", "Warmth", "Valve", "Tame"], section, "Section", 324.0);
+        let sections =
+            Item::ActionPills(ACT_SECTION, vec!["Band", "Dynamics", "Warmth", "Valve", "Tame"], section, "Section", 324.0, false);
         let n = sel + 1;
         // Parameter ids are static strings of the definition: find the selected band's.
         let pid = |suffix: &str| -> &'static str {
@@ -895,7 +1071,7 @@ impl Controller {
                     (vec![Item::Toggle("tame_enabled", "Tame", false), Item::Knob("tame_amount", "Amount", 1, 60.0, false)], 10.0),
                     (
                         vec![
-                            Item::ActionPills(ACT_TAME_BAND, vec!["1", "2", "3", "4"], t, "Weighting", 136.0),
+                            Item::ActionPills(ACT_TAME_BAND, vec!["1", "2", "3", "4"], t, "Weighting", 136.0, false),
                             Item::Toggle(tid("enabled"), "On", false),
                             Item::Knob(tid("freq"), "Freq", 1, 60.0, !t_on),
                             Item::Knob(tid("q"), "Width", 1, 60.0, !t_on),
@@ -917,6 +1093,18 @@ impl Controller {
                             Item::Knob(band.overshoot.unwrap_or(""), "Overshoot", 1, 60.0, !corner),
                             Item::Toggle(band.prop_q.unwrap_or(""), "Prop Q", !bell),
                         ],
+                        10.0,
+                    ),
+                    // Band drive saturates bells and shelves only.
+                    (
+                        vec![Item::ActionPills(
+                            ACT_DRIVE,
+                            vec!["Off", "Low", "Medium", "High"],
+                            drive_step(val(pid("drive"))),
+                            "Drive",
+                            220.0,
+                            !matches!(shape, Shape::Bell | Shape::LowShelf | Shape::HighShelf),
+                        )],
                         10.0,
                     ),
                 ]
@@ -958,6 +1146,23 @@ impl Controller {
             (ACT_TAME_BAND, _) => {
                 self.devices.wins.tame_band.insert(device, value.clamp(0, 3) as usize);
             }
+            (ACT_DRIVE, Some(v)) => {
+                let sel = self.eq_selected(d, v);
+                let want = format!("band{}_drive", sel + 1);
+                let Some(p) = def.params.iter().find(|p| p.id == want) else { return };
+                let value = DRIVE_STEPS[value.clamp(0, 3) as usize];
+                self.panel_commit(Command::SetDeviceParam { device, param: p.id.into(), value });
+            }
+            (ACT_ANALYZER, _) => {
+                let view = Analyzer::ALL[value.clamp(0, 2) as usize];
+                self.devices.wins.analyzer.insert(device, view);
+                let _ = self.engine.builtin_set_spectrum(device.0, view.engine_mode());
+            }
+            (ACT_HOLD, _) => {
+                if !self.devices.wins.held.remove(&device) {
+                    self.devices.wins.held.insert(device);
+                }
+            }
             (ACT_BAND_ON, Some(_)) => self.panel_eq(device, 1, 0),
             (ACT_SELECT_BAND, Some(_)) => self.panel_eq(device, 0, value),
             (ACT_LISTEN, Some(v)) => {
@@ -970,6 +1175,23 @@ impl Controller {
             _ => return,
         }
         self.ui_dirty = true;
+    }
+
+    /// Analyser view menu rows (panel-menu code MENU_ANALYZER): Post, Pre, Off.
+    pub(crate) fn win_analyzer_rows(&self, device: DeviceId) -> crate::device_mod::MenuRows {
+        let view = self.devices.wins.analyzer.get(&device).copied().unwrap_or_default();
+        [Analyzer::Post, Analyzer::Pre, Analyzer::Off]
+            .into_iter()
+            .map(|a| {
+                let i = Analyzer::ALL.iter().position(|x| *x == a).unwrap_or(1) as i32;
+                (
+                    a.label().to_string(),
+                    if a == view { "\u{2713}".to_string() } else { String::new() },
+                    Some(crate::devices::MenuPick::Window(device, ACT_ANALYZER, i)),
+                    false,
+                )
+            })
+            .collect()
     }
 
     /// Band picker menu rows (panel-menu code MENU_BANDS).
@@ -1100,5 +1322,57 @@ mod tests {
         assert!(!has_window(def));
         let d = c.project().device(did).unwrap().clone();
         assert!(c.window_view(&d, def, Color::from_rgb_u8(0, 0, 0)).is_none());
+    }
+
+    #[test]
+    fn analyzer_frame_follows_holds_and_drains() {
+        let mut sp = Spectrum::default();
+        let frame = vec![-20.0f32; 128];
+        for _ in 0..20 {
+            sp.advance(Some(&frame), 0.03, false);
+        }
+        assert!((sp.shown[0] + 20.0).abs() < 1.0, "attack reaches the frame: {}", sp.shown[0]);
+        assert!(sp.on_screen());
+        // Held: a new, quieter frame does not move it.
+        let quiet = vec![-60.0f32; 128];
+        assert!(!sp.advance(Some(&quiet), 0.03, true));
+        assert!((sp.shown[0] + 20.0).abs() < 1.0);
+        // Released, it follows; with no frames it drains to the floor at 42 dB/s.
+        sp.advance(Some(&quiet), 0.03, false);
+        assert!(sp.shown[0] < -20.0);
+        for _ in 0..100 {
+            sp.advance(None, 0.03, false);
+        }
+        assert!(!sp.on_screen(), "drained: {}", sp.shown[0]);
+    }
+
+    /// Drive pills write the selected band's drive steps; the analyser's view and Hold view
+    /// are window state, offered on Channel EQ's top bar and Character EQ's picker.
+    #[test]
+    fn character_eq_drive_and_analyzer_controls() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("character-eq");
+        c.win_action(did, ACT_DRIVE, 2);
+        assert_eq!(c.project().device(did).map(|d| def.value(d, def.param("band1_drive").unwrap())), Some(50.0));
+        let v = view(&c, did, def);
+        let lit: Vec<String> = v.pills.iter().filter(|p| p.param == ACT_DRIVE && p.active).map(|p| p.label.to_string()).collect();
+        assert_eq!(lit, ["Medium"]);
+        assert_eq!(drive_step(20.0), usize::MAX, "between steps: no pill lit");
+        // Analyzer picker: Post by default, then Off.
+        assert!(v.pills.iter().any(|p| p.param == MENU_ANALYZER && p.label == "Post"));
+        let rows = c.win_analyzer_rows(did);
+        assert_eq!(rows.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), ["Post", "Pre", "Off"]);
+        c.win_action(did, ACT_ANALYZER, 2);
+        assert!(view(&c, did, def).pills.iter().any(|p| p.param == MENU_ANALYZER && p.label == "Off"));
+        assert!(c.window_spectrum(did).is_none());
+
+        let (mut c, did, def) = controller_with("channeleq");
+        let ghosts = |c: &Controller| -> Vec<(String, bool)> {
+            view(c, did, def).pills.iter().filter(|p| p.kind >= PILL_GHOST).map(|p| (p.label.to_string(), p.active)).collect()
+        };
+        assert_eq!(ghosts(&c), [("Hold view".into(), false), ("Pre".into(), false), ("Post".into(), true), ("Off".into(), false)]);
+        c.win_action(did, ACT_ANALYZER, 0);
+        c.win_action(did, ACT_HOLD, 0);
+        assert_eq!(ghosts(&c), [("Hold view".into(), true), ("Pre".into(), true), ("Post".into(), false), ("Off".into(), false)]);
     }
 }
