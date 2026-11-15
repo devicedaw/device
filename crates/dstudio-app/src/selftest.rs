@@ -12499,9 +12499,9 @@ fn shortcut_page_steps() -> Vec<Step> {
                     && play.is_some_and(|p| p.context == "Always")
                     && keys == Some(vec!["Space".into()])
                     && !s.get_shortcut_reset_enabled()
-                    && r.iter().filter(|r| r.header).count() == crate::shortcuts::SECTIONS.len())
-                .then_some(())
-                .ok_or(format!("page {} first {:?} play keys {keys:?}", s.get_settings_page(), r.first().map(|h| h.label.clone())))
+                    && r.iter().filter(|r| r.header).count() == crate::shortcuts::SECTIONS.len() + 1)
+                    .then_some(())
+                    .ok_or(format!("page {} first {:?} play keys {keys:?}", s.get_settings_page(), r.first().map(|h| h.label.clone())))
             }),
         ),
         DoC(
@@ -12586,10 +12586,12 @@ fn shortcut_page_steps() -> Vec<Step> {
         ),
         Do("shortcuts: search \"loop\"", Box::new(|a| a.global::<Studio>().invoke_shortcuts_search("loop".into()))),
         Check(
-            "shortcuts: only Transport › Loop selection and Loop on / off are left",
+            "shortcuts: only Transport › Loop selection, Loop on / off and the clip loop gesture are left",
             Box::new(|_, a| {
                 let labels: Vec<String> = rows(a).iter().map(|r| r.label.to_string()).collect();
-                (labels == ["Transport", "Loop selection", "Loop on / off"]).then_some(()).ok_or(format!("{labels:?}"))
+                (labels == ["Transport", "Loop selection", "Loop on / off", "Mouse & modifiers", "Loop / extend clip"])
+                    .then_some(())
+                    .ok_or(format!("{labels:?}"))
             }),
         ),
         Do("shortcuts: search \"zzz\"", Box::new(|a| a.global::<Studio>().invoke_shortcuts_search("zzz".into()))),
@@ -12638,12 +12640,13 @@ fn gesture_steps() -> Vec<Step> {
         c.doc.history_labels().last().cloned().unwrap_or_default()
     }
     let ids = Rc::new(Cell::new((TrackId(0), ClipId(0))));
-    let (i1, i2, i3, i4, i5, i6, i7, i8) =
+    let (_, i2, i3, i4, i5, i6, i7, i8) =
         (ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone());
     let heights = Rc::new(Cell::new(0f32));
     let (h1, h2) = (heights.clone(), heights.clone());
     let span = Rc::new(Cell::new((0i64, 0i64)));
     let (p1, p2, p3, p4) = (span.clone(), span.clone(), span.clone(), span.clone());
+    let i0 = ids.clone();
     vec![
         DoC(
             "gestures: a 2 s sine on a new audio track",
@@ -12660,20 +12663,22 @@ fn gesture_steps() -> Vec<Step> {
                 c.view.start_beats = 0.0;
                 c.view.scroll_y = 0.0;
                 c.import_files(vec![d.join("g.wav")], crate::controller::ImportTarget::NewTrack, Some(4 * B));
-                let t = c.selected_track.unwrap_or(TrackId(0));
-                let k = c.project().track(t).and_then(|t| t.clips.first()).map(|k| k.id).unwrap_or(ClipId(0));
-                let top = c.project().track_index(t).map_or(0.0, |i| c.view.track_top(i) as f64);
-                c.view.scroll_y = (top - 40.0).max(0.0);
-                i1.set((t, k));
-                let s0 = c.project().clip(k).map_or(0, |k| k.start);
-                let l0 = c.project().clip(k).map_or(0, |clip| c.project().clip_length_ticks(clip));
-                p1.set((s0, l0));
             }),
         ),
         DoC(
             "gestures: ⌥-drag the clip four beats to the right",
             Box::new(move |_, ctl| {
                 let mut c = ctl.borrow_mut();
+                // The import finishes in the background, so find its clip (the newest one) now.
+                let found = c.project().tracks.iter().flat_map(|t| t.clips.iter().map(move |k| (t.id, k.id))).max_by_key(|&(_, k)| k.0);
+                if let Some((t, k)) = found {
+                    i0.set((t, k));
+                    let s0 = c.project().clip(k).map_or(0, |k| k.start);
+                    let l0 = c.project().clip(k).map_or(0, |clip| c.project().clip_length_ticks(clip));
+                    p1.set((s0, l0));
+                    let top = c.project().track_index(t).map_or(0.0, |i| c.view.track_top(i) as f64);
+                    c.view.scroll_y = (top - 40.0).max(0.0);
+                }
                 let (_, k) = i2.get();
                 let (x, y) = at(&mut c, k, 0.5, 0.7);
                 let dx = 4.0 * c.view.px_per_beat as f32;
