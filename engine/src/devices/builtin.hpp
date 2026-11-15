@@ -238,6 +238,12 @@ public:
     float value(uint32_t index) const noexcept;
     // Main thread: latest readouts.
     uint32_t readouts(float* out, uint32_t capacity) const noexcept;
+    // Main thread: In / Out peak metering on or off; peaks since the last take
+    // (in L, in R, out L, out R; linear), reset by taking them.
+    void set_metering(bool on) noexcept { metering_.store(on, std::memory_order_relaxed); }
+    void take_levels(float* out) noexcept {
+        for (int i = 0; i < 4; ++i) out[i] = peaks_[i].exchange(0.0f, std::memory_order_relaxed);
+    }
     // Main thread: newest analysis frame (see AnalysisChannel::read); 0 when
     // the processor publishes none.
     uint32_t analysis(float* out, uint32_t capacity, uint64_t& seq) noexcept;
@@ -303,6 +309,8 @@ private:
     std::vector<float> current_;                   // RT copy for this block
     std::atomic<uint32_t> applied_latency_{0};     // latency of the values the last block ran with
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
+    std::atomic<bool> metering_{false};
+    std::atomic<float> peaks_[4] = {}; // in L, in R, out L, out R since the last take_levels
     std::vector<float> readout_scratch_;
     std::vector<float> readout_segment_; // later automation segments, merged into readout_scratch_
     std::vector<MidiEvent> midi_scratch_; // MIDI events of one automation segment

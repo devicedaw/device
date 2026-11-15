@@ -110,6 +110,9 @@ pub(crate) struct CanvasUi {
     wheel: f32,
     /// Latest engine readouts of field devices (Character EQ dynamics, Auto Filter cutoff).
     pub(crate) readouts: HashMap<DeviceId, Vec<f32>>,
+    /// The pointer events in flight come from a device window's display (its geometry maps
+    /// them), not from the card.
+    pub(crate) window: bool,
 }
 
 impl CanvasUi {
@@ -128,6 +131,10 @@ pub(crate) struct Plot {
     pub h: f32,
     pub top_db: f32,
     pub bottom_db: f32,
+    /// Strip along the bottom kept for the frequency labels (a card's Auto Filter field).
+    pub axis: f32,
+    /// Height above the plot's bottom where a switched-off band's node waits.
+    pub park: f32,
 }
 
 impl Plot {
@@ -161,6 +168,39 @@ fn area(pts: &[(f32, f32)], base: f32) -> String {
         return String::new();
     }
     format!("{} L{:.1} {base:.1} L{:.1} {base:.1} Z", path(pts), pts[pts.len() - 1].0, pts[0].0)
+}
+
+/// A polyline as dashes of `on` px with `off` px gaps along its length.
+fn dashed(pts: &[(f32, f32)], on: f32, off: f32) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let mut phase = 0.0f32; // distance into the current on + off period
+    for w in pts.windows(2) {
+        let ((x0, y0), (x1, y1)) = (w[0], w[1]);
+        let len = (x1 - x0).hypot(y1 - y0);
+        let mut t = 0.0f32;
+        while t < len {
+            let drawing = phase < on;
+            let step = if drawing { on - phase } else { on + off - phase }.min(len - t);
+            if drawing && step > 0.0 {
+                let (a, b) = (t / len, (t + step) / len);
+                let _ = write!(
+                    out,
+                    "M{:.1} {:.1} L{:.1} {:.1} ",
+                    x0 + (x1 - x0) * a,
+                    y0 + (y1 - y0) * a,
+                    x0 + (x1 - x0) * b,
+                    y0 + (y1 - y0) * b
+                );
+            }
+            t += step;
+            phase = (phase + step) % (on + off);
+            if step <= 0.0 {
+                break;
+            }
+        }
+    }
+    out
 }
 
 fn vline(x: f32, y0: f32, y1: f32) -> String {
@@ -216,6 +256,110 @@ fn grid(p: &Plot, rungs: &[f32], axis_strip: f32, paths: &mut Vec<PanelPath>, te
     texts.push(text(3.0 * Z, p.h - 8.0 * Z, 20.0 * Z, "Hz", AXIS, 10.0 * Z, 0));
 }
 
+/// Rungs of a window's response ruler: the top, then every 6 dB (12 dB on a span over 60).
+fn win_ticks(top: f32, bottom: f32) -> Vec<f32> {
+    let step = if top - bottom > 60.0 { 12.0 } else { 6.0 };
+    let mut out = vec![top];
+    let mut db = (top / step).floor() * step;
+    while db >= bottom - 0.01 {
+        if (db - top).abs() > 0.01 {
+            out.push(db);
+        }
+        db -= step;
+    }
+    out
+}
+
+/// Chrome of a window's response plot: the frame's top and bottom rules, dB rungs (the
+/// 0 dB one brighter) with their ruler left of the plot, the frequency rules with the axis
+/// under the plot, its unit names and the transport word ("stopped") at the axis's end.
+fn win_grid(p: &Plot, ticks: &[f32], stopped: bool, paths: &mut Vec<PanelPath>, texts: &mut Vec<PanelText>) {
+    let (lo, mid, rule) = (white(0.3), white(0.55), white(0.06));
+    paths.push(stroke(hline(0.5, 0.0, p.w), rule, 1.0));
+    paths.push(stroke(hline(p.h - 0.5, 0.0, p.w), rule, 1.0));
+    let (top, bottom) = (ticks.first().copied().unwrap_or(0.0), ticks.last().copied().unwrap_or(0.0));
+    for &db in ticks {
+        let y = p.y(db).round() + 0.5;
+        if db != top && db != bottom {
+            paths.push(stroke(hline(y, 0.0, p.w), if db == 0.0 { white(0.55 * 0.32) } else { rule }, 1.0));
+        }
+        texts.push(text(-6.0 * Z, y, 40.0 * Z, db_label(db), if db == 0.0 { mid } else { lo }, 11.0 * Z, 2));
+    }
+    let axis_y = p.h + 11.0 * Z;
+    texts.push(text(-6.0 * Z, axis_y, 30.0 * Z, "dB", lo, 10.0 * Z, 2));
+    for f in [50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10_000.0] {
+        let x = p.x(f).round() + 0.5;
+        paths.push(stroke(vline(x, 0.0, p.h), rule, 1.0));
+        let label = if f >= 1000.0 { format!("{}k", f / 1000.0) } else { format!("{f}") };
+        texts.push(text(x, axis_y, 40.0 * Z, label, lo, 10.0 * Z, 1));
+    }
+    texts.push(text(0.0, axis_y, 30.0 * Z, "Hz", lo, 10.0 * Z, 0));
+    if stopped {
+        texts.push(text(p.w, axis_y, 60.0 * Z, "stopped", mid, 10.0 * Z, 2));
+    }
+}
+
+/// Legend entry glyphs of a window's response plot.
+#[derive(Clone, Copy)]
+enum Legend {
+    /// The selected band's own curve (dotted).
+    Band,
+    /// Dynamic bands' reach (a region).
+    Dynamic,
+    /// The Auto Filter's sweep band (dimmed while it is not drawn).
+    Sweep(bool),
+    /// The response curve.
+    Response,
+}
+
+/// The legend row under the axis: a glyph and a name per entry.
+fn win_legend(p: &Plot, entries: &[(Legend, &str)], accent: Color, paths: &mut Vec<PanelPath>, texts: &mut Vec<PanelText>) {
+    let y = p.h + 30.0 * Z;
+    let (glyph, gap, entry_gap) = (14.0 * Z, 6.0 * Z, 16.0 * Z);
+    let mut x = 0.0;
+    for (kind, label) in entries {
+        let dim = |c: Color, on: bool| if on { c } else { rgba(c, c.alpha() as f32 / 255.0 * 0.35) };
+        let on = match kind {
+            Legend::Band => {
+                let mut d = String::new();
+                let mut gx = x;
+                while gx < x + glyph {
+                    d.push_str(&format!("M{gx:.1} {y:.1} L{:.1} {y:.1} ", (gx + 1.5 * Z).min(x + glyph)));
+                    gx += 3.5 * Z;
+                }
+                paths.push(stroke(d, rgba(accent, 0.6), 1.25 * Z));
+                true
+            }
+            Legend::Dynamic => {
+                paths.push(fill(format!("M{x:.1} {:.1} h{glyph:.1} v{:.1} h{:.1} Z", y - 4.0 * Z, 8.0 * Z, -glyph), rgba(accent, 0.18)));
+                false
+            }
+            Legend::Sweep(shown) => {
+                paths.push(fill(
+                    format!("M{x:.1} {:.1} h{glyph:.1} v{:.1} h{:.1} Z", y - 4.0 * Z, 8.0 * Z, -glyph),
+                    dim(rgba(accent, 0.21), *shown),
+                ));
+                paths.push(stroke(
+                    format!("{} {}", vline(x + 0.5, y - 4.0 * Z, y + 4.0 * Z), vline(x + glyph - 0.5, y - 4.0 * Z, y + 4.0 * Z)),
+                    dim(rgba(accent, 0.26), *shown),
+                    1.0,
+                ));
+                *shown
+            }
+            Legend::Response => {
+                paths.push(stroke(hline(y, x, x + glyph), accent, 1.75 * Z));
+                true
+            }
+        };
+        let tx = x + glyph + gap;
+        let w = crate::text_measure::value_width(label) * Z;
+        texts.push(text(tx, y, w + 10.0 * Z, *label, dim(MUTE_TEXT, on), 10.0 * Z, 0));
+        x = tx + w + entry_gap;
+    }
+}
+
+const MUTE_TEXT: Color = Color::from_rgb_u8(0xa6, 0xa8, 0xad);
+
 // ---------------------------------------------------------------- EQ
 
 /// Half width (octaves) of a band's Q wing.
@@ -265,12 +409,20 @@ impl Controller {
         def.param(id).map(|p| self.panel_value(d, def, p)).unwrap_or(0.0)
     }
 
+    /// Plot of the surface the pointer events in flight come from (card or window).
     fn eq_plot(&self, def: &DeviceDef, v: &EqView) -> (f32, f32, f32, Plot) {
+        self.eq_plot_on(def, v, self.devices.panel.canvas.window)
+    }
+
+    fn eq_plot_on(&self, def: &DeviceDef, v: &EqView, win: bool) -> (f32, f32, f32, Plot) {
+        if win && let Some((w, h)) = crate::device_window::plot_size(def) {
+            return (0.0, 0.0, h, Plot { w, h, top_db: v.top_db, bottom_db: v.bottom_db, axis: 0.0, park: 1.0 * Z });
+        }
         let width = def.layout.width();
         let right = width - PAD - v.slider_w - VIEW_GAP;
         let (x, y) = (PAD * Z, EQ_FIELD_Y * Z);
         let (w, h) = ((right - PAD) * Z, (EQ_FIELD_BOTTOM - EQ_FIELD_Y) * Z);
-        (x, y, h, Plot { w, h, top_db: v.top_db, bottom_db: v.bottom_db })
+        (x, y, h, Plot { w, h, top_db: v.top_db, bottom_db: v.bottom_db, axis: 0.0, park: 19.0 * Z })
     }
 
     pub(crate) fn eq_selected(&self, d: &Device, v: &EqView) -> usize {
@@ -293,9 +445,8 @@ impl Controller {
                 if !on && v.create_on_click && i != sel {
                     return None;
                 }
-                let park = 19.0 * Z;
                 let y = if !on {
-                    p.h - park
+                    p.h - p.park
                 } else if b.shape.has_gain() {
                     p.y(b.gain_db).clamp(0.0, p.h)
                 } else {
@@ -316,8 +467,17 @@ impl Controller {
 
     /// Field, chrome and output slider of an EQ card.
     pub(crate) fn eq_parts(&self, d: &Device, def: &'static DeviceDef, v: &'static EqView, accent: Color) -> (PanelCanvas, PanelEq) {
+        self.eq_parts_on(d, def, v, accent, false)
+    }
+
+    /// The display of an EQ's expanded window (src/device_window.rs).
+    pub(crate) fn eq_window_field(&self, d: &Device, def: &'static DeviceDef, v: &'static EqView, accent: Color) -> PanelCanvas {
+        self.eq_parts_on(d, def, v, accent, true).0
+    }
+
+    fn eq_parts_on(&self, d: &Device, def: &'static DeviceDef, v: &'static EqView, accent: Color, win: bool) -> (PanelCanvas, PanelEq) {
         let width = def.layout.width();
-        let (fx, fy, fh, p) = self.eq_plot(def, v);
+        let (fx, fy, fh, p) = self.eq_plot_on(def, v, win);
         let val = |id: &str| self.field_value(d, def, id);
         let sel = self.eq_selected(d, v);
         let fs = self.rate;
@@ -335,7 +495,17 @@ impl Controller {
             }
             r
         };
-        grid(&p, &rungs, 0.0, &mut paths, &mut texts);
+        if win {
+            win_grid(&p, &win_ticks(v.top_db, v.bottom_db), !self.engine.transport().playing, &mut paths, &mut texts);
+            let mut legend = vec![(Legend::Band, "Band")];
+            if v.bands.iter().any(|b| b.dyn_on.is_some()) {
+                legend.push((Legend::Dynamic, "Dynamic"));
+            }
+            legend.push((Legend::Response, "Response"));
+            win_legend(&p, &legend, accent, &mut paths, &mut texts);
+        } else {
+            grid(&p, &rungs, 0.0, &mut paths, &mut texts);
+        }
 
         // Bank detents along the bottom.
         if let Some(bp) = v.bank {
@@ -427,7 +597,9 @@ impl Controller {
             })
             .unwrap_or((sel, false));
         let mut pills = Vec::new();
-        if let Some(n) = nodes.iter().find(|n| n.band == pill_band.0) {
+        // A window marks the selected band by its ring; its pill shows while a node is under the pointer.
+        let show_pill = !win || pill_band.1 || field.hover.is_some_and(|h| h.0 == d.id);
+        if let Some(n) = nodes.iter().find(|n| n.band == pill_band.0).filter(|_| show_pill) {
             let b = self.eq_band(d, def, v, n.band);
             let fp = def.param(v.bands[n.band].freq);
             let mut value = fp.map(|fp| fp.format(b.freq)).unwrap_or_default();
@@ -463,9 +635,9 @@ impl Controller {
             x: fx,
             y: fy,
             w: p.w,
-            h: fh,
+            h: if win { fh + crate::device_window::PLOT_B * Z } else { fh },
             well_y: 0.0,
-            well: true,
+            well: !win,
             paths: model(paths),
             texts: model(texts),
             dots: model(dots),
@@ -575,11 +747,18 @@ impl Controller {
     // ---------------------------------------------------------------- Auto Filter
 
     fn af_plot(&self, def: &DeviceDef) -> (f32, f32, f32, Plot) {
+        self.af_plot_on(def, self.devices.panel.canvas.window)
+    }
+
+    fn af_plot_on(&self, def: &DeviceDef, win: bool) -> (f32, f32, f32, Plot) {
+        if win && let Some((w, h)) = crate::device_window::plot_size(def) {
+            return (0.0, 0.0, h, Plot { w, h, top_db: AF_TOP_DB, bottom_db: AF_BOTTOM_DB, axis: 0.0, park: 0.0 });
+        }
         let width = def.layout.width();
         let (x, y) = (PAD * Z, AF_Y * Z);
         let w = (width - 2.0 * PAD) * Z;
         let h = (AF_BOTTOM - AF_Y) * Z;
-        (x, y, h, Plot { w, h: h - AF_CAPTION * Z, top_db: AF_TOP_DB, bottom_db: AF_BOTTOM_DB })
+        (x, y, h, Plot { w, h: h - AF_CAPTION * Z, top_db: AF_TOP_DB, bottom_db: AF_BOTTOM_DB, axis: AF_AXIS * Z, park: 0.0 })
     }
 
     fn af_setting(&self, d: &Device, def: &DeviceDef) -> FilterSetting {
@@ -610,7 +789,7 @@ impl Controller {
             None => c,
         };
         let db = dstudio_core::builtin::filter_response(&st, at, self.rate) as f32;
-        let y = p.y(db).clamp(5.0 * Z, p.h - (AF_AXIS + 5.0) * Z);
+        let y = p.y(db).clamp(5.0 * Z, p.h - p.axis - 5.0 * Z);
         let (env, lfo) = (val("env_amount"), val("lfo_amount"));
         let lo = (c * 2f64.powf(((env.min(0.0) - lfo) / 12.0) as f64)).clamp(20.0, 20_000.0);
         let hi = (c * 2f64.powf(((env.max(0.0) + lfo) / 12.0) as f64)).clamp(20.0, 20_000.0);
@@ -632,15 +811,28 @@ impl Controller {
     }
 
     pub(crate) fn auto_filter_field(&self, d: &Device, def: &'static DeviceDef, accent: Color) -> PanelCanvas {
-        let (fx, fy, fh, p) = self.af_plot(def);
+        self.auto_filter_field_on(d, def, accent, false)
+    }
+
+    /// The display of the Auto Filter's expanded window (src/device_window.rs).
+    pub(crate) fn auto_filter_window_field(&self, d: &Device, def: &'static DeviceDef, accent: Color) -> PanelCanvas {
+        self.auto_filter_field_on(d, def, accent, true)
+    }
+
+    fn auto_filter_field_on(&self, d: &Device, def: &'static DeviceDef, accent: Color, win: bool) -> PanelCanvas {
+        let (fx, fy, fh, p) = self.af_plot_on(def, win);
         let val = |id: &str| self.field_value(d, def, id);
         let st = self.af_setting(d, def);
         let fs = self.rate;
         let mut paths = Vec::new();
         let mut texts = Vec::new();
-        let rungs: Vec<f32> =
-            [12.0, 0.0, -12.0, -24.0].into_iter().filter(|db| p.y(*db) > 9.0 * Z && p.y(*db) < p.h - AF_AXIS * Z).collect();
-        grid(&p, &rungs, AF_AXIS * Z, &mut paths, &mut texts);
+        if win {
+            win_grid(&p, &win_ticks(AF_TOP_DB, AF_BOTTOM_DB), !self.engine.transport().playing, &mut paths, &mut texts);
+        } else {
+            let rungs: Vec<f32> =
+                [12.0, 0.0, -12.0, -24.0].into_iter().filter(|db| p.y(*db) > 9.0 * Z && p.y(*db) < p.h - AF_AXIS * Z).collect();
+            grid(&p, &rungs, AF_AXIS * Z, &mut paths, &mut texts);
+        }
 
         let field = &self.devices.panel.canvas;
         let hot = |h: Hit| field.drag.as_ref().is_some_and(|g| g.device == d.id && g.hit == h) || field.hover == Some((d.id, h));
@@ -675,7 +867,7 @@ impl Controller {
             field.readouts.get(&d.id).and_then(|r| r.first().copied()).filter(|c| moving && *c > 0.0 && (c / st.cutoff - 1.0).abs() > 0.005)
         {
             let x = p.x(live as f64);
-            paths.push(stroke(vline(x, 0.0, p.h - AF_AXIS * Z), rgba(accent, 0.5), 1.0));
+            paths.push(stroke(vline(x, 0.0, p.h - p.axis), rgba(accent, 0.5), 1.0));
             let live_st = FilterSetting { cutoff: live, ..st };
             let y = p.y((dstudio_core::builtin::filter_response(&live_st, live as f64, fs) as f32).clamp(AF_BOTTOM_DB, AF_TOP_DB));
             dots.push(PanelDot { x, y, r: 2.75 * Z, fill: accent, ring: 0.0, ring_color: accent });
@@ -749,15 +941,26 @@ impl Controller {
                 Some(Hit::Corner) => 1,
                 _ => 0,
             };
+        if win {
+            // The corner's value in the plot's top-left corner, the legend under the axis.
+            let (caption, value) = match st.dj {
+                Some(_) => ("Filter", value.clone()),
+                None => ("Cutoff", value.clone()),
+            };
+            let cw = crate::text_measure::value_width(caption) * 1.1 * Z;
+            texts.push(text(8.0 * Z, 12.0 * Z, 80.0 * Z, caption, accent, 11.0 * Z, 0));
+            texts.push(text(8.0 * Z + cw + 5.0 * Z, 12.0 * Z, 80.0 * Z, value, accent, 11.0 * Z, 0));
+            win_legend(&p, &[(Legend::Sweep(sweep), "Sweep"), (Legend::Response, "Response")], accent, &mut paths, &mut texts);
+        }
         PanelCanvas {
             visible: true,
             x: fx,
             y: fy,
             w: p.w,
-            h: fh,
-            well_y: AF_CAPTION * Z,
-            caption: s("Response"),
-            well: true,
+            h: if win { fh + crate::device_window::PLOT_B * Z } else { fh },
+            well_y: if win { 0.0 } else { AF_CAPTION * Z },
+            caption: s(if win { "" } else { "Response" }),
+            well: !win,
             paths: model(paths),
             texts: model(texts),
             dots: model(dots),
@@ -768,6 +971,11 @@ impl Controller {
             value: s(format!("{name} {value}")),
             ..Default::default()
         }
+    }
+
+    /// Name and value of the Auto Filter's corner (frequency, or the DJ position's shape and corner).
+    pub(crate) fn af_corner_text_of(&self, d: &Device, def: &DeviceDef) -> (String, String) {
+        self.af_corner_text(d, def)
     }
 
     fn af_corner_text(&self, d: &Device, def: &DeviceDef) -> (String, String) {
@@ -827,6 +1035,14 @@ impl Controller {
     /// Pointer events of a field view (see ui/device_panel.slint CanvasView).
     pub fn panel_canvas(&mut self, device: DeviceId, phase: i32, x: f32, y: f32, alt: bool, shift: bool) {
         let Some((d, def, eqv)) = self.field_kind(device) else { return };
+        // A window's canvas runs on under the plot (axis and legend): nothing to grab there.
+        if self.devices.panel.canvas.window
+            && phase == 0
+            && let Some((_, h)) = crate::device_window::plot_size(def)
+            && y > h + 4.0 * Z
+        {
+            return;
+        }
         let hit = match eqv {
             Some(v) => self.eq_hit(d, def, v, x, y),
             None => self.af_hit(d, def, x, y),
@@ -1015,7 +1231,7 @@ impl Controller {
                     out.push((i, p.f(p.x(anchor(i) as f64) + dx) as f32));
                 }
                 let r = idx("resonance");
-                out.push((r, anchor(r) + (g.ay - y) * scale / (p.h - AF_AXIS * Z) * 1.25));
+                out.push((r, anchor(r) + (g.ay - y) * scale / (p.h - p.axis) * 1.25));
             }
             (None, Hit::Edge(high)) => {
                 let (_, _, _, p) = self.af_plot(def);
@@ -1244,6 +1460,49 @@ impl Controller {
         }
     }
 
+    /// The selected band's own response in a square card (an EQ window's control row):
+    /// three octaves either side of its corner, the plot's dB range, a dashed line over
+    /// an accent body, octave rules and the unit in the corner.
+    pub(crate) fn eq_shape_card(&self, d: &Device, def: &DeviceDef, v: &EqView, accent: Color, size: f32) -> PanelCanvas {
+        const OCTAVES: f32 = 3.0;
+        let val = |id: &str| self.field_value(d, def, id);
+        let sel = self.eq_selected(d, v);
+        let on = v.band_on(sel, &val);
+        let b = self.eq_band(d, def, v, sel);
+        let inset = 2.0 * Z;
+        let (w, h) = (size - 2.0 * inset, size - 2.0 * inset);
+        let y_for = |db: f32| inset + (v.top_db - db.clamp(v.bottom_db, v.top_db)) / (v.top_db - v.bottom_db) * h;
+        let y0 = y_for(0.0).round() + 0.5;
+        let origin = white(0.55 * 0.32);
+        let mut paths = vec![stroke(hline(y0, inset, inset + w), origin, 1.0)];
+        for o in -2..=2 {
+            let x = (inset + (o as f32 / OCTAVES + 1.0) * 0.5 * w).round() + 0.5;
+            paths.push(stroke(vline(x, inset, inset + h), if o == 0 { origin } else { white(0.06) }, 1.0));
+        }
+        let dim = |c: Color| if on { c } else { rgba(c, c.alpha() as f32 / 255.0 * 0.35) };
+        let sections = eq::sections(&b, self.rate);
+        let pts: Vec<(f32, f32)> = (0..97)
+            .map(|i| {
+                let t = i as f32 / 96.0;
+                let f = b.freq as f64 * 2f64.powf(((t * 2.0 - 1.0) * OCTAVES) as f64);
+                (inset + t * w, y_for(eq::sections_db(&sections, f, self.rate) as f32))
+            })
+            .collect();
+        if on {
+            let prom = (pts.iter().map(|p| (p.1 - y0).abs()).fold(0.0f32, f32::max) / (h * 15.0 / (v.top_db - v.bottom_db))).min(1.0);
+            paths.push(fill(area(&pts, y0), rgba(accent, 0.08 + 0.2 * prom)));
+        }
+        paths.push(stroke(dashed(&pts, 2.0 * Z, 3.0 * Z), dim(white(0.92)), 1.5 * Z));
+        PanelCanvas {
+            visible: true,
+            w: size,
+            h: size,
+            paths: model(paths),
+            texts: model(vec![text(inset, inset + h - 6.0 * Z, 30.0 * Z, "oct", white(0.3), 10.0 * Z, 0)]),
+            ..Default::default()
+        }
+    }
+
     /// Bank pick (Character EQ): the bank and every enabled band's frequency
     /// moved onto the new bank's detents, in one undo step.
     pub(crate) fn panel_pick_bank(&mut self, device: DeviceId, param: usize, choice: f32) {
@@ -1276,7 +1535,7 @@ mod tests {
 
     #[test]
     fn plot_maps_log_frequency_and_db() {
-        let p = Plot { w: 400.0, h: 200.0, top_db: 24.0, bottom_db: -24.0 };
+        let p = Plot { w: 400.0, h: 200.0, top_db: 24.0, bottom_db: -24.0, axis: 0.0, park: 19.0 * Z };
         assert!((p.x(20.0)).abs() < 1e-3 && (p.x(20_000.0) - 400.0).abs() < 1e-3);
         assert!((p.f(200.0) - 20.0 * 1000f64.sqrt()).abs() < 1e-6);
         assert_eq!(p.y(0.0), 100.0);

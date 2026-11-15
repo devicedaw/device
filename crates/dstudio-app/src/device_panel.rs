@@ -263,7 +263,7 @@ fn snap_to_detent(p: &ParamDef, detents: &[f32], norm: f32, fine: bool) -> Optio
 
 /// Detent tick marks just outside a knob ring (44 x 44 view box centred on the
 /// 32 pt ring): from one ring stroke (1.76) to 2.5 strokes past the ring's centre line.
-fn detent_ticks(p: &ParamDef, detents: &[f32]) -> String {
+pub(crate) fn detent_ticks(p: &ParamDef, detents: &[f32]) -> String {
     const R: f32 = 16.0 - 0.88;
     let (inner, outer) = (R + 1.76, R + 1.76 * 2.5);
     let mut out = String::new();
@@ -624,6 +624,10 @@ impl Controller {
             }
             _ => Cow::Borrowed(d),
         }
+    }
+
+    pub(crate) fn live_device_of<'a>(&self, d: &'a Device, def: &DeviceDef) -> Cow<'a, Device> {
+        self.live_device(d, def)
     }
 
     /// Transfer curve of a `Face::Transfer` knob.
@@ -1162,6 +1166,7 @@ impl Controller {
     pub(crate) fn panel_poll_meters(&mut self) {
         self.sampler_poll();
         self.synth_poll();
+        self.poll_window_meters();
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return };
         let strips: Vec<(DeviceId, Strip)> = t
             .devices
@@ -1692,6 +1697,10 @@ impl Controller {
         let Some((d, def)) = self.panel_def(device) else { return };
         let check = |on: bool| if on { "✓".to_string() } else { String::new() };
         let rows = match which {
+            crate::device_window::MENU_BANDS => match self.win_band_rows(device) {
+                Some(rows) => rows,
+                None => return,
+            },
             -1 => {
                 let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
                 let mut rows = vec![("None".to_string(), check(d.sidechain.is_none()), Some(MenuPick::Sidechain(device, None)), false)];

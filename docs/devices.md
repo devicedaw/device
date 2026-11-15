@@ -60,6 +60,18 @@ flowchart LR
   main thread reads the newest frame). The app reads it with
   `se_builtin_analysis` / `Engine::builtin_analysis(id, &mut Vec<f32>)`, which
   returns the frame's sequence number so a poll can skip unchanged frames.
+- **Expanded windows.** The window button on a card opens the device's
+  expanded window (`device_window.rs`, `ui/device_window.slint`) when the
+  device has one (`device_window::has_window`; Auto Filter, Channel EQ and
+  Character EQ so far), otherwise the card itself in a window. A window is a
+  960 pt wide face: a top bar (power, presets, the device's header pills), a
+  large display (the card's canvas drawn at window size with its axis and
+  legend), In / Out meters, and rows of controls laid out with the same
+  gutter rule (fixed clusters, even gaps, a rule in each inner gap). The
+  meters read `se_builtin_set_metering` / `se_builtin_levels`
+  (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
+  audio thread keeps the input and output peak of each block, and the app
+  takes them every frame (5 ms attack, 120 ms release, 1.5 s peak hold).
 - **Project key.** `Transport::key` (`ProjectKey { root, minor }`, set with
   `Command::SetProjectKey`, "Key Change"). A device with `key_follow`
   (Manual / Project), `key` and `scale` parameters runs with the project key

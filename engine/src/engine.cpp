@@ -1955,6 +1955,24 @@ int32_t Engine::builtin_analysis(uint64_t device_id, float* out, std::size_t cap
     return SE_OK;
 }
 
+int32_t Engine::builtin_set_metering(uint64_t device_id, bool on) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    BuiltinInstance* b = inst != nullptr ? inst->as_builtin() : nullptr;
+    if (b == nullptr) return SE_ERR_NOT_FOUND;
+    b->set_metering(on);
+    return SE_OK;
+}
+
+int32_t Engine::builtin_levels(uint64_t device_id, float* out) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    BuiltinInstance* b = inst != nullptr ? inst->as_builtin() : nullptr;
+    if (b == nullptr) return SE_ERR_NOT_FOUND;
+    b->take_levels(out);
+    return SE_OK;
+}
+
 int32_t Engine::plugin_set_param(uint64_t device_id, uint32_t param_id, float normalized) {
     if (!std::isfinite(normalized)) return SE_ERR_INVALID_ARG;
     std::lock_guard lock(plugins_.mutex());

@@ -24,3 +24,5 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
 - Automation for every device control and the channel strip.
 - Export to WAV or MP3 (mix or stems, whole song or loop) and to an Ableton Live set with return tracks and sends.
 - Undo and redo for every edit, and an optional assistant panel that uses your own Anthropic API key.
+- Expanded windows for Auto Filter, Channel EQ and Character EQ, with a large display, In and Out meters and every
+  control laid out in rows.
