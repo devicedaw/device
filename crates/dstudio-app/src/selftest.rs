@@ -12822,7 +12822,7 @@ fn gesture_steps() -> Vec<Step> {
                 let off = dstudio_core::midi::ClipLoop { on: false, ..dstudio_core::midi::ClipLoop::whole(4 * B) };
                 c.execute(Command::SetMidiLoop { clip: k, clip_loop: Some(off), length: 4 * B });
                 if let Some((ti, _)) = c.project().find_midi_clip(k) {
-                    c.view.scroll_y = (c.view.track_top(ti) as f64 - 40.0).max(0.0);
+                    c.view.scroll_y = (c.view.track_offset(ti) as f64 - 20.0).max(0.0);
                 }
                 let (x, y) = at(&mut c, k, 1.0, 0.0);
                 let dx = 4.0 * c.view.px_per_beat as f32;
