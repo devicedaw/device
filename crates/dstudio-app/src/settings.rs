@@ -32,11 +32,13 @@ pub enum Field {
     Input = 1,
     SampleRate = 2,
     BufferSize = 3,
+    /// Settings › Shortcuts › Preset.
+    ShortcutPreset = 4,
 }
 
 impl Field {
     fn from_i32(i: i32) -> Option<Field> {
-        [Field::Output, Field::Input, Field::SampleRate, Field::BufferSize].into_iter().find(|f| *f as i32 == i)
+        [Field::Output, Field::Input, Field::SampleRate, Field::BufferSize, Field::ShortcutPreset].into_iter().find(|f| *f as i32 == i)
     }
 }
 
@@ -46,6 +48,7 @@ pub enum Choice {
     Device(Option<(String, String)>), // (id, name)
     Rate(f64),
     Buffer(u32),
+    Preset(&'static str),
 }
 
 #[derive(Debug)]
@@ -308,6 +311,9 @@ impl Controller {
                 let rate = self.current_rate();
                 BUFFER_SIZES.iter().map(|&n| (fmt_buffer(n, rate), Choice::Buffer(n))).collect()
             }
+            Field::ShortcutPreset => {
+                crate::shortcut_presets::PRESETS.iter().map(|p| (p.name.to_string(), Choice::Preset(p.name))).collect()
+            }
         }
     }
 
@@ -318,6 +324,7 @@ impl Controller {
             (Field::Input, Choice::Device(d)) => d.as_ref().map(|d| &d.0) == a.input.as_ref(),
             (Field::SampleRate, Choice::Rate(r)) => (r - self.current_rate()).abs() < 0.5,
             (Field::BufferSize, Choice::Buffer(n)) => *n == self.current_buffer(),
+            (Field::ShortcutPreset, Choice::Preset(p)) => *p == crate::shortcut_presets::find(&self.settings.prefs.shortcut_preset).name,
             _ => false,
         }
     }
@@ -343,6 +350,10 @@ impl Controller {
         let Some((_, c)) = items.get(i).cloned() else { return };
         self.ui_dirty = true;
         if self.is_current(f, &c) {
+            return;
+        }
+        if let Choice::Preset(name) = c {
+            self.shortcuts_set_preset(name);
             return;
         }
         let mut next = self.settings.prefs.clone();

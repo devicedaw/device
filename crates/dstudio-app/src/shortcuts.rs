@@ -170,9 +170,9 @@ impl Default for ShortcutsUi {
     }
 }
 
-/// The defaults with `saved` applied (unknown actions and chords that no longer parse are skipped).
-pub fn keymap_with(saved: &std::collections::BTreeMap<String, Vec<String>>) -> Keymap {
-    let mut map = crate::app_keymap();
+/// The preset's keys with `saved` applied (unknown actions and chords that no longer parse are skipped).
+pub fn keymap_with(preset: &str, saved: &std::collections::BTreeMap<String, Vec<String>>) -> Keymap {
+    let mut map = crate::shortcut_presets::keymap(preset);
     for (action, chords) in saved {
         let chords: Vec<Chord> = chords.iter().filter_map(|c| Chord::parse(c)).collect();
         map.set_chords(action, chords);
@@ -180,9 +180,9 @@ pub fn keymap_with(saved: &std::collections::BTreeMap<String, Vec<String>>) -> K
     map
 }
 
-/// The saved form of `map`: the listed actions whose chords differ from the defaults.
-pub fn changes(map: &Keymap) -> std::collections::BTreeMap<String, Vec<String>> {
-    let defaults = crate::app_keymap();
+/// The saved form of `map`: the listed actions whose chords differ from the preset's.
+pub fn changes(map: &Keymap, preset: &str) -> std::collections::BTreeMap<String, Vec<String>> {
+    let defaults = crate::shortcut_presets::keymap(preset);
     SECTIONS
         .iter()
         .flat_map(|(_, rows)| rows.iter())
@@ -292,11 +292,12 @@ impl Controller {
 
     /// Startup: apply the saved shortcut changes.
     pub fn shortcuts_load(&mut self) {
-        self.settings.keys.map = keymap_with(&self.settings.prefs.shortcuts);
+        let p = &self.settings.prefs;
+        self.settings.keys.map = keymap_with(&p.shortcut_preset, &p.shortcuts);
     }
 
     fn shortcuts_save(&mut self) {
-        self.settings.prefs.shortcuts = changes(&self.settings.keys.map);
+        self.settings.prefs.shortcuts = changes(&self.settings.keys.map, &self.settings.prefs.shortcut_preset);
         self.save_prefs();
         self.ui_dirty = true;
     }
@@ -316,8 +317,19 @@ impl Controller {
         self.shortcuts_save();
     }
 
+    /// Reset to defaults: the chosen preset's keys, without the user's changes.
     pub fn shortcuts_reset(&mut self) {
-        self.settings.keys.map = crate::app_keymap();
+        self.settings.keys.map = crate::shortcut_presets::keymap(&self.settings.prefs.shortcut_preset);
+        self.settings.keys.recording = None;
+        self.shortcuts_save();
+    }
+
+    /// Preset menu: start from another DAW's keys (the changes made on the old preset are dropped).
+    pub fn shortcuts_set_preset(&mut self, name: &str) {
+        let preset = crate::shortcut_presets::find(name);
+        let saved = if preset.name == crate::shortcut_presets::PRESETS[0].name { String::new() } else { preset.name.to_string() };
+        self.settings.prefs.shortcut_preset = saved;
+        self.settings.keys.map = crate::shortcut_presets::keymap(preset.name);
         self.settings.keys.recording = None;
         self.shortcuts_save();
     }
@@ -421,6 +433,7 @@ impl Controller {
         s.set_shortcut_list_h(y + 12.0);
         s.set_shortcut_recording(keys.recording.is_some());
         s.set_shortcut_reset_enabled(!self.settings.prefs.shortcuts.is_empty());
+        s.set_shortcut_preset(crate::shortcut_presets::find(&self.settings.prefs.shortcut_preset).name.into());
         s.set_shortcut_empty(empty);
         if s.get_shortcut_search().as_str() != keys.search {
             s.set_shortcut_search(keys.search.as_str().into());
@@ -455,14 +468,21 @@ mod tests {
     #[test]
     fn saved_changes_round_trip() {
         let mut map = crate::app_keymap();
-        assert!(changes(&map).is_empty());
+        assert!(changes(&map, "").is_empty());
         map.set_chords("transport.record", vec![Chord::parse("primary+shift+r").unwrap()]);
         map.set_chords("clip.cut", Vec::new());
-        let saved = changes(&map);
+        let saved = changes(&map, "");
         assert_eq!(saved.get("transport.record"), Some(&vec!["primary+shift+r".to_string()]));
         assert_eq!(saved.get("clip.cut"), Some(&Vec::new()));
         assert_eq!(saved.len(), 2);
-        assert_eq!(keymap_with(&saved), map);
+        assert_eq!(keymap_with("", &saved), map);
+        // On a preset, the changes are relative to its keys.
+        let mut logic = crate::shortcut_presets::keymap("Logic Pro");
+        assert!(changes(&logic, "Logic Pro").is_empty());
+        logic.set_chords("transport.loop_toggle", vec![Chord::parse("primary+l").unwrap()]);
+        let saved = changes(&logic, "Logic Pro");
+        assert_eq!(saved.len(), 1);
+        assert_eq!(keymap_with("Logic Pro", &saved), logic);
     }
 
     #[test]

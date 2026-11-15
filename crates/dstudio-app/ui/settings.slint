@@ -169,8 +169,8 @@ component GeneralPage inherits Rectangle {
 // ---------------------------------------------------------------- Shortcuts page
 // Settings › Shortcuts (src/shortcuts.rs). Every action by section, its keys as badges and
 // the context it works in. Click the keys to record new ones ("Press keys", Escape cancels),
-// hover a row for × (unmapped), Reset to defaults drops every change. One preset for now
-// (shown, not a menu).
+// hover a row for × (unmapped), Reset to defaults drops every change. Preset starts from
+// another DAW's keys (src/shortcut_presets.rs).
 
 // One chord: a pill holding a round badge per key ("⌘", "L"), or a wider one for a name ("Space").
 component KeyChord inherits Rectangle {
@@ -219,9 +219,12 @@ component ShortcutsPage inherits Rectangle {
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Shortcuts"; font-size: 17.25px; font-weight: 700; }
     Text { x: 20.5px; y: 78px; height: 14px; text: "Preset"; color: #7e7f83; font-size: 10px; font-weight: 500; vertical-alignment: center; }
     Rectangle {
-        x: 57.5px; y: 74.75px; width: 134px; height: 20.4px; border-radius: 10.2px; background: #2a2b30;
-        accessible-role: combobox; accessible-label: "Preset"; accessible-value: "Device Studio";
-        Text { x: 10.5px; text: "Device Studio"; color: #bdbec2; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+        x: 57.5px; y: 74.75px; width: 134px; height: 20.4px; border-radius: 10.2px;
+        accessible-role: combobox; accessible-label: "Preset"; accessible-value: Studio.shortcut-preset;
+        accessible-action-default => { Studio.settings-dropdown(4); }
+        background: preset-ta.has-hover ? #303136 : #2a2b30;
+        preset-ta := TouchArea { clicked => { Studio.settings-dropdown(4); } }
+        Text { x: 10.5px; width: parent.width - 30px; text: Studio.shortcut-preset; color: #bdbec2; font-size: 10px; font-weight: 600; vertical-alignment: center; overflow: elide; }
         Path { x: parent.width - 17.5px; y: (parent.height - 3.6px) / 2; width: 6px; height: 3.6px; viewbox-width: 6; viewbox-height: 3.6; commands: "M0 0 L6 0 L3 3.6 Z"; fill: #8e8f94; }
     }
     Rectangle {
@@ -569,10 +572,12 @@ export component SettingsPanel inherits Rectangle {
     // Dropdown list (click outside closes).
     if Studio.settings-menu-open: Rectangle {
         TouchArea { clicked => { Studio.settings-menu-dismiss(); } }
-        property <length> field-y: Studio.settings-menu-field == 0 ? 90px : Studio.settings-menu-field == 1 ? 151px : Studio.settings-menu-field == 2 ? 251px : 312px;
+        property <length> field-y: Studio.settings-menu-field == 0 ? 90px : Studio.settings-menu-field == 1 ? 151px : Studio.settings-menu-field == 2 ? 251px : Studio.settings-menu-field == 3 ? 312px : 74.75px;
+        property <bool> preset: Studio.settings-menu-field == 4;
         ChoiceList {
-            x: 187px + 20.5px; y: min(parent.field-y + 31px, root.height - 5px - self.height);
-            width: Studio.settings-menu-field == 0 ? root.width - 187px - 20.5px - 76.5px : root.width - 187px - 41px;
+            x: parent.preset ? 187px + 57.5px : 187px + 20.5px;
+            y: min(parent.field-y + (parent.preset ? 23.4px : 31px), root.height - 5px - self.height);
+            width: parent.preset ? 134px : Studio.settings-menu-field == 0 ? root.width - 187px - 20.5px - 76.5px : root.width - 187px - 41px;
             height: Studio.settings-menu-h;
             items: Studio.settings-menu-items;
             font-size: 10.5px; text-x: 11px;

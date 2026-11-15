@@ -92,6 +92,11 @@ pub struct Preferences {
     /// `Chord::parse` form (an empty list = unmapped). Actions not listed keep their defaults.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub shortcuts: std::collections::BTreeMap<String, Vec<String>>,
+    /// Settings › Shortcuts › Preset: the other DAW whose keys the keymap starts from
+    /// (`shortcut_presets::PRESETS`; empty = Device Studio's own). `shortcuts` holds the
+    /// changes on top of it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub shortcut_preset: String,
 }
 
 fn is_zero_u8(v: &u8) -> bool {
@@ -221,6 +226,7 @@ mod tests {
             plugin_folders: vec!["/opt/plugins".into()],
             count_in_bars: 2,
             shortcuts: [("transport.record".to_string(), vec!["primary+shift+r".to_string()])].into_iter().collect(),
+            shortcut_preset: "Logic Pro".into(),
         };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
@@ -236,6 +242,7 @@ mod tests {
         assert!(loaded.midi.disabled_inputs.is_empty(), "MIDI inputs default to on");
         assert!(loaded.plugin_folders.is_empty(), "files without custom plugin folders have none");
         assert!(loaded.shortcuts.is_empty(), "files without shortcut changes keep the defaults");
+        assert!(loaded.shortcut_preset.is_empty(), "files without a preset use Device Studio's keys");
         assert_eq!(loaded.count_in_bars, 0, "files without a count-in record straight away");
         let _ = std::fs::remove_dir_all(dir);
     }

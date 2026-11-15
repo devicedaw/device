@@ -57,6 +57,7 @@ fn normalize_key(k: &str) -> Option<String> {
         "end",
         "comma",
         "period",
+        "capslock",
     ];
     if k == "plus" {
         return Some("+".into());
@@ -70,6 +71,7 @@ fn normalize_key(k: &str) -> Option<String> {
         return Some(match s.as_str() {
             "Pageup" => "PageUp".into(),
             "Pagedown" => "PageDown".into(),
+            "Capslock" => "CapsLock".into(),
             _ => s,
         });
     }
@@ -112,6 +114,7 @@ impl Chord {
                 "Backspace" => "⌫",
                 "Delete" => "⌦",
                 "Escape" => "Esc",
+                "CapsLock" => "Caps Lock",
                 k => k,
             }
             .to_string(),
