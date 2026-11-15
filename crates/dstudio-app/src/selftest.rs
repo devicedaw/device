@@ -9,7 +9,7 @@ use crate::controller::{BottomTab, Controller};
 use crate::{AppWindow, Studio};
 use dstudio_core::assistant::Mode;
 use dstudio_core::builtin::synth_v2::SYNTH_V2;
-use dstudio_core::{ClipId, PPQ, TrackKind, db_to_gain};
+use dstudio_core::{ClipId, PPQ, TrackId, TrackKind, db_to_gain};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Model, SharedString};
 use std::cell::Cell;
@@ -12620,6 +12620,177 @@ fn shortcut_page_steps() -> Vec<Step> {
     ]
 }
 
+/// The rest of the shortcut list: move clips to the track below, 0 / M on a clip, glue notes,
+/// the mixer's strip keys, ⇧Tab between the clip editor and the devices, interface zoom.
+fn more_key_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::keymap::Chord;
+    let state: Rc<Cell<Option<(dstudio_core::ClipId, TrackId, TrackId)>>> = Rc::new(Cell::new(None));
+    let (s0, s1, s2, s3, s4, s5) = (state.clone(), state.clone(), state.clone(), state.clone(), state.clone(), state.clone());
+    let s6 = state.clone();
+    let zoom = Rc::new(Cell::new(0u32));
+    let (z0, z1) = (zoom.clone(), zoom.clone());
+    fn last_label(c: &Controller) -> String {
+        c.doc.history_labels().last().cloned().unwrap_or_default()
+    }
+    fn bind(ctl: &Ctl, action: &str, chord: &str) {
+        let chords = Chord::parse(chord).into_iter().collect();
+        ctl.borrow_mut().settings.keys.map.set_chords(action, chords);
+    }
+    vec![
+        DoC(
+            "keys: two instrument tracks, a MIDI clip with two C4s on the first; move-to-track-below on ⌘⌥J",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.mixer_open = false;
+                let a = c.add_instrument_track();
+                let b = c.add_instrument_track();
+                let (Some(a), Some(b)) = (a, b) else { return };
+                let mut m = dstudio_core::MidiClip::empty(104 * dstudio_core::PPQ, 4 * dstudio_core::PPQ);
+                let n = |id, start| dstudio_core::midi::Note { id, pitch: 60, start, length: dstudio_core::PPQ / 2, velocity: 100 };
+                m.notes = vec![n(1, 0), n(2, dstudio_core::PPQ)];
+                c.execute(dstudio_core::Command::AddMidiClip { track: a, clip: m });
+                let Some(id) = c.project().track(a).and_then(|t| t.midi_clips.first()).map(|m| m.id) else { return };
+                c.select_track(a);
+                c.select_clip(Some(id));
+                c.pr.focused = false;
+                s0.set(Some((id, a, b)));
+                drop(c);
+                bind(ctl, "clip.move_to_track_below", "primary+alt+j");
+            }),
+        ),
+        Do("keys: ⌘⌥J", Box::new(|a| key_alt(a, "j", true))),
+        Check(
+            "keys: the clip moved to the track below at the same start, one undo step \"Move Clip\", still selected",
+            Box::new(move |c, _| {
+                let (id, _, b) = s1.get().ok_or("no setup")?;
+                let on_b =
+                    c.project().track(b).is_some_and(|t| t.midi_clips.iter().any(|m| m.id == id && m.start == 104 * dstudio_core::PPQ));
+                (on_b && last_label(c) == "Move Clip" && c.selected_clip == Some(id) && c.selected_track == Some(b))
+                    .then_some(())
+                    .ok_or(format!("on b {on_b} last {:?} selected {:?}", last_label(c), c.selected_clip))
+            }),
+        ),
+        DoC(
+            "keys: M on the selected clip",
+            Box::new(|a, ctl| {
+                bind(ctl, "clip.move_to_track_below", "");
+                key(a, "m", false, false);
+            }),
+        ),
+        Check(
+            "keys: M disabled the clip, not the track (\"Disable Clip\")",
+            Box::new(move |c, _| {
+                let (id, _, b) = s2.get().ok_or("no setup")?;
+                let off = c.project().midi_clip(id).is_some_and(|m| m.disabled);
+                let muted = c.project().track(b).is_some_and(|t| t.mute);
+                (off && !muted && last_label(c) == "Disable Clip")
+                    .then_some(())
+                    .ok_or(format!("off {off} muted {muted} last {:?}", last_label(c)))
+            }),
+        ),
+        Do("keys: 0", Box::new(|a| key(a, "0", false, false))),
+        Check(
+            "keys: 0 enabled it again",
+            Box::new(move |c, _| {
+                let (id, _, _) = s3.get().ok_or("no setup")?;
+                c.project().midi_clip(id).is_some_and(|m| !m.disabled).then_some(()).ok_or(format!("last {:?}", last_label(c)))
+            }),
+        ),
+        DoC(
+            "keys: piano roll focused, both notes selected, glue on ⌘⌥J",
+            Box::new(|a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    c.pr.focused = true;
+                    c.pr_select_all();
+                }
+                bind(ctl, "midi.glue", "primary+alt+j");
+                key_alt(a, "j", true);
+            }),
+        ),
+        Check(
+            "keys: one C4 from the first start to the second's end, one undo step \"Glue Notes\"",
+            Box::new(move |c, _| {
+                let (id, _, _) = s4.get().ok_or("no setup")?;
+                let notes = c.project().midi_clip(id).map(|m| m.notes.clone()).unwrap_or_default();
+                let ppq = dstudio_core::PPQ;
+                (notes.len() == 1 && notes[0].start == 0 && notes[0].length == ppq + ppq / 2 && last_label(c) == "Glue Notes")
+                    .then_some(())
+                    .ok_or(format!("notes {notes:?} last {:?}", last_label(c)))
+            }),
+        ),
+        DoC(
+            "keys: piano roll unfocused, the clip selected: ⇧Tab",
+            Box::new(|a, ctl| {
+                bind(ctl, "midi.glue", "");
+                ctl.borrow_mut().pr.focused = false;
+                ctl.borrow_mut().set_bottom_tab(crate::controller::BottomTab::Clip);
+                key(a, Key::Backtab, false, true);
+            }),
+        ),
+        Check(
+            "keys: ⇧Tab switched the bottom panel to the devices",
+            Box::new(|c, _| (c.bottom_tab == crate::controller::BottomTab::Devices).then_some(()).ok_or(format!("tab {:?}", c.bottom_tab))),
+        ),
+        Do("keys: ⇧Tab again", Box::new(|a| key(a, Key::Backtab, false, true))),
+        Check(
+            "keys: back on the clip editor",
+            Box::new(|c, _| (c.bottom_tab == crate::controller::BottomTab::Clip).then_some(()).ok_or(format!("tab {:?}", c.bottom_tab))),
+        ),
+        DoC(
+            "keys: the mixer open, the first instrument track selected: →",
+            Box::new(move |a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    c.select_clip(None);
+                    c.mixer_open = true;
+                    if let Some((_, t, _)) = state.get() {
+                        c.select_track(t);
+                    }
+                }
+                key(a, Key::RightArrow, false, false);
+            }),
+        ),
+        Check(
+            "keys: → selected the next strip",
+            Box::new(move |c, _| {
+                let (_, _, b) = s6.get().ok_or("no setup")?;
+                (c.selected_track == Some(b)).then_some(()).ok_or(format!("selected {:?} want {b:?}", c.selected_track))
+            }),
+        ),
+        DoC(
+            "keys: ↑, then close the mixer",
+            Box::new(|a, ctl| {
+                key(a, Key::UpArrow, false, false);
+                ctl.borrow_mut().mixer_open = false;
+            }),
+        ),
+        Check(
+            "keys: ↑ went back to the first instrument track's strip",
+            Box::new(move |c, _| {
+                let (_, t, _) = s5.get().ok_or("no setup")?;
+                (c.selected_track == Some(t)).then_some(()).ok_or(format!("selected {:?} want {t:?}", c.selected_track))
+            }),
+        ),
+        Do("keys: ⌘=", Box::new(|a| key(a, "=", true, false))),
+        DoC(
+            "keys: note the zoom, then ⌘-",
+            Box::new(move |a, ctl| {
+                z0.set(ctl.borrow().settings.prefs.interface_zoom);
+                key(a, "-", true, false);
+            }),
+        ),
+        Check(
+            "keys: ⌘= zoomed the interface in a step and ⌘- back out",
+            Box::new(move |c, _| {
+                let (zin, z) = (z1.get(), c.settings.prefs.interface_zoom);
+                (zin > crate::zoom::MIN_PERCENT && z + crate::zoom::STEP_PERCENT == zin).then_some(()).ok_or(format!("in {zin} out {z}"))
+            }),
+        ),
+    ]
+}
+
 fn default_key_steps() -> Vec<Step> {
     use Step::*;
     let clip: Rc<Cell<Option<dstudio_core::ClipId>>> = Rc::new(Cell::new(None));
@@ -16059,6 +16230,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(automation_lane_steps());
     all.extend(shortcut_page_steps());
     all.extend(default_key_steps());
+    all.extend(more_key_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());

@@ -234,6 +234,26 @@ pub fn quantize(notes: &[Note], grid: Ticks, amount: f64) -> Vec<Note> {
         .collect()
 }
 
+/// Glue notes: the selected notes (`ids`) of each pitch become one note, from the first one's
+/// start to the last one's end, keeping the first one's id and velocity. Unselected notes and
+/// pitches with a single selected note stay as they are.
+pub fn glue(notes: &[Note], ids: &[u32]) -> Vec<Note> {
+    let mut sel: Vec<&Note> = notes.iter().filter(|n| ids.contains(&n.id)).collect();
+    sel.sort_by_key(|n| (n.start, n.id));
+    // Each pitch's glued note, keyed by its first note's id.
+    let mut first_of: std::collections::HashMap<u8, u32> = Default::default();
+    let mut glued: std::collections::HashMap<u32, Note> = Default::default();
+    for n in sel {
+        if let Some(g) = first_of.get(&n.pitch).and_then(|id| glued.get_mut(id)) {
+            g.length = (g.start + g.length).max(n.start + n.length) - g.start;
+        } else {
+            first_of.insert(n.pitch, n.id);
+            glued.insert(n.id, *n);
+        }
+    }
+    notes.iter().filter_map(|n| if ids.contains(&n.id) { glued.get(&n.id).copied() } else { Some(*n) }).collect()
+}
+
 /// Shift pitch by `semitones`. Fails (returns None) if any note would leave 0..=127.
 pub fn transpose(notes: &[Note], semitones: i32) -> Option<Vec<Note>> {
     notes
@@ -404,5 +424,15 @@ mod tests {
         assert_eq!(note_name(60), "C4");
         assert_eq!(note_name(61), "C#4");
         assert_eq!(note_name(21), "A0");
+    }
+
+    #[test]
+    fn glue_joins_selected_notes_per_pitch() {
+        let n = |id, pitch, start, length| Note { id, pitch, start, length, velocity: 90 + id as u8 };
+        let notes = vec![n(1, 60, 0, 100), n(2, 60, 200, 100), n(3, 64, 0, 50), n(4, 60, 400, 50), n(5, 67, 0, 10)];
+        // 1, 2 and 4 are C4 (4 not selected), 3 and 5 alone on their pitches.
+        let out = glue(&notes, &[2, 1, 3]);
+        assert_eq!(out, vec![n(1, 60, 0, 300), n(3, 64, 0, 50), n(4, 60, 400, 50), n(5, 67, 0, 10)]);
+        assert_eq!(glue(&notes, &[]), notes);
     }
 }
