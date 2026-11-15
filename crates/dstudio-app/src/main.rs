@@ -399,6 +399,14 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.midi_state = 9;
                 }
+                "review-corner-loop-before" => {
+                    a.reference_default = true;
+                    a.midi_state = 15;
+                }
+                "review-corner-loop-after" => {
+                    a.reference_default = true;
+                    a.midi_state = 16;
+                }
                 "review-smart-quantize" => {
                     a.reference_default = true;
                     a.midi_state = 3;
@@ -1674,6 +1682,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if args.midi_state == 9 {
                 c.pr_action("loop");
             }
+        }
+        if let (15..=16, Some(id)) = (args.midi_state, clip) {
+            // REVIEW STATE: a one-bar line with looping off (15), then as the clip's top-right
+            // corner drag leaves it (16): looping on, repeated over a second bar.
+            let line = [(60u8, 0i64), (64, 2), (67, 4), (72, 6), (71, 8), (67, 10), (64, 12), (62, 14)];
+            let notes = line
+                .iter()
+                .enumerate()
+                .map(|(i, &(pitch, s))| dstudio_core::midi::Note { id: i as u32 + 1, pitch, start: s * 240, length: 220, velocity: 96 })
+                .collect();
+            let bar = 4 * dstudio_core::PPQ;
+            let on = args.midi_state == 16;
+            c.execute(dstudio_core::Command::SetMidiNotes { clip: id, notes });
+            c.execute(dstudio_core::Command::SetMidiLoop {
+                clip: id,
+                clip_loop: Some(dstudio_core::midi::ClipLoop { on, ..dstudio_core::midi::ClipLoop::whole(bar) }),
+                length: if on { 2 * bar } else { bar },
+            });
+            c.select_clip(clip);
+            c.seek_beats(22.0);
+            c.pr_sync_clip();
         }
         if (3..=4).contains(&args.midi_state) {
             // REVIEW STATE: a loosely played line (16ths, up to 40 ticks off), a ghost octave

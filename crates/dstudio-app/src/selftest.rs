@@ -12814,6 +12814,34 @@ fn gesture_steps() -> Vec<Step> {
                     .ok_or(format!("notes {notes:?} last {:?}", last_label(c)))
             }),
         ),
+        DoC(
+            "gestures: turn the MIDI clip's loop off, then drag its top-right corner four beats out",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let Some(k) = c.pr.clip else { return };
+                let off = dstudio_core::midi::ClipLoop { on: false, ..dstudio_core::midi::ClipLoop::whole(4 * B) };
+                c.execute(Command::SetMidiLoop { clip: k, clip_loop: Some(off), length: 4 * B });
+                if let Some((ti, _)) = c.project().find_midi_clip(k) {
+                    c.view.scroll_y = (c.view.track_offset(ti) as f64 - 20.0).max(0.0);
+                }
+                let (x, y) = at(&mut c, k, 1.0, 0.0);
+                let dx = 4.0 * c.view.px_per_beat as f32;
+                c.snap.bypass = false;
+                c.pointer_mods(0, x - 2.0, y + 2.0, false, false);
+                c.pointer_mods(1, x - 2.0 + dx, y + 2.0, false, false);
+                c.pointer_mods(2, x - 2.0 + dx, y + 2.0, false, false);
+            }),
+        ),
+        Check(
+            "gestures: the MIDI clip loops its four beats over eight, one undo step \"Clip Loop\"",
+            Box::new(|c, _| {
+                let m = c.pr.clip.and_then(|k| c.project().midi_clip(k)).ok_or("no clip")?;
+                let l = m.clip_loop;
+                (m.length == 8 * B && l.is_some_and(|l| l.on && l.start == 0 && l.end == 4 * B) && last_label(c) == "Clip Loop")
+                    .then_some(())
+                    .ok_or(format!("length {} loop {l:?} last {:?}", m.length, last_label(c)))
+            }),
+        ),
     ]
 }
 
