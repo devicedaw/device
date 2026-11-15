@@ -16,6 +16,8 @@ DefaultDirName={autopf}\Device
 DefaultGroupName=Device
 UsePreviousGroup=no
 UninstallDisplayIcon={app}\device-studio.exe
+; The installer's own icon; the app's icon is built into device-studio.exe (crates/dstudio-app/build.rs).
+SetupIconFile=..\..\crates\dstudio-app\icons\device.ico
 OutputDir={#OutputDir}
 OutputBaseFilename=Device-{#AppVersion}-windows-x64-setup
 Compression=lzma2

@@ -7,6 +7,9 @@
 
 use crate::timeline::{MASTER_H, TRACK_H};
 
+/// Lanes start this far into the Timeline panel, right of the track headers (`Tokens.lane-x`).
+pub const LANE_X: f32 = 191.0;
+
 /// Inputs that move things around.
 #[derive(Debug, Clone, Copy)]
 pub struct Layout {
@@ -44,6 +47,10 @@ impl Layout {
     }
     pub fn timeline_x(&self) -> f32 {
         if self.sounds { 262.65 } else { 5.0 }
+    }
+    /// Window x where the lanes start (right of the track headers, `Tokens.lane-x`).
+    pub fn lanes_x(&self) -> f32 {
+        self.timeline_x() + LANE_X
     }
     pub fn timeline_w(&self) -> f32 {
         let right = if self.assistant { self.chat_w + ASSISTANT_GAP } else { 0.0 };

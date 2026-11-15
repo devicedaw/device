@@ -49,3 +49,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 
 [build-dependencies]
 slint-build = "=1.18.1"
+
+# The app icon in device-studio.exe (build.rs).
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"

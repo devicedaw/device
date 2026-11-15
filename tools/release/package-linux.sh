@@ -15,12 +15,13 @@ name="Device-$version-linux-$arch"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 stage="$work/$name"
-mkdir -p "$stage/bin" "$stage/share/applications" "$out"
+mkdir -p "$stage/bin" "$stage/share/applications" "$stage/share/icons/hicolor/256x256/apps" "$out"
 
 install -m 755 "$release/device-studio" "$stage/bin/device-studio"
 scanner="$(bash "$root/tools/release/find-scanner.sh" "$release")"
 install -m 755 "$scanner" "$stage/bin/dstudio_plugin_scanner"
 strip --strip-debug "$stage/bin/device-studio" "$stage/bin/dstudio_plugin_scanner"
+install -m 644 "$root/crates/dstudio-app/icons/device-256.png" "$stage/share/icons/hicolor/256x256/apps/device-studio.png"
 for doc in LICENSE README.md; do
   [ -f "$root/$doc" ] && install -m 644 "$root/$doc" "$stage/$doc"
 done
@@ -31,7 +32,7 @@ Type=Application
 Name=Device
 Comment=Make music: arrange, record and mix
 Exec=device-studio
-Icon=audio-x-generic
+Icon=device-studio
 Terminal=false
 Categories=AudioVideo;Audio;Midi;Music;
 DESKTOP
@@ -44,9 +45,10 @@ set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 if [ "$(id -u)" = 0 ]; then default=/usr/local; else default="$HOME/.local"; fi
 prefix="${1:-${PREFIX:-$default}}"
-mkdir -p "$prefix/lib/device-studio" "$prefix/bin" "$prefix/share/applications"
+mkdir -p "$prefix/lib/device-studio" "$prefix/bin" "$prefix/share/applications" "$prefix/share/icons/hicolor/256x256/apps"
 cp "$here/bin/device-studio" "$here/bin/dstudio_plugin_scanner" "$prefix/lib/device-studio/"
 ln -sf "$prefix/lib/device-studio/device-studio" "$prefix/bin/device-studio"
+cp "$here/share/icons/hicolor/256x256/apps/device-studio.png" "$prefix/share/icons/hicolor/256x256/apps/"
 sed "s#^Exec=.*#Exec=$prefix/lib/device-studio/device-studio#" \
   "$here/share/applications/device-studio.desktop" > "$prefix/share/applications/device-studio.desktop"
 echo "Installed to $prefix (run: device-studio)"

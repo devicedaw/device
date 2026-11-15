@@ -64,3 +64,33 @@ pub fn adopt_items() {
 
 #[cfg(not(target_os = "macos"))]
 pub fn adopt_items() {}
+
+/// Outside its bundle (cargo run) the app has no Info.plist icon, so the Dock would show a
+/// generic one: give it the app icon. Inside Device.app the bundle's icon is used as is.
+#[cfg(target_os = "macos")]
+pub fn set_dock_icon() {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    const PNG: &[u8] = include_bytes!("../icons/device-macos-512.png");
+    // SAFETY: called on the main thread once the NSApplication exists; plain AppKit calls.
+    unsafe {
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        let icon_key: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: c"CFBundleIconFile".as_ptr()];
+        let bundled: *mut AnyObject = msg_send![bundle, objectForInfoDictionaryKey: icon_key];
+        if !bundled.is_null() {
+            return;
+        }
+        let data: *mut AnyObject = msg_send![class!(NSData), dataWithBytes: PNG.as_ptr().cast::<std::ffi::c_void>(), length: PNG.len()];
+        let image: *mut AnyObject = msg_send![class!(NSImage), alloc];
+        let image: *mut AnyObject = msg_send![image, initWithData: data];
+        if image.is_null() {
+            return;
+        }
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        // The app keeps the image for its lifetime; this runs once, so it is never released.
+        let _: () = msg_send![app, setApplicationIconImage: image];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_dock_icon() {}

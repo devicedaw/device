@@ -15758,6 +15758,252 @@ fn velocity_lane_steps() -> Vec<Step> {
     ]
 }
 
+/// Browser drag and drop and double-click, driven with real pointer events: a sample dragged
+/// onto a track, below the tracks and onto a sampler; an instrument double-clicked with no
+/// instrument track selected, dragged onto an instrument track and below the tracks.
+fn browser_drop_steps() -> Vec<Step> {
+    use crate::files::{SECTION_DEVICES, TAB_FOLDERS};
+    use Step::*;
+    let root = run_dir().join("drop");
+    let (r1, r2) = (root.clone(), root.clone());
+    let count = Rc::new(Cell::new(0usize));
+    let (n0, n1, n2, n3, n4, n5, n6) =
+        (count.clone(), count.clone(), count.clone(), count.clone(), count.clone(), count.clone(), count.clone());
+    let ghost_x = Rc::new(Cell::new(0f32));
+    let (g0, g1, g2) = (ghost_x.clone(), ghost_x.clone(), ghost_x);
+    // Drag browser row (x, y) to the centre of a window rectangle the controller computes.
+    fn drag_to(a: &AppWindow, from: Option<(f32, f32)>, to: Option<(f32, f32, f32, f32)>) {
+        let (Some((x0, y0)), Some((x, y, w, h))) = (from, to) else { return };
+        drag(a, x0, y0, x + w.min(160.0) / 2.0, y + h.min(40.0) / 2.0);
+    }
+    fn kick_row(a: &AppWindow) -> Option<(f32, f32)> {
+        files_row_xy(a, files_row_of(a, "kick.wav")?)
+    }
+    fn undo_to(ctl: &Ctl, n: usize) {
+        let mut c = ctl.borrow_mut();
+        while c.project().tracks.len() > n && c.doc.undo_label().is_some() {
+            c.undo();
+        }
+    }
+    vec![
+        Do("drop: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC(
+            "drop: a sample folder in Files › Folders, opened; select the audio track",
+            Box::new(move |a, ctl| {
+                let _ = std::fs::remove_dir_all(&r1);
+                let _ = std::fs::create_dir_all(&r1);
+                let _ = crate::wavgen::write_wav(&r1.join("kick.wav"), 48_000, 1, &crate::wavgen::sine_bursts(48_000));
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.browser_folders.clear();
+                c.files_add_folder(&r1);
+                c.browser_section(crate::files::SECTION_FILES);
+                c.files_tab(TAB_FOLDERS);
+                c.set_bottom_tab(BottomTab::Devices);
+                if let Some(i) = track_of(&c, TrackKind::Audio) {
+                    let t = c.project().tracks[i].id;
+                    c.select_track(t);
+                }
+                n0.set(c.project().tracks.len());
+                c.update_ui(a);
+            }),
+        ),
+        Do(
+            "drop: click the folder row to open it",
+            Box::new(|a| {
+                if let Some((x, y)) = files_row_xy(a, 0) {
+                    click(a, x, y);
+                }
+            }),
+        ),
+        DoC(
+            "drop: press kick.wav and move it over the audio track's lane at beat 8 (held)",
+            Box::new(move |a, ctl| {
+                let to = {
+                    let c = ctl.borrow();
+                    let y = track_of(&c, TrackKind::Audio).and_then(|i| c.track_rect(c.project().tracks[i].id)).map(|r| r.1 + r.3 / 2.0);
+                    y.map(|y| (c.layout().lanes_x() + c.view.x_of(8.0) + 1.0, y))
+                };
+                let (Some((x0, y0)), Some((x, y))) = (kick_row(a), to) else { return };
+                g0.set(x - 1.0);
+                press(a, x0, y0);
+                for i in 1..=12 {
+                    let t = i as f32 / 12.0;
+                    dispatch(
+                        a.window(),
+                        WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + (x - x0) * t, y0 + (y - y0) * t) },
+                    );
+                }
+                ctl.borrow_mut().update_ui(a);
+            }),
+        ),
+        Check(
+            "drop: a clip preview in the track's colour starts at beat 8, under the pointer",
+            Box::new(move |c, a| {
+                let s = a.global::<Studio>();
+                let t = track_of(c, TrackKind::Audio).map(|i| c.project().tracks[i].color);
+                let want = t.map(|t| crate::controller::slint_color(crate::controller::track_color(t)));
+                let ok = s.get_dnd_active()
+                    && s.get_dnd_clip_visible()
+                    && approx(s.get_dnd_clip_x(), g1.get(), 0.5)
+                    && want == Some(s.get_dnd_clip_color());
+                ok.then_some(()).ok_or(format!("visible {} x {} (want {})", s.get_dnd_clip_visible(), s.get_dnd_clip_x(), g1.get()))
+            }),
+        ),
+        DoC(
+            "drop: let go",
+            Box::new(move |a, ctl| {
+                let y = {
+                    let c = ctl.borrow();
+                    track_of(&c, TrackKind::Audio).and_then(|i| c.track_rect(c.project().tracks[i].id)).map(|r| r.1 + r.3 / 2.0)
+                };
+                if let Some(y) = y {
+                    release(a, g2.get() + 1.0, y);
+                }
+            }),
+        ),
+        Check(
+            "drop: the sample lands on that track at beat 8, where the preview was (no new track)",
+            Box::new(move |c, a| {
+                let p = c.project();
+                let t = track_of(c, TrackKind::Audio).map(|i| &p.tracks[i]);
+                let start = t.and_then(|t| t.clips.iter().find(|k| k.name == "kick")).map(|k| k.start);
+                let ok = p.tracks.len() == n1.get() && start == Some(8 * PPQ) && !a.global::<Studio>().get_dnd_active();
+                ok.then_some(()).ok_or(format!("{} tracks (was {}), start {start:?} (want {})", p.tracks.len(), n1.get(), 8 * PPQ))
+            }),
+        ),
+        DoC(
+            "drop: undo; drag kick.wav below the last track",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().undo();
+                ctl.borrow_mut().update_ui(a);
+                let to = ctl.borrow().new_track_rect();
+                drag_to(a, kick_row(a), to);
+            }),
+        ),
+        Check(
+            "drop: below the tracks, the sample gets a new audio track",
+            Box::new(move |c, _| {
+                let p = c.project();
+                let ok = p.tracks.len() == n2.get() + 1
+                    && p.tracks.iter().rev().find(|t| t.kind == TrackKind::Audio).is_some_and(|t| t.clips.iter().any(|k| k.name == "kick"));
+                ok.then_some(()).ok_or(format!("{} tracks (was {})", p.tracks.len(), n2.get()))
+            }),
+        ),
+        DoC(
+            "drop: undo; a new Sampler track; drag kick.wav onto the Devices panel",
+            Box::new(move |a, ctl| {
+                undo_to(ctl, n3.get());
+                ctl.borrow_mut().add_item_as_new_track(&crate::devices::Item::Builtin(&dstudio_core::builtin::sampler::SAMPLER));
+                ctl.borrow_mut().update_ui(a);
+                let to = ctl.borrow().sampler_drop_rect();
+                drag_to(a, kick_row(a), to);
+            }),
+        ),
+        Check(
+            "drop: the sample loads into the sampler",
+            Box::new(|c, _| {
+                let d = c
+                    .selected_sampler()
+                    .and_then(|id| c.project().tracks.iter().find_map(|t| t.instrument_plugin.as_ref().filter(|d| d.id == id)));
+                let ok = d.is_some_and(|d| d.sample(0).is_some());
+                ok.then_some(()).ok_or(format!("sampler {:?}, undo {:?}", d.map(|d| d.id), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "drop: undo both; select the audio track; Devices › Instruments, search Sampler",
+            Box::new(move |a, ctl| {
+                undo_to(ctl, n4.get());
+                let mut c = ctl.borrow_mut();
+                if let Some(i) = track_of(&c, TrackKind::Audio) {
+                    let t = c.project().tracks[i].id;
+                    c.select_track(t);
+                }
+                c.browser_section(SECTION_DEVICES);
+                c.browser_tab(0);
+                c.browser_search("Sampler");
+                c.update_ui(a);
+            }),
+        ),
+        Do(
+            "drop: double-click Sampler with the audio track selected",
+            Box::new(|a| {
+                if let Some(i) = tree_row_of(a, "Sampler") {
+                    let (x, y) = tree_row_xy(a, i);
+                    double_click(a, x, y);
+                }
+            }),
+        ),
+        Check(
+            "drop: a new instrument track named Sampler plays it (one undo step)",
+            Box::new(move |c, _| {
+                let p = c.project();
+                let last = p.tracks.iter().rev().find(|t| t.kind == TrackKind::Instrument);
+                let ok = p.tracks.len() == n5.get() + 1
+                    && last.is_some_and(|t| t.name == "Sampler" && c.selected_track == Some(t.id))
+                    && c.selected_sampler().is_some()
+                    && c.doc.undo_label() == Some("Add Instrument Track");
+                ok.then_some(()).ok_or(format!("{} tracks (was {}), undo {:?}", p.tracks.len(), n5.get(), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "drop: undo; drag Sampler onto the instrument track's lane",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().undo();
+                ctl.borrow_mut().update_ui(a);
+                let to = {
+                    let c = ctl.borrow();
+                    track_of(&c, TrackKind::Instrument).and_then(|i| c.track_rect(c.project().tracks[i].id))
+                };
+                drag_to(a, tree_row_of(a, "Sampler").map(|i| tree_row_xy(a, i)), to);
+            }),
+        ),
+        Check(
+            "drop: the instrument track's instrument is replaced by the Sampler",
+            Box::new(move |c, _| {
+                let p = c.project();
+                let t = track_of(c, TrackKind::Instrument).map(|i| &p.tracks[i]);
+                let ok =
+                    p.tracks.len() == n6.get() && t.and_then(|t| t.instrument_plugin.as_ref()).is_some_and(|d| d.plugin.name == "Sampler");
+                ok.then_some(()).ok_or(format!("{} tracks, undo {:?}", p.tracks.len(), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "drop: undo; drag Sampler below the last track",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().undo();
+                ctl.borrow_mut().update_ui(a);
+                let to = ctl.borrow().new_track_rect();
+                drag_to(a, tree_row_of(a, "Sampler").map(|i| tree_row_xy(a, i)), to);
+            }),
+        ),
+        Check(
+            "drop: below the tracks, the instrument gets a new instrument track",
+            Box::new(move |c, _| {
+                let p = c.project();
+                let last = p.tracks.last();
+                let ok = p.tracks.len() == count.get() + 1
+                    && last.is_some_and(|t| t.kind == TrackKind::Instrument && t.name == "Sampler")
+                    && c.selected_sampler().is_some();
+                ok.then_some(()).ok_or(format!("{} tracks (was {})", p.tracks.len(), count.get()))
+            }),
+        ),
+        DoC(
+            "drop: undo; clear the search; forget the folder",
+            Box::new(move |a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.undo();
+                c.browser_search("");
+                let _ = c.engine.preview_stop();
+                c.files.audition.playing = false;
+                c.settings.prefs.browser_folders.clear();
+                c.browser_section(SECTION_DEVICES);
+                c.update_ui(a);
+                let _ = std::fs::remove_dir_all(&r2);
+            }),
+        ),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     APP.with(|a| *a.borrow_mut() = Some(app.as_weak()));
@@ -15793,6 +16039,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(splitter_steps());
     all.extend(chat_dock_steps());
     all.extend(files_steps());
+    all.extend(browser_drop_steps());
     all.extend(section_steps());
     all.extend(minimap_steps());
     all.extend(devminimap_steps());
