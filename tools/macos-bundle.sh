@@ -20,7 +20,9 @@ fi
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 app="$out/Device.app"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+# The app icon (crates/dstudio-app/icons, made by tools/art/make-icons.mjs).
+cp "$root/crates/dstudio-app/icons/device.icns" "$app/Contents/Resources/device.icns"
 cp "$exe" "$app/Contents/MacOS/device-studio"
 if [ -n "$scanner" ] && [ -x "$scanner" ]; then
   cp "$scanner" "$app/Contents/MacOS/dstudio_plugin_scanner"
@@ -36,6 +38,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>Device</string>
     <key>CFBundleIdentifier</key><string>com.dstudio.studio</string>
     <key>CFBundleExecutable</key><string>device-studio</string>
+    <key>CFBundleIconFile</key><string>device.icns</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>CFBundleVersion</key><string>$version</string>

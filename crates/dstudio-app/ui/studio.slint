@@ -562,6 +562,13 @@ export global Studio {
     in property <length> dnd-ty;
     in property <length> dnd-tw;
     in property <length> dnd-th;
+    // Browser file drag over the lanes: the clip it will make, where it will land (src/files.rs).
+    in property <bool> dnd-clip-visible;
+    in property <length> dnd-clip-x;
+    in property <length> dnd-clip-y;
+    in property <length> dnd-clip-w;
+    in property <length> dnd-clip-h;
+    in property <color> dnd-clip-color;
 
     // ---- callbacks into Rust ----
     callback play-toggle();
@@ -1030,6 +1037,7 @@ export global Studio {
     in property <bool> shortcut-recording;          // a row is waiting for keys
     in property <bool> shortcut-reset-enabled;      // some shortcut differs from the defaults
     in property <bool> shortcut-empty;              // the search matches nothing
+    in-out property <string> shortcut-search;        // the search field's text
     callback shortcut-record(int);                  // click a row's keys: record new ones
     callback shortcut-clear(int);                   // ×: unmapped
     callback shortcuts-reset();

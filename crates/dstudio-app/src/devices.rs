@@ -41,7 +41,7 @@ pub const SYNTH_W: f32 = 776.5;
 pub const ADD_X_ALONE: f32 = 265.0;
 pub const ADD_W: f32 = 182.5;
 /// Bottom panel x (window) and its device area start (after the inspector).
-const PANEL_X: f32 = 5.0;
+pub(crate) const PANEL_X: f32 = 5.0;
 pub(crate) const CHAIN_AREA_X: f32 = 255.0;
 /// Browser tree: area top (window) and row pitch.
 pub const TREE_Y: f32 = 78.0 + 81.0;
@@ -385,6 +385,8 @@ pub struct CardDrag {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DropTarget {
     Track(TrackId),
+    /// Below the last track: an instrument dropped there gets a new instrument track.
+    NewTrack,
     /// Insert position in the selected track's chain (None: instrument slot / end).
     Chain {
         track: TrackId,
@@ -846,6 +848,29 @@ impl Controller {
     /// Add `item` to `track`: an effect becomes an insert (`AddDevice`, at
     /// `index` or the end); an instrument replaces the track's instrument
     /// (`SetInstrumentPlugin`; the built-in Synth sets None). One undo step.
+    /// A new instrument track playing `item`, added below the others in one undo step and
+    /// named after the instrument.
+    pub fn add_item_as_new_track(&mut self, item: &Item) -> bool {
+        let device = match item {
+            Item::BuiltinSynth => dstudio_core::builtin::synth_v2::SYNTH_V2.instantiate(),
+            Item::Plugin(p) if p.kind == PluginKind::Instrument => Device::new(p.clone()),
+            Item::Builtin(d) if d.kind == PluginKind::Instrument => d.instantiate(),
+            _ => return false,
+        };
+        let p = self.project();
+        let id = TrackId(p.next_id);
+        let track = dstudio_core::Track::new(id, TrackKind::Instrument, item.name(), crate::controller::next_track_color(p));
+        let commands = vec![Command::AddTrack { index: None, track }, Command::SetInstrumentPlugin { track: id, device: Some(device) }];
+        if !self.execute(Command::Batch { label: "Add Instrument Track".into(), commands }) {
+            return false;
+        }
+        self.select_track(id);
+        self.select_clip(None);
+        self.set_bottom_tab(BottomTab::Devices);
+        self.reveal_last_change(id, item);
+        true
+    }
+
     pub fn add_item_to_track(&mut self, item: &Item, track: TrackId, index: Option<usize>) -> bool {
         let Some(t) = self.project().track(track) else { return false };
         let (kind, has_synth) = (t.kind, t.instrument_plugin.as_ref().is_some_and(is_builtin_synth));
@@ -965,10 +990,18 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    /// Double-click: add the device to the selected track.
+    /// Double-click: add the device to the selected track. An instrument replaces the selected
+    /// instrument track's instrument; with no instrument track selected it gets a new track.
     pub fn tree_activate(&mut self, i: usize) {
         let Some(item) = self.devices.entries.get(i).and_then(|e| e.item.clone()) else { return };
-        let Some(t) = self.selected_track else {
+        let selected = self.selected_track.filter(|t| self.project().track(*t).is_some());
+        if item.kind() == PluginKind::Instrument
+            && !selected.and_then(|t| self.project().track(t)).is_some_and(|t| t.kind == TrackKind::Instrument)
+        {
+            self.add_item_as_new_track(&item);
+            return;
+        }
+        let Some(t) = selected else {
             self.set_status("Select a track first", 3);
             return;
         };
@@ -1030,6 +1063,9 @@ impl Controller {
                     Some(DropTarget::Track(t)) => {
                         self.add_item_to_track(&d.item, t, None);
                     }
+                    Some(DropTarget::NewTrack) => {
+                        self.add_item_as_new_track(&d.item);
+                    }
                     Some(DropTarget::Chain { track, index }) => {
                         let index = index.map(|i| self.chain_device_index(i, None));
                         self.add_item_to_track(&d.item, track, index);
@@ -1046,8 +1082,11 @@ impl Controller {
         let (tx, tw) = (l.timeline_x(), l.timeline_w());
         let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - crate::timeline::MASTER_H);
         if x >= tx && x < tx + tw && y >= top && y < bottom {
-            let i = self.view.track_at(y - top + crate::timeline::RULER_H)?;
-            return self.project().tracks.get(i).map(|t| DropTarget::Track(t.id));
+            return match self.view.track_at(y - top + crate::timeline::RULER_H).and_then(|i| self.project().tracks.get(i)) {
+                Some(t) => Some(DropTarget::Track(t.id)),
+                None if item.kind() == PluginKind::Instrument && y >= self.lanes_end_y() => Some(DropTarget::NewTrack),
+                None => None,
+            };
         }
         if !l.mixer && !l.clip_tab {
             let by = l.bottom_y();
@@ -1058,6 +1097,22 @@ impl Controller {
             }
         }
         None
+    }
+
+    /// Window y where the tracks end (the top of the empty area below them).
+    pub(crate) fn lanes_end_y(&self) -> f32 {
+        let l = self.layout();
+        let n = self.project().tracks.len();
+        let end = if n == 0 { 0.0 } else { self.view.track_offset(n - 1) + self.view.pitch(n - 1) };
+        78.0 + 66.5 + end - l.scroll_y
+    }
+
+    /// The empty area below the tracks, where a drop adds a new track.
+    pub(crate) fn new_track_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        let l = self.layout();
+        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - crate::timeline::MASTER_H);
+        let y0 = self.lanes_end_y().max(top);
+        (bottom - y0 > 2.0).then_some((l.timeline_x(), y0, l.timeline_w(), bottom - y0))
     }
 
     pub(crate) fn track_rect(&self, t: TrackId) -> Option<(f32, f32, f32, f32)> {
@@ -1538,6 +1593,7 @@ impl Controller {
         match self.devices.dnd.clone().filter(|d| d.active) {
             Some(d) => {
                 s.set_dnd_active(true);
+                s.set_dnd_clip_visible(false);
                 s.set_dnd_x(d.pos.0);
                 s.set_dnd_y(d.pos.1);
                 let target = self.drop_target(d.pos.0, d.pos.1, &d.item);
@@ -1546,6 +1602,7 @@ impl Controller {
                 };
                 let (ok, rect, marker) = match target {
                     Some(DropTarget::Track(t)) => (ok_kind(t), self.track_rect(t), None),
+                    Some(DropTarget::NewTrack) => (true, self.new_track_rect(), None),
                     Some(DropTarget::Chain { track, index }) => {
                         let l = self.layout();
                         let r = (PANEL_X + CHAIN_AREA_X, l.bottom_y() + 27.0, l.w - 2.0 * PANEL_X - CHAIN_AREA_X, l.bottom_h() - 27.0);
@@ -1570,6 +1627,7 @@ impl Controller {
             None => {
                 s.set_dnd_active(false);
                 s.set_dnd_target_visible(false);
+                s.set_dnd_clip_visible(false);
                 s.set_chain_marker_visible(false);
             }
         }

@@ -19,6 +19,20 @@ node tools/art/render.mjs hero         # one page
 `art.css` holds the shared look: colours from the app's `crates/dstudio-app/ui/tokens.slint` and the app's
 bundled Inter font. `mark.svg` is the mark: one cycle of a sine wave on the app's blue.
 
+## The app icon
+
+`icon/app-icon-macos.svg` (the macOS icon grid: an 824 pt tile with a soft shadow on a 1024 pt canvas) and
+`icon/app-icon.svg` (Windows and Linux: the mark with a small margin) are the app icon. Render them into the files
+the app and its packages carry, in `crates/dstudio-app/icons/`:
+
+```sh
+node tools/art/make-icons.mjs   # device.icns, device.ico, device-256.png, device-macos-512.png
+```
+
+`tools/macos-bundle.sh` puts `device.icns` in Device.app, `crates/dstudio-app/build.rs` builds `device.ico` into
+device-studio.exe (the installer uses it too), `tools/release/package-linux.sh` installs `device-256.png` for the
+desktop entry, and the window uses it as its title bar and taskbar icon.
+
 ## The app views
 
 `shots/` holds the app views the pages frame. They show a whole song, "Night Drive", rather than a
@@ -47,12 +61,20 @@ The other views, `pianoroll`, `mixer`, `export` and `recording`, are the ones th
 clear. When a view changes visibly, render its shot again, crop it into `docs/art/shots/` the same
 way and re-run `render.mjs`.
 
-## Fine Signal material
+## Dither material
 
-Public artwork uses `textures/fine-signal.png`, the approved fine blue dot treatment, behind
-its headings and frames. `art.css` applies it more quietly to the information-heavy feature and
-architecture panels. This is a marketing texture: the app screenshots in `shots/` are not edited,
-and no desktop interface styles are changed. The original waveform mark is also unchanged.
+Public artwork sits on `textures/dither.png`, an ordered-dither texture: a bloom toward the lower right with one faint
+sine cycle (the mark) running through it, quantised to four colours from the app's tokens (ground, a deep blue, the
+accent and the accent's light text tone) with an 8x8 Bayer matrix. `art.css` shows it anchored to the lower right with
+each texel as a crisp 3 px square (`image-rendering: pixelated`), and more quietly behind the feature and architecture
+panels. App screenshots in `shots/` are never dithered.
 
-The texture is a project-specific generated bitmap. Its exact generation prompt is in
-`textures/fine-signal-prompt.txt`. Website AVIF/WebP variants are derived from this same source.
+The textures are generated, with no dependencies:
+
+```sh
+node tools/art/dither.mjs   # docs/art/textures/dither.png and dither-site.png
+node tools/art/render.mjs   # then re-render the artwork
+```
+
+`dither-site.png` is the website's copy (no sine, lower strength); copy it to `assets/dither.png` in
+devicedaw.github.io when it changes.

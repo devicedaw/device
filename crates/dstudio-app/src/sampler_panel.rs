@@ -1413,6 +1413,12 @@ impl Controller {
         let Some(device) = self.selected_sampler().filter(|_| self.bottom_tab == crate::controller::BottomTab::Devices) else {
             return self.import_files(audio, ImportTarget::Selected, None);
         };
+        self.load_into_sampler(device, audio);
+    }
+
+    /// Load audio files into sampler `device`: the Sampler takes the first, a drum pad takes
+    /// them all as new layers of the pad it shows.
+    pub fn load_into_sampler(&mut self, device: DeviceId, audio: Vec<PathBuf>) {
         let Some((d, def)) = self.sampler_def(device) else { return };
         let target = if def.id == "sampler-steam" {
             ImportTarget::DeviceSample { device, slot: 0, next_free: false }
@@ -1422,6 +1428,13 @@ impl Controller {
         };
         let n = if def.id == "sampler-steam" { 1 } else { audio.len() };
         self.import_files(audio.into_iter().take(n).collect(), target, None);
+    }
+
+    /// The Devices panel's chain area, outlined while a file is dragged over a sampler.
+    pub(crate) fn sampler_drop_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        let l = self.layout();
+        let (x, chain) = (crate::devices::PANEL_X, crate::devices::CHAIN_AREA_X);
+        Some((x + chain, l.bottom_y() + 27.0, l.w - 2.0 * x - chain, l.bottom_h() - 27.0))
     }
 
     /// Finish loading a file into a device: the asset and the sample in one

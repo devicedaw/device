@@ -9,7 +9,7 @@ use crate::controller::{BottomTab, Controller};
 use crate::{AppWindow, Studio};
 use dstudio_core::assistant::Mode;
 use dstudio_core::builtin::synth_v2::SYNTH_V2;
-use dstudio_core::{ClipId, PPQ, TrackKind, db_to_gain};
+use dstudio_core::{ClipId, PPQ, TrackId, TrackKind, db_to_gain};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Model, SharedString};
 use std::cell::Cell;
@@ -154,6 +154,21 @@ fn key(app: &AppWindow, text: impl Into<SharedString> + Clone, primary: bool, sh
     if shift {
         dispatch(w, WindowEvent::KeyReleased { text: Key::Shift.into() });
     }
+    if primary {
+        dispatch(w, WindowEvent::KeyReleased { text: Key::Control.into() });
+    }
+}
+
+/// Press `text` with Alt (⌥) held, and the primary modifier too when `primary`.
+fn key_alt(app: &AppWindow, text: impl Into<SharedString> + Clone, primary: bool) {
+    let w = app.window();
+    if primary {
+        dispatch(w, WindowEvent::KeyPressed { text: Key::Control.into() });
+    }
+    dispatch(w, WindowEvent::KeyPressed { text: Key::Alt.into() });
+    dispatch(w, WindowEvent::KeyPressed { text: text.clone().into() });
+    dispatch(w, WindowEvent::KeyReleased { text: text.into() });
+    dispatch(w, WindowEvent::KeyReleased { text: Key::Alt.into() });
     if primary {
         dispatch(w, WindowEvent::KeyReleased { text: Key::Control.into() });
     }
@@ -1088,17 +1103,25 @@ fn midi_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "typing off: the header button is off and A sounds nothing",
+            "typing off: the header button is off and A sounds nothing (it is the Show / hide automation key again)",
             Box::new(move |c, a| {
                 let ok = !c.typing.active && !a.global::<Studio>().get_typing_on() && c.engine.preview().notes == 0 && c.typing.lit() == 0;
-                (ok && c.doc.history_labels().len() == hp5.get()).then_some(()).ok_or(format!(
-                    "active {} held {}",
+                (ok && c.auto.shown && c.doc.history_labels().len() == hp5.get()).then_some(()).ok_or(format!(
+                    "active {} held {} automation shown {}",
                     c.typing.active,
-                    c.engine.preview().notes
+                    c.engine.preview().notes,
+                    c.auto.shown
                 ))
             }),
         ),
-        DoC("pen back on for the sections after", Box::new(|_, ctl| ctl.borrow_mut().pr.pen = true)),
+        DoC(
+            "pen back on and automation hidden for the sections after",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.pr.pen = true;
+                c.auto_toggle_shown();
+            }),
+        ),
         DoC(
             "click the E3 note at beat 0, press Up",
             Box::new(|a, ctl| {
@@ -3911,7 +3934,7 @@ fn steps() -> Vec<Step> {
                     .ok_or(format!("{} tracks", p.tracks.len()))
             }),
         ),
-        Do("Cmd+Shift+X (view.toggle_mixer)", Box::new(|a| key(a, "X", true, true))),
+        Do("Cmd+Opt+M (view.toggle_mixer)", Box::new(|a| key_alt(a, "m", true))),
         Check(
             "mixer closed by the shortcut, bottom panel back",
             Box::new(|c, a| {
@@ -4332,7 +4355,7 @@ fn returns_steps() -> Vec<Step> {
                 ))
             }),
         ),
-        Do("returns: open the mixer (Cmd+Shift+X)", Box::new(|a| key(a, "X", true, true))),
+        Do("returns: open the mixer (Cmd+Opt+M)", Box::new(|a| key_alt(a, "m", true))),
         Check(
             "returns: mixer open, Sends collapsed",
             Box::new(|c, a| {
@@ -4394,7 +4417,7 @@ fn returns_steps() -> Vec<Step> {
         ),
         Do("returns: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         Check("returns: send restored, still pre-fader", Box::new(move |c, _| one_send(c, true))),
-        Do("returns: close the mixer", Box::new(|a| key(a, "X", true, true))),
+        Do("returns: close the mixer", Box::new(|a| key_alt(a, "m", true))),
         DoC(
             "returns: route track 1 to Return A (as an older project could), then delete Return A",
             Box::new(|_, ctl| {
@@ -4723,9 +4746,9 @@ fn recording_steps() -> Vec<Step> {
                 (c.project().tracks[0].monitor && a.global::<Studio>().get_sel_monitor()).then_some(()).ok_or("monitor off".into())
             }),
         ),
-        Do("rec: Shift+I (track.monitor)", Box::new(|a| key(a, "I", false, true))),
+        Do("rec: I (track.monitor)", Box::new(|a| key(a, "i", false, false))),
         Check(
-            "rec: ⇧I turned monitoring off, one undo step",
+            "rec: the I key turned monitoring off, one undo step",
             Box::new(move |c, _| {
                 one(&h8, c, "Input Monitoring Change")?;
                 (!c.project().tracks[0].monitor).then_some(()).ok_or("monitor on".into())
@@ -12597,6 +12620,343 @@ fn shortcut_page_steps() -> Vec<Step> {
     ]
 }
 
+/// The rest of the shortcut list: move clips to the track below, 0 / M on a clip, glue notes,
+/// the mixer's strip keys, ⇧Tab between the clip editor and the devices, interface zoom.
+fn more_key_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::keymap::Chord;
+    let state: Rc<Cell<Option<(dstudio_core::ClipId, TrackId, TrackId)>>> = Rc::new(Cell::new(None));
+    let (s0, s1, s2, s3, s4, s5) = (state.clone(), state.clone(), state.clone(), state.clone(), state.clone(), state.clone());
+    let s6 = state.clone();
+    let zoom = Rc::new(Cell::new(0u32));
+    let (z0, z1) = (zoom.clone(), zoom.clone());
+    fn last_label(c: &Controller) -> String {
+        c.doc.history_labels().last().cloned().unwrap_or_default()
+    }
+    fn bind(ctl: &Ctl, action: &str, chord: &str) {
+        let chords = Chord::parse(chord).into_iter().collect();
+        ctl.borrow_mut().settings.keys.map.set_chords(action, chords);
+    }
+    vec![
+        DoC(
+            "keys: two instrument tracks, a MIDI clip with two C4s on the first; move-to-track-below on ⌘⌥J",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.mixer_open = false;
+                let a = c.add_instrument_track();
+                let b = c.add_instrument_track();
+                let (Some(a), Some(b)) = (a, b) else { return };
+                let mut m = dstudio_core::MidiClip::empty(104 * dstudio_core::PPQ, 4 * dstudio_core::PPQ);
+                let n = |id, start| dstudio_core::midi::Note { id, pitch: 60, start, length: dstudio_core::PPQ / 2, velocity: 100 };
+                m.notes = vec![n(1, 0), n(2, dstudio_core::PPQ)];
+                c.execute(dstudio_core::Command::AddMidiClip { track: a, clip: m });
+                let Some(id) = c.project().track(a).and_then(|t| t.midi_clips.first()).map(|m| m.id) else { return };
+                c.select_track(a);
+                c.select_clip(Some(id));
+                c.pr.focused = false;
+                s0.set(Some((id, a, b)));
+                drop(c);
+                bind(ctl, "clip.move_to_track_below", "primary+alt+j");
+            }),
+        ),
+        Do("keys: ⌘⌥J", Box::new(|a| key_alt(a, "j", true))),
+        Check(
+            "keys: the clip moved to the track below at the same start, one undo step \"Move Clip\", still selected",
+            Box::new(move |c, _| {
+                let (id, _, b) = s1.get().ok_or("no setup")?;
+                let on_b =
+                    c.project().track(b).is_some_and(|t| t.midi_clips.iter().any(|m| m.id == id && m.start == 104 * dstudio_core::PPQ));
+                (on_b && last_label(c) == "Move Clip" && c.selected_clip == Some(id) && c.selected_track == Some(b))
+                    .then_some(())
+                    .ok_or(format!("on b {on_b} last {:?} selected {:?}", last_label(c), c.selected_clip))
+            }),
+        ),
+        DoC(
+            "keys: M on the selected clip",
+            Box::new(|a, ctl| {
+                bind(ctl, "clip.move_to_track_below", "");
+                key(a, "m", false, false);
+            }),
+        ),
+        Check(
+            "keys: M disabled the clip, not the track (\"Disable Clip\")",
+            Box::new(move |c, _| {
+                let (id, _, b) = s2.get().ok_or("no setup")?;
+                let off = c.project().midi_clip(id).is_some_and(|m| m.disabled);
+                let muted = c.project().track(b).is_some_and(|t| t.mute);
+                (off && !muted && last_label(c) == "Disable Clip")
+                    .then_some(())
+                    .ok_or(format!("off {off} muted {muted} last {:?}", last_label(c)))
+            }),
+        ),
+        Do("keys: 0", Box::new(|a| key(a, "0", false, false))),
+        Check(
+            "keys: 0 enabled it again",
+            Box::new(move |c, _| {
+                let (id, _, _) = s3.get().ok_or("no setup")?;
+                c.project().midi_clip(id).is_some_and(|m| !m.disabled).then_some(()).ok_or(format!("last {:?}", last_label(c)))
+            }),
+        ),
+        DoC(
+            "keys: piano roll focused, both notes selected, glue on ⌘⌥J",
+            Box::new(|a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    c.pr.focused = true;
+                    c.pr_select_all();
+                }
+                bind(ctl, "midi.glue", "primary+alt+j");
+                key_alt(a, "j", true);
+            }),
+        ),
+        Check(
+            "keys: one C4 from the first start to the second's end, one undo step \"Glue Notes\"",
+            Box::new(move |c, _| {
+                let (id, _, _) = s4.get().ok_or("no setup")?;
+                let notes = c.project().midi_clip(id).map(|m| m.notes.clone()).unwrap_or_default();
+                let ppq = dstudio_core::PPQ;
+                (notes.len() == 1 && notes[0].start == 0 && notes[0].length == ppq + ppq / 2 && last_label(c) == "Glue Notes")
+                    .then_some(())
+                    .ok_or(format!("notes {notes:?} last {:?}", last_label(c)))
+            }),
+        ),
+        DoC(
+            "keys: piano roll unfocused, the clip selected: ⇧Tab",
+            Box::new(|a, ctl| {
+                bind(ctl, "midi.glue", "");
+                ctl.borrow_mut().pr.focused = false;
+                ctl.borrow_mut().set_bottom_tab(crate::controller::BottomTab::Clip);
+                key(a, Key::Backtab, false, true);
+            }),
+        ),
+        Check(
+            "keys: ⇧Tab switched the bottom panel to the devices",
+            Box::new(|c, _| (c.bottom_tab == crate::controller::BottomTab::Devices).then_some(()).ok_or(format!("tab {:?}", c.bottom_tab))),
+        ),
+        Do("keys: ⇧Tab again", Box::new(|a| key(a, Key::Backtab, false, true))),
+        Check(
+            "keys: back on the clip editor",
+            Box::new(|c, _| (c.bottom_tab == crate::controller::BottomTab::Clip).then_some(()).ok_or(format!("tab {:?}", c.bottom_tab))),
+        ),
+        DoC(
+            "keys: the mixer open, the first instrument track selected: →",
+            Box::new(move |a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    c.select_clip(None);
+                    c.mixer_open = true;
+                    if let Some((_, t, _)) = state.get() {
+                        c.select_track(t);
+                    }
+                }
+                key(a, Key::RightArrow, false, false);
+            }),
+        ),
+        Check(
+            "keys: → selected the next strip",
+            Box::new(move |c, _| {
+                let (_, _, b) = s6.get().ok_or("no setup")?;
+                (c.selected_track == Some(b)).then_some(()).ok_or(format!("selected {:?} want {b:?}", c.selected_track))
+            }),
+        ),
+        DoC(
+            "keys: ↑, then close the mixer",
+            Box::new(|a, ctl| {
+                key(a, Key::UpArrow, false, false);
+                ctl.borrow_mut().mixer_open = false;
+            }),
+        ),
+        Check(
+            "keys: ↑ went back to the first instrument track's strip",
+            Box::new(move |c, _| {
+                let (_, t, _) = s5.get().ok_or("no setup")?;
+                (c.selected_track == Some(t)).then_some(()).ok_or(format!("selected {:?} want {t:?}", c.selected_track))
+            }),
+        ),
+        Do("keys: ⌘=", Box::new(|a| key(a, "=", true, false))),
+        DoC(
+            "keys: note the zoom, then ⌘-",
+            Box::new(move |a, ctl| {
+                z0.set(ctl.borrow().settings.prefs.interface_zoom);
+                key(a, "-", true, false);
+            }),
+        ),
+        Check(
+            "keys: ⌘= zoomed the interface in a step and ⌘- back out",
+            Box::new(move |c, _| {
+                let (zin, z) = (z1.get(), c.settings.prefs.interface_zoom);
+                (zin > crate::zoom::MIN_PERCENT && z + crate::zoom::STEP_PERCENT == zin).then_some(()).ok_or(format!("in {zin} out {z}"))
+            }),
+        ),
+    ]
+}
+
+fn default_key_steps() -> Vec<Step> {
+    use Step::*;
+    let clip: Rc<Cell<Option<dstudio_core::ClipId>>> = Rc::new(Cell::new(None));
+    let (c0, c1, c2, c3, c4) = (clip.clone(), clip.clone(), clip.clone(), clip.clone(), clip.clone());
+    let tracks = Rc::new(Cell::new(0usize));
+    let (t0, t1, t2) = (tracks.clone(), tracks.clone(), tracks.clone());
+    fn notes(c: &Controller, id: Option<dstudio_core::ClipId>) -> Vec<dstudio_core::midi::Note> {
+        id.and_then(|id| c.project().midi_clip(id)).map(|m| m.notes.clone()).unwrap_or_default()
+    }
+    fn last_label(c: &Controller) -> String {
+        c.doc.history_labels().last().cloned().unwrap_or_default()
+    }
+    vec![
+        DoC(
+            "keys: a MIDI clip with a C4 on the Instrument track, selected on the timeline",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.mixer_open = false;
+                let Some(track) = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id) else { return };
+                let mut m = dstudio_core::MidiClip::empty(96 * dstudio_core::PPQ, 4 * dstudio_core::PPQ);
+                m.notes = vec![dstudio_core::midi::Note { id: 1, pitch: 60, start: 0, length: dstudio_core::PPQ, velocity: 100 }];
+                c.execute(dstudio_core::Command::AddMidiClip { track, clip: m });
+                let Some(id) =
+                    c.project().track(track).and_then(|t| t.midi_clips.iter().find(|m| m.start == 96 * dstudio_core::PPQ)).map(|m| m.id)
+                else {
+                    return;
+                };
+                c.select_track(track);
+                c.select_clip(Some(id));
+                c.pr.focused = false;
+                c0.set(Some(id));
+            }),
+        ),
+        Do("keys: ⇧↑ (transpose clip up one semitone)", Box::new(|a| key(a, Key::UpArrow, false, true))),
+        Check(
+            "keys: the clip's C4 is a C♯4, one undo step \"Transpose Clip\"",
+            Box::new(move |c, _| {
+                let n = notes(c, c1.get());
+                (n.first().is_some_and(|n| n.pitch == 61) && last_label(c) == "Transpose Clip")
+                    .then_some(())
+                    .ok_or(format!("notes {n:?} last {:?}", last_label(c)))
+            }),
+        ),
+        Do("keys: ⌘⇧↓ (transpose clip down one octave)", Box::new(|a| key(a, Key::DownArrow, true, true))),
+        Check(
+            "keys: down an octave to C♯3",
+            Box::new(move |c, _| {
+                let n = notes(c, c2.get());
+                n.first().is_some_and(|n| n.pitch == 49).then_some(()).ok_or(format!("notes {n:?}"))
+            }),
+        ),
+        DoC(
+            "keys: focus the piano roll, select the note, ⌘↑ then ⇧→",
+            Box::new(|a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    c.pr.focused = true;
+                    c.pr_select_all();
+                }
+                key(a, Key::UpArrow, true, false);
+                key(a, Key::RightArrow, false, true);
+            }),
+        ),
+        Check(
+            "keys: velocity 101 and the note a bar later; the clip itself was not transposed",
+            Box::new(move |c, _| {
+                let n = notes(c, c3.get());
+                let bar = c.project().ticks_per_bar();
+                n.first().is_some_and(|n| n.velocity == 101 && n.start == bar && n.pitch == 49).then_some(()).ok_or(format!("notes {n:?}"))
+            }),
+        ),
+        DoC(
+            "keys: back on the timeline, select the first track, press ↓",
+            Box::new(move |a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    c.pr.focused = false;
+                    c.select_clip(None);
+                    let first = c.project().tracks[0].id;
+                    c.select_track(first);
+                    if let Some(id) = c4.get() {
+                        c.execute(dstudio_core::Command::RemoveMidiClip { clip: id });
+                    }
+                }
+                key(a, Key::DownArrow, false, false);
+            }),
+        ),
+        Check(
+            "keys: ↓ selected the second track",
+            Box::new(|c, _| {
+                let want = c.project().tracks.get(1).map(|t| t.id);
+                (c.selected_track == want).then_some(()).ok_or(format!("selected {:?} want {want:?}", c.selected_track))
+            }),
+        ),
+        Do("keys: ↑", Box::new(|a| key(a, Key::UpArrow, false, false))),
+        Check(
+            "keys: ↑ went back to the first track",
+            Box::new(|c, _| {
+                (c.selected_track == Some(c.project().tracks[0].id)).then_some(()).ok_or(format!("selected {:?}", c.selected_track))
+            }),
+        ),
+        DoC(
+            "keys: ⌘⇧D on the first track's header",
+            Box::new(move |a, ctl| {
+                t0.set(ctl.borrow().project().tracks.len());
+                key(a, "d", true, true);
+            }),
+        ),
+        Check(
+            "keys: a copy of the track with its clips, one undo step",
+            Box::new(move |c, _| {
+                (c.project().tracks.len() == t1.get() + 1).then_some(()).ok_or(format!("{} tracks", c.project().tracks.len()))
+            }),
+        ),
+        DoC(
+            "keys: undo the copy, group the first track, U",
+            Box::new(|a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    c.undo();
+                    let first = c.project().tracks[0].id;
+                    c.group_tracks(&[first]);
+                    if let Some(g) = c.project().tracks.iter().find(|t| t.is_group()).map(|t| t.id) {
+                        c.select_track(g);
+                    }
+                }
+                key(a, "u", false, false);
+            }),
+        ),
+        Check(
+            "keys: U folded the group",
+            Box::new(move |c, _| {
+                let g = c.project().tracks.iter().find(|t| t.is_group()).map(|t| t.id);
+                (g.is_some_and(|g| c.collapsed.contains(&g)) && c.project().tracks.len() == t2.get() + 1)
+                    .then_some(())
+                    .ok_or(format!("group {g:?} collapsed {:?}", c.collapsed))
+            }),
+        ),
+        Do(
+            "keys: U, then ⌘⇧G",
+            Box::new(|a| {
+                key(a, "u", false, false);
+                key(a, "g", true, true);
+            }),
+        ),
+        Check(
+            "keys: unfolded, and ⌘⇧G ungrouped it",
+            Box::new(|c, _| {
+                (c.collapsed.is_empty() && !c.project().tracks.iter().any(|t| t.is_group()))
+                    .then_some(())
+                    .ok_or(format!("collapsed {:?}", c.collapsed))
+            }),
+        ),
+        DoC(
+            "keys: A",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().auto.shown = false;
+                key(a, "a", false, false);
+            }),
+        ),
+        Check("keys: A showed automation", Box::new(|c, _| c.auto.shown.then_some(()).ok_or("automation hidden".into()))),
+        Do("keys: A again", Box::new(|a| key(a, "a", false, false))),
+        Check("keys: A hid it", Box::new(|c, _| (!c.auto.shown).then_some(()).ok_or("automation shown".into()))),
+    ]
+}
+
 fn automation_lane_steps() -> Vec<Step> {
     use Step::*;
     use dstudio_core::{AutoPoint, AutomationLane, AutomationTarget};
@@ -15569,6 +15929,252 @@ fn velocity_lane_steps() -> Vec<Step> {
     ]
 }
 
+/// Browser drag and drop and double-click, driven with real pointer events: a sample dragged
+/// onto a track, below the tracks and onto a sampler; an instrument double-clicked with no
+/// instrument track selected, dragged onto an instrument track and below the tracks.
+fn browser_drop_steps() -> Vec<Step> {
+    use crate::files::{SECTION_DEVICES, TAB_FOLDERS};
+    use Step::*;
+    let root = run_dir().join("drop");
+    let (r1, r2) = (root.clone(), root.clone());
+    let count = Rc::new(Cell::new(0usize));
+    let (n0, n1, n2, n3, n4, n5, n6) =
+        (count.clone(), count.clone(), count.clone(), count.clone(), count.clone(), count.clone(), count.clone());
+    let ghost_x = Rc::new(Cell::new(0f32));
+    let (g0, g1, g2) = (ghost_x.clone(), ghost_x.clone(), ghost_x);
+    // Drag browser row (x, y) to the centre of a window rectangle the controller computes.
+    fn drag_to(a: &AppWindow, from: Option<(f32, f32)>, to: Option<(f32, f32, f32, f32)>) {
+        let (Some((x0, y0)), Some((x, y, w, h))) = (from, to) else { return };
+        drag(a, x0, y0, x + w.min(160.0) / 2.0, y + h.min(40.0) / 2.0);
+    }
+    fn kick_row(a: &AppWindow) -> Option<(f32, f32)> {
+        files_row_xy(a, files_row_of(a, "kick.wav")?)
+    }
+    fn undo_to(ctl: &Ctl, n: usize) {
+        let mut c = ctl.borrow_mut();
+        while c.project().tracks.len() > n && c.doc.undo_label().is_some() {
+            c.undo();
+        }
+    }
+    vec![
+        Do("drop: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC(
+            "drop: a sample folder in Files › Folders, opened; select the audio track",
+            Box::new(move |a, ctl| {
+                let _ = std::fs::remove_dir_all(&r1);
+                let _ = std::fs::create_dir_all(&r1);
+                let _ = crate::wavgen::write_wav(&r1.join("kick.wav"), 48_000, 1, &crate::wavgen::sine_bursts(48_000));
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.browser_folders.clear();
+                c.files_add_folder(&r1);
+                c.browser_section(crate::files::SECTION_FILES);
+                c.files_tab(TAB_FOLDERS);
+                c.set_bottom_tab(BottomTab::Devices);
+                if let Some(i) = track_of(&c, TrackKind::Audio) {
+                    let t = c.project().tracks[i].id;
+                    c.select_track(t);
+                }
+                n0.set(c.project().tracks.len());
+                c.update_ui(a);
+            }),
+        ),
+        Do(
+            "drop: click the folder row to open it",
+            Box::new(|a| {
+                if let Some((x, y)) = files_row_xy(a, 0) {
+                    click(a, x, y);
+                }
+            }),
+        ),
+        DoC(
+            "drop: press kick.wav and move it over the audio track's lane at beat 8 (held)",
+            Box::new(move |a, ctl| {
+                let to = {
+                    let c = ctl.borrow();
+                    let y = track_of(&c, TrackKind::Audio).and_then(|i| c.track_rect(c.project().tracks[i].id)).map(|r| r.1 + r.3 / 2.0);
+                    y.map(|y| (c.layout().lanes_x() + c.view.x_of(8.0) + 1.0, y))
+                };
+                let (Some((x0, y0)), Some((x, y))) = (kick_row(a), to) else { return };
+                g0.set(x - 1.0);
+                press(a, x0, y0);
+                for i in 1..=12 {
+                    let t = i as f32 / 12.0;
+                    dispatch(
+                        a.window(),
+                        WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + (x - x0) * t, y0 + (y - y0) * t) },
+                    );
+                }
+                ctl.borrow_mut().update_ui(a);
+            }),
+        ),
+        Check(
+            "drop: a clip preview in the track's colour starts at beat 8, under the pointer",
+            Box::new(move |c, a| {
+                let s = a.global::<Studio>();
+                let t = track_of(c, TrackKind::Audio).map(|i| c.project().tracks[i].color);
+                let want = t.map(|t| crate::controller::slint_color(crate::controller::track_color(t)));
+                let ok = s.get_dnd_active()
+                    && s.get_dnd_clip_visible()
+                    && approx(s.get_dnd_clip_x(), g1.get(), 0.5)
+                    && want == Some(s.get_dnd_clip_color());
+                ok.then_some(()).ok_or(format!("visible {} x {} (want {})", s.get_dnd_clip_visible(), s.get_dnd_clip_x(), g1.get()))
+            }),
+        ),
+        DoC(
+            "drop: let go",
+            Box::new(move |a, ctl| {
+                let y = {
+                    let c = ctl.borrow();
+                    track_of(&c, TrackKind::Audio).and_then(|i| c.track_rect(c.project().tracks[i].id)).map(|r| r.1 + r.3 / 2.0)
+                };
+                if let Some(y) = y {
+                    release(a, g2.get() + 1.0, y);
+                }
+            }),
+        ),
+        Check(
+            "drop: the sample lands on that track at beat 8, where the preview was (no new track)",
+            Box::new(move |c, a| {
+                let p = c.project();
+                let t = track_of(c, TrackKind::Audio).map(|i| &p.tracks[i]);
+                let start = t.and_then(|t| t.clips.iter().find(|k| k.name == "kick")).map(|k| k.start);
+                let ok = p.tracks.len() == n1.get() && start == Some(8 * PPQ) && !a.global::<Studio>().get_dnd_active();
+                ok.then_some(()).ok_or(format!("{} tracks (was {}), start {start:?} (want {})", p.tracks.len(), n1.get(), 8 * PPQ))
+            }),
+        ),
+        DoC(
+            "drop: undo; drag kick.wav below the last track",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().undo();
+                ctl.borrow_mut().update_ui(a);
+                let to = ctl.borrow().new_track_rect();
+                drag_to(a, kick_row(a), to);
+            }),
+        ),
+        Check(
+            "drop: below the tracks, the sample gets a new audio track",
+            Box::new(move |c, _| {
+                let p = c.project();
+                let ok = p.tracks.len() == n2.get() + 1
+                    && p.tracks.iter().rev().find(|t| t.kind == TrackKind::Audio).is_some_and(|t| t.clips.iter().any(|k| k.name == "kick"));
+                ok.then_some(()).ok_or(format!("{} tracks (was {})", p.tracks.len(), n2.get()))
+            }),
+        ),
+        DoC(
+            "drop: undo; a new Sampler track; drag kick.wav onto the Devices panel",
+            Box::new(move |a, ctl| {
+                undo_to(ctl, n3.get());
+                ctl.borrow_mut().add_item_as_new_track(&crate::devices::Item::Builtin(&dstudio_core::builtin::sampler::SAMPLER));
+                ctl.borrow_mut().update_ui(a);
+                let to = ctl.borrow().sampler_drop_rect();
+                drag_to(a, kick_row(a), to);
+            }),
+        ),
+        Check(
+            "drop: the sample loads into the sampler",
+            Box::new(|c, _| {
+                let d = c
+                    .selected_sampler()
+                    .and_then(|id| c.project().tracks.iter().find_map(|t| t.instrument_plugin.as_ref().filter(|d| d.id == id)));
+                let ok = d.is_some_and(|d| d.sample(0).is_some());
+                ok.then_some(()).ok_or(format!("sampler {:?}, undo {:?}", d.map(|d| d.id), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "drop: undo both; select the audio track; Devices › Instruments, search Sampler",
+            Box::new(move |a, ctl| {
+                undo_to(ctl, n4.get());
+                let mut c = ctl.borrow_mut();
+                if let Some(i) = track_of(&c, TrackKind::Audio) {
+                    let t = c.project().tracks[i].id;
+                    c.select_track(t);
+                }
+                c.browser_section(SECTION_DEVICES);
+                c.browser_tab(0);
+                c.browser_search("Sampler");
+                c.update_ui(a);
+            }),
+        ),
+        Do(
+            "drop: double-click Sampler with the audio track selected",
+            Box::new(|a| {
+                if let Some(i) = tree_row_of(a, "Sampler") {
+                    let (x, y) = tree_row_xy(a, i);
+                    double_click(a, x, y);
+                }
+            }),
+        ),
+        Check(
+            "drop: a new instrument track named Sampler plays it (one undo step)",
+            Box::new(move |c, _| {
+                let p = c.project();
+                let last = p.tracks.iter().rev().find(|t| t.kind == TrackKind::Instrument);
+                let ok = p.tracks.len() == n5.get() + 1
+                    && last.is_some_and(|t| t.name == "Sampler" && c.selected_track == Some(t.id))
+                    && c.selected_sampler().is_some()
+                    && c.doc.undo_label() == Some("Add Instrument Track");
+                ok.then_some(()).ok_or(format!("{} tracks (was {}), undo {:?}", p.tracks.len(), n5.get(), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "drop: undo; drag Sampler onto the instrument track's lane",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().undo();
+                ctl.borrow_mut().update_ui(a);
+                let to = {
+                    let c = ctl.borrow();
+                    track_of(&c, TrackKind::Instrument).and_then(|i| c.track_rect(c.project().tracks[i].id))
+                };
+                drag_to(a, tree_row_of(a, "Sampler").map(|i| tree_row_xy(a, i)), to);
+            }),
+        ),
+        Check(
+            "drop: the instrument track's instrument is replaced by the Sampler",
+            Box::new(move |c, _| {
+                let p = c.project();
+                let t = track_of(c, TrackKind::Instrument).map(|i| &p.tracks[i]);
+                let ok =
+                    p.tracks.len() == n6.get() && t.and_then(|t| t.instrument_plugin.as_ref()).is_some_and(|d| d.plugin.name == "Sampler");
+                ok.then_some(()).ok_or(format!("{} tracks, undo {:?}", p.tracks.len(), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "drop: undo; drag Sampler below the last track",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().undo();
+                ctl.borrow_mut().update_ui(a);
+                let to = ctl.borrow().new_track_rect();
+                drag_to(a, tree_row_of(a, "Sampler").map(|i| tree_row_xy(a, i)), to);
+            }),
+        ),
+        Check(
+            "drop: below the tracks, the instrument gets a new instrument track",
+            Box::new(move |c, _| {
+                let p = c.project();
+                let last = p.tracks.last();
+                let ok = p.tracks.len() == count.get() + 1
+                    && last.is_some_and(|t| t.kind == TrackKind::Instrument && t.name == "Sampler")
+                    && c.selected_sampler().is_some();
+                ok.then_some(()).ok_or(format!("{} tracks (was {})", p.tracks.len(), count.get()))
+            }),
+        ),
+        DoC(
+            "drop: undo; clear the search; forget the folder",
+            Box::new(move |a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.undo();
+                c.browser_search("");
+                let _ = c.engine.preview_stop();
+                c.files.audition.playing = false;
+                c.settings.prefs.browser_folders.clear();
+                c.browser_section(SECTION_DEVICES);
+                c.update_ui(a);
+                let _ = std::fs::remove_dir_all(&r2);
+            }),
+        ),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     APP.with(|a| *a.borrow_mut() = Some(app.as_weak()));
@@ -15604,6 +16210,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(splitter_steps());
     all.extend(chat_dock_steps());
     all.extend(files_steps());
+    all.extend(browser_drop_steps());
     all.extend(section_steps());
     all.extend(minimap_steps());
     all.extend(devminimap_steps());
@@ -15622,6 +16229,8 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(key_change_steps());
     all.extend(automation_lane_steps());
     all.extend(shortcut_page_steps());
+    all.extend(default_key_steps());
+    all.extend(more_key_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());

@@ -613,3 +613,12 @@ the same material in its own repository.
 - `Controller::resample_open_clip` (src/clip_render.rs). Self-test: the audio clip editor section presses Resample,
   checks the new track, the disabled source and the undo label, then undoes it in one step.
 
+
+### 2026-11-15: dithered public artwork
+
+The fine blue dot material behind the README, feature and sharing artwork is replaced by an ordered-dither
+material: `tools/art/dither.mjs` (no dependencies) computes a bloom toward the lower right with one faint sine cycle,
+quantises it to four colours from the app's tokens with an 8x8 Bayer matrix and writes small palette PNGs to
+`docs/art/textures/`. `art.css` shows each texel as a crisp 3 px square (`image-rendering: pixelated`), so the pattern
+survives GitHub scaling the images down. The generated bitmap and its prompt are gone. The website uses
+`dither-site.png` from the same script and draws its sine waves dithered too. App views are unchanged.
