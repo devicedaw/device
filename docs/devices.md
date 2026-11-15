@@ -62,12 +62,17 @@ flowchart LR
   returns the frame's sequence number so a poll can skip unchanged frames.
 - **Expanded windows.** The window button on a card opens the device's
   expanded window (`device_window.rs`, `ui/device_window.slint`) when the
-  device has one (`device_window::has_window`; Auto Filter, Channel EQ and
-  Character EQ so far), otherwise the card itself in a window. A window is a
-  960 pt wide face: a top bar (power, presets, the device's header pills), a
+  device has one (`device_window::has_window`; Auto Filter, Channel EQ,
+  Character EQ and the plotted-field family: Tremolo, Auto-Panner, Chorus,
+  Flanger, Phaser and Ring Mod), otherwise the card itself in a window. A
+  window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same
-  gutter rule (fixed clusters, even gaps, a rule in each inner gap). The
+  gutter rule (fixed clusters, even gaps, a rule in each inner gap). A field
+  window's display (`device_window_fields.rs`) asks the card's curve model in
+  `device_fields.rs` for its window form (`Input::win`): a taller ladder, a
+  time or frequency axis with units under the plot, and a legend naming each
+  series; dragging the plot moves the card field's two parameters. The
   meters read `se_builtin_set_metering` / `se_builtin_levels`
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app

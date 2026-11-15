@@ -31,3 +31,6 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
   for a new instrument track; double-clicking an instrument with no instrument track selected adds one.
 - Expanded windows for Auto Filter, Channel EQ and Character EQ, with a large display, a live analyser (Pre, Post or
   Off, and Hold view), In and Out meters and every control laid out in rows, including Character EQ's band Drive.
+- Expanded windows for Tremolo, Auto-Panner, Chorus, Flanger, Phaser and Ring Mod: a large plot of the effect's
+  motion or frequency response with a time or frequency axis, units and a legend, which you can drag to set its
+  rate and depth (or feedback or bias), In and Out meters, and every control on one row.

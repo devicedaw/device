@@ -63,7 +63,37 @@ pub struct Plot {
     /// Width of the first trace at rest and while the field is hot (pt).
     pub widths: (f32, f32),
     pub live: Option<Live>,
+    /// Expanded window only (Input::win): the axis row under the plot and the legend.
+    pub axis: Axis,
+    pub legend: Vec<(Mark, String)>,
 }
+
+/// The axis row under a window's plot.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Axis {
+    /// (x 0..1, label, strong rule); an empty label draws the rule only.
+    pub ticks: Vec<(f32, String, bool)>,
+    /// Name of the left ruler, at its foot on the axis row ("dB gain").
+    pub foot: String,
+    /// Unit named at the row's left end ("Hz").
+    pub start: String,
+    /// Unit at the row's right end ("s").
+    pub end: String,
+    /// The legend sits at the right end of the caption row instead of under the axis.
+    pub legend_in_caption: bool,
+}
+
+/// Legend glyph of a series.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mark {
+    Line(Style),
+    /// The accent wash between the first trace and the rest line.
+    Band,
+}
+
+/// A window's right-channel series and a sweep's far end.
+const WIN_RIGHT: Style = Style::Dash { on: 5.0, off: 4.0, alpha: 0.5 };
+const WIN_SWEEP: Style = Style::Dash { on: 2.0, off: 3.0, alpha: 0.34 };
 
 pub struct Input<'a> {
     /// Plain value of a parameter (0 when the device has no such parameter).
@@ -74,6 +104,8 @@ pub struct Input<'a> {
     /// Elapsed LFO cycles while the transport plays (its fraction is the
     /// engine's LFO phase); None draws no live overlay.
     pub cycles: Option<f64>,
+    /// The expanded window's picture: its own rulers, axis row and legend.
+    pub win: bool,
 }
 
 impl Input<'_> {
@@ -136,6 +168,37 @@ fn motion_dot(i: &Input, span: f32, ys: &[f32]) -> Option<Live> {
     Some(Live::Dot { x, y: sample(ys, x), trail: Vec::new() })
 }
 
+/// A time on a motion window's axis: whole milliseconds under a second.
+fn time_text(sec: f32) -> String {
+    if sec < 1.0 {
+        format!("{} ms", (sec * 1000.0).round())
+    } else if sec < 10.0 {
+        format!("{sec:.2} s")
+    } else {
+        format!("{sec:.1} s")
+    }
+}
+
+/// A motion window's time axis: one rule per cycle boundary, numbered with its time.
+fn motion_axis(span: f32, hz: f32, foot: &str) -> Axis {
+    let period = 1.0 / hz.max(1e-3);
+    let ticks = (0..=(span + 1e-4).floor() as usize)
+        .map(|c| (c as f32 / span, if c == 0 { String::new() } else { time_text(c as f32 * period) }, c > 0))
+        .collect();
+    Axis { ticks, foot: foot.into(), end: if period < 1.0 { "ms" } else { "s" }.into(), ..Axis::default() }
+}
+
+/// Signed dB rung label: +12, 0, -12 (with a minus sign).
+fn rung(db: f32) -> String {
+    if db > 0.5 {
+        format!("+{db:.0}")
+    } else if db < -0.5 {
+        format!("{MINUS}{:.0}", -db)
+    } else {
+        "0".into()
+    }
+}
+
 /// Small deterministic generator (display only).
 struct Lcg(u32);
 impl Lcg {
@@ -162,25 +225,43 @@ fn trem_shape(shape: usize, p: f32) -> f32 {
 fn tremolo(i: &Input) -> Plot {
     let (depth, mix, shape) = (i.get("depth") / 100.0, i.get("mix") / 100.0, i.idx("shape"));
     let stereo = i.get("stereo_phase") / 180.0;
-    let span = motion_span(i.lfo_hz("rate", "rate_sync", DIVISION_QUARTERS));
+    let hz = i.lfo_hz("rate", "rate_sync", DIVISION_QUARTERS);
+    let span = motion_span(hz);
+    // The window's ladder runs to -18 dB (the default 70 % dip lands at 58 % of it); the card's to -14.
+    let floor = if i.win { -18.0 } else { -14.0 };
     let curve = |off: f32| -> Vec<f32> {
-        i.xs().map(|x| lin(db(1.0 - mix + mix * (1.0 - depth * (1.0 - trem_shape(shape, x * span + off)))), 0.0, -14.0)).collect()
+        i.xs().map(|x| lin(db(1.0 - mix + mix * (1.0 - depth * (1.0 - trem_shape(shape, x * span + off)))), 0.0, floor)).collect()
     };
     let main = curve(0.0);
-    let live = motion_dot(i, span, &main);
+    let live = if i.win { None } else { motion_dot(i, span, &main) };
     let mut traces = vec![Trace { ys: main, style: Style::Solid }];
-    if stereo > 0.0005 {
-        traces.push(Trace { ys: curve(stereo * 0.5), style: Style::Dash { on: 4.0, off: 3.0, alpha: 0.5 } });
+    let split = stereo > 0.0005;
+    if split {
+        let style = if i.win { WIN_RIGHT } else { Style::Dash { on: 4.0, off: 3.0, alpha: 0.5 } };
+        traces.push(Trace { ys: curve(stereo * 0.5), style });
     }
     let att = -db(1.0 - depth * mix);
+    let ticks = if i.win {
+        // A rule every 3 dB, a numeral every 6.
+        (0..=6).map(|k| (k as f32 / 6.0, if k % 2 == 0 { rung(-3.0 * k as f32) } else { String::new() })).collect()
+    } else {
+        vec![(0.0, "0".into()), (0.5, format!("{MINUS}7")), (1.0, format!("{MINUS}14"))]
+    };
+    let mut legend = vec![(Mark::Line(Style::Solid), if split { "Left" } else { "Gain" }.to_string())];
+    if split {
+        legend.push((Mark::Line(WIN_RIGHT), "Right".into()));
+    }
+    legend.push((Mark::Band, "Modulation".into()));
     Plot {
         readout: if att >= 90.0 { "\u{221e} dB".into() } else { format!("{att:.1} dB") },
-        ticks: vec![(0.0, "0".into()), (0.5, format!("{MINUS}7")), (1.0, format!("{MINUS}14"))],
+        ticks,
         rest: Some(0.0),
         traces,
         fill: Fill::ToRest,
         widths: (1.6, 2.35),
         live,
+        axis: motion_axis(span, hz, "dB gain"),
+        legend,
     }
 }
 
@@ -211,24 +292,30 @@ fn autopanner(i: &Input) -> Plot {
     let lead = (2.0 / dc).ceil() as usize;
     let mut v = raw(phase - lead as f32 * dc) * depth;
     let mut ys = Vec::with_capacity(n);
+    let mut peak = 0.0f32;
     for k in 0..lead + n {
         v += a * (raw(phase + (k as f32 - lead as f32) * dc) * depth - v);
         if k >= lead {
             let pos = (0.5 + 0.5 * v) * PI / 2.0;
             let (l, r) =
                 ((1.0 - mix) + pos.cos() * std::f32::consts::SQRT_2 * mix, (1.0 - mix) + pos.sin() * std::f32::consts::SQRT_2 * mix);
-            ys.push(lin(r.atan2(l) / (PI / 2.0) * 2.0 - 1.0, -1.0, 1.0));
+            let pan = r.atan2(l) / (PI / 2.0) * 2.0 - 1.0;
+            peak = peak.max(pan.abs());
+            ys.push(lin(pan, -1.0, 1.0));
         }
     }
-    let live = motion_dot(i, span, &ys);
+    let live = if i.win { None } else { motion_dot(i, span, &ys) };
     Plot {
-        readout: String::new(),
+        // The window quotes the excursion the line reaches: the glide and Mix take travel off Depth.
+        readout: if i.win { format!("\u{b1}{}%", (peak * 100.0).round()) } else { String::new() },
         ticks: vec![(0.0, "L".into()), (0.25, String::new()), (0.5, "C".into()), (0.75, String::new()), (1.0, "R".into())],
         rest: Some(0.5),
         traces: vec![Trace { ys, style: Style::Solid }],
         fill: Fill::ToRest,
         widths: (1.6, 2.35),
         live,
+        axis: motion_axis(span, hz, "pan"),
+        legend: vec![(Mark::Line(Style::Solid), "Pan".into()), (Mark::Band, "Off center".into())],
     }
 }
 
@@ -274,6 +361,38 @@ fn hz_text(f: f32) -> String {
     } else {
         format!("{}", f.round())
     }
+}
+
+/// A window's notch frequency: 385 Hz, 1.3 kHz, 12 kHz.
+fn hz_unit(f: f32) -> String {
+    if f >= 10_000.0 {
+        format!("{:.0} kHz", f / 1000.0)
+    } else if f >= 1000.0 {
+        format!("{:.1} kHz", f / 1000.0)
+    } else {
+        format!("{} Hz", f.round())
+    }
+}
+
+/// A window's notch travel: one frequency, low to high, or open at the top (no notch).
+fn hz_travel(a: Option<f32>, b: Option<f32>) -> String {
+    match (a, b) {
+        (Some(a), Some(b)) if (a - b).abs() >= 1.0 => format!("{} \u{2013} {}", hz_unit(a.min(b)), hz_unit(a.max(b))),
+        (Some(f), Some(_)) => hz_unit(f),
+        (Some(f), None) | (None, Some(f)) => format!("{} \u{2192} open", hz_unit(f)),
+        (None, None) => "\u{2014}".into(),
+    }
+}
+
+/// Step of a linear frequency axis: off a 1-2-5 ladder, at most eight rules across.
+fn hz_step(span: f32) -> f32 {
+    const LADDER: [f32; 12] = [10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0, 2500.0, 5000.0];
+    LADDER.into_iter().find(|s| span / s <= 8.0).unwrap_or(5000.0)
+}
+
+/// Frequency label of an axis rule: 500, 1k, 2.5k.
+fn hz_tick(f: f32) -> String {
+    if f >= 1000.0 { format!("{}k", f / 1000.0) } else { format!("{}", f.round()) }
 }
 
 fn hz_range(a: Option<f32>, b: Option<f32>) -> String {
@@ -387,22 +506,65 @@ fn response(name: &str, i: &Input) -> Plot {
                 )
             }
         };
-    let curve = |p: f32| -> Vec<f32> { (0..n).map(|k| lin(db(resp(p, freq(k as f32 / (n - 1) as f32))) + out_db, 12.0, -24.0)).collect() };
-    let mut traces = vec![
-        Trace { ys: curve(snap), style: Style::Solid },
-        Trace { ys: curve(sweep), style: Style::Dash { on: 2.0, off: 3.0, alpha: 0.34 } },
+    // The window's ladder: +-24 dB in 6 dB rungs (the phaser's from +30), the card's +12 .. -24.
+    let (top, bottom) = match (i.win, name) {
+        (false, _) => (12.0, -24.0),
+        (true, "phaser") => (30.0, -24.0),
+        (true, _) => (24.0, -24.0),
+    };
+    let curve = |p: f32| -> Vec<f32> { (0..n).map(|k| lin(db(resp(p, freq(k as f32 / (n - 1) as f32))) + out_db, top, bottom)).collect() };
+    let mut traces = vec![Trace { ys: curve(snap), style: Style::Solid }, Trace { ys: curve(sweep), style: WIN_SWEEP }];
+    let split = width > 0.0005;
+    if split {
+        traces.push(Trace { ys: curve(right), style: WIN_RIGHT });
+    }
+    if !i.win {
+        return Plot {
+            readout: hz_range(notch(snap), notch(sweep)),
+            ticks: vec![(0.0, "+12".into()), (1.0 / 3.0, "0".into()), (2.0 / 3.0, format!("{MINUS}12")), (1.0, format!("{MINUS}24"))],
+            rest: Some(1.0 / 3.0),
+            traces,
+            fill: Fill::None,
+            widths: (1.5, 2.25),
+            live: i.cycles.map(|c| Live::Curve(curve(c.rem_euclid(1.0) as f32))),
+            axis: Axis::default(),
+            legend: Vec::new(),
+        };
+    }
+    let rungs = ((top - bottom) / 6.0).round() as usize;
+    let ticks = (0..=rungs)
+        .map(|k| {
+            let db = top - 6.0 * k as f32;
+            (k as f32 / rungs as f32, if k == 0 { format!("{} dB", rung(db)) } else { rung(db) })
+        })
+        .collect();
+    // Comb filters read on a linear axis (their teeth are evenly spaced), the phaser's notches on a log one.
+    let axis_ticks = if name == "phaser" {
+        [50.0f32, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10_000.0]
+            .map(|f| ((f / 20.0).ln() / 1000f32.ln(), hz_tick(f), false))
+            .to_vec()
+    } else {
+        let span = freq(1.0);
+        let step = hz_step(span);
+        (1..=(span / step + 1e-3).floor() as usize).map(|k| ((k as f32 * step / span).min(1.0), hz_tick(k as f32 * step), false)).collect()
+    };
+    let mut legend = vec![
+        (Mark::Line(Style::Solid), if name == "phaser" { "Notches" } else { "Comb" }.to_string()),
+        (Mark::Line(WIN_SWEEP), "Sweep".into()),
     ];
-    if width > 0.0005 {
-        traces.push(Trace { ys: curve(right), style: Style::Dash { on: 5.0, off: 4.0, alpha: 0.5 } });
+    if split {
+        legend.push((Mark::Line(WIN_RIGHT), "Right".into()));
     }
     Plot {
-        readout: hz_range(notch(snap), notch(sweep)),
-        ticks: vec![(0.0, "+12".into()), (1.0 / 3.0, "0".into()), (2.0 / 3.0, format!("{MINUS}12")), (1.0, format!("{MINUS}24"))],
-        rest: Some(1.0 / 3.0),
+        readout: hz_travel(notch(snap), notch(sweep)),
+        ticks,
+        rest: Some(top / (top - bottom)),
         traces,
         fill: Fill::None,
-        widths: (1.5, 2.25),
-        live: i.cycles.map(|c| Live::Curve(curve(c.rem_euclid(1.0) as f32))),
+        widths: (1.75, 2.5),
+        live: None,
+        axis: Axis { ticks: axis_ticks, start: "Hz".into(), ..Axis::default() },
+        legend,
     }
 }
 
@@ -490,19 +652,85 @@ fn ring_mod(i: &Input) -> Plot {
             })
             .collect()
     };
-    let mut traces = vec![Trace { ys: curve(0, 2f32.powf(-s / 12.0)), style: Style::Solid }];
-    if m >= 4 || s > 0.0005 {
-        traces.push(Trace { ys: curve(1, 2f32.powf(s / 12.0)), style: Style::Dash { on: 4.0, off: 3.0, alpha: 0.5 } });
+    let (lo, hi) = (2f32.powf(-s / 12.0), 2f32.powf(s / 12.0));
+    let mut traces = vec![Trace { ys: curve(0, lo), style: Style::Solid }];
+    let split = m >= 4 || s > 0.0005;
+    if split {
+        let style = if i.win { WIN_RIGHT } else { Style::Dash { on: 4.0, off: 3.0, alpha: 0.5 } };
+        traces.push(Trace { ys: curve(1, hi), style });
     }
+    if !i.win {
+        return Plot {
+            readout: String::new(),
+            ticks: vec![(0.0, "1".into()), (0.5, "0".into()), (1.0, format!("{MINUS}1"))],
+            rest: Some(0.5),
+            traces,
+            fill: Fill::ToRest,
+            widths: (1.6, 2.35),
+            live: None,
+            axis: Axis::default(),
+            legend: Vec::new(),
+        };
+    }
+    let legend =
+        if split { vec![(Mark::Line(Style::Solid), "Left".to_string()), (Mark::Line(WIN_RIGHT), "Right".into())] } else { Vec::new() };
     Plot {
-        readout: String::new(),
-        ticks: vec![(0.0, "1".into()), (0.5, "0".into()), (1.0, format!("{MINUS}1"))],
+        readout: if s > 0.0005 { ring_hz_span(f * lo, f * hi) } else { ring_hz(f).join(" ") },
+        ticks: vec![(0.0, "1".into()), (0.25, String::new()), (0.5, "0".into()), (0.75, String::new()), (1.0, format!("{MINUS}1"))],
         rest: Some(0.5),
         traces,
         fill: Fill::ToRest,
-        widths: (1.6, 2.35),
+        widths: (1.75, 2.5),
         live: None,
+        axis: ring_axis(cycles, 1.0 / f),
+        legend,
     }
+}
+
+/// A modulator frequency to three figures: [number, unit].
+fn ring_hz(hz: f32) -> [String; 2] {
+    if hz >= 10_000.0 {
+        [format!("{:.1}", hz / 1000.0), "kHz".into()]
+    } else if hz >= 1000.0 {
+        [format!("{:.2}", hz / 1000.0), "kHz".into()]
+    } else if hz >= 100.0 {
+        [format!("{}", hz.round()), "Hz".into()]
+    } else if hz >= 10.0 {
+        [format!("{hz:.1}"), "Hz".into()]
+    } else {
+        [format!("{hz:.2}"), "Hz".into()]
+    }
+}
+
+/// The two sides' frequencies with Spread on, low to high in the higher one's unit.
+fn ring_hz_span(lo: f32, hi: f32) -> String {
+    let [h, unit] = ring_hz(hi);
+    let l = if unit == "kHz" { format!("{:.*}", if hi >= 10_000.0 { 1 } else { 2 }, lo / 1000.0) } else { ring_hz(lo)[0].clone() };
+    format!("{l}\u{2013}{h} {unit}")
+}
+
+/// Ring Mod's time axis: one rule per modulator cycle, numbered in the unit that keeps the
+/// longest under four digits, with as few decimals as the row needs.
+fn ring_axis(span: f32, period: f32) -> Axis {
+    let last = (span + 1e-4).floor().max(1.0) as usize;
+    let longest = period * last as f32;
+    let (scale, unit) = if longest < 1e-3 {
+        (1e6, "\u{b5}s")
+    } else if longest < 1.0 {
+        (1e3, "ms")
+    } else {
+        (1.0, "s")
+    };
+    let step = period * scale;
+    let mut places = (2 - step.log10().floor() as i32).max(0) as usize;
+    let all = |d: usize| (1..=last).map(|c| format!("{:.*}", d, c as f32 * step)).collect::<Vec<_>>();
+    while places > 0 && all(places).iter().all(|t| t.ends_with('0')) {
+        places -= 1;
+    }
+    let labels = all(places);
+    let mut ticks = vec![(0.0, String::new(), false)];
+    ticks.extend(labels.into_iter().enumerate().map(|(k, t)| ((k + 1) as f32 / span, t, true)));
+    Axis { ticks, foot: "gain".into(), end: unit.into(), legend_in_caption: true, ..Axis::default() }
 }
 
 // ---------------------------------------------------------------- character mod
@@ -694,7 +922,17 @@ fn character_mod(i: &Input) -> Plot {
         let trail = (0..=24).map(|k| t0 + (x - t0) * k as f32 / 24.0).map(|tx| (tx, y_of(f(tx * SPAN)))).collect();
         Live::Dot { x, y: y_of(f(p)), trail }
     });
-    Plot { readout, ticks, rest, traces, fill: if band { Fill::Band } else { Fill::None }, widths: (1.6, 2.35), live }
+    Plot {
+        readout,
+        ticks,
+        rest,
+        traces,
+        fill: if band { Fill::Band } else { Fill::None },
+        widths: (1.6, 2.35),
+        live,
+        axis: Axis::default(),
+        legend: Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -713,7 +951,47 @@ mod tests {
             Some(builtin::View::Field(f)) => f.plot,
             _ => panic!("{id} has no field"),
         };
-        plot(name, &Input { get: &get, bpm: 120.0, n: 300, cycles }).unwrap()
+        plot(name, &Input { get: &get, bpm: 120.0, n: 300, cycles, win: false }).unwrap()
+    }
+
+    fn window_plot_of(id: &str) -> Plot {
+        let def = builtin::find(id).unwrap();
+        let d = def.instantiate();
+        let get = |p: &str| def.param(p).map_or(0.0, |q| def.value(&d, q));
+        let Some(builtin::View::Field(f)) = def.layout.view else { panic!("{id} has no field") };
+        plot(f.plot, &Input { get: &get, bpm: 120.0, n: 400, cycles: None, win: true }).unwrap()
+    }
+
+    /// The window form adds an axis row and a legend naming every series it draws.
+    #[test]
+    fn window_plots_carry_an_axis_and_a_legend() {
+        for id in ["tremolo", "autopanner", "chorus", "flanger", "phaser", "ring-mod"] {
+            let p = window_plot_of(id);
+            assert!(!p.axis.ticks.is_empty(), "{id}: no axis ticks");
+            assert!(p.axis.ticks.iter().all(|t| (0.0..=1.0).contains(&t.0)), "{id}: tick off the plot");
+            assert!(id == "ring-mod" || !p.legend.is_empty(), "{id}: no legend");
+            assert!(p.ticks.len() >= 5, "{id}: window ladder is taller than the card's");
+        }
+        // Response windows read in Hz along a +24 dB ladder.
+        let f = window_plot_of("flanger");
+        assert_eq!(f.axis.start, "Hz");
+        assert_eq!(f.axis.ticks.last().map(|t| t.1.as_str()), Some("2k"));
+        assert_eq!(f.ticks.first().map(|t| t.1.as_str()), Some("+24 dB"));
+        let names: Vec<&str> = f.legend.iter().map(|l| l.1.as_str()).collect();
+        assert_eq!(names, ["Comb", "Sweep", "Right"]);
+        // Ring Mod draws one series (no legend entries) and reads its time axis in ms.
+        let r = window_plot_of("ring-mod");
+        assert!(r.axis.legend_in_caption);
+        assert_eq!(r.axis.end, "ms");
+        // The card form stays as it was: no axis, no legend.
+        assert!(plot_of("flanger", &[], None).axis.ticks.is_empty());
+    }
+
+    #[test]
+    fn window_time_labels() {
+        assert_eq!(time_text(0.25), "250 ms");
+        assert_eq!(time_text(1.5), "1.50 s");
+        assert_eq!(time_text(12.0), "12.0 s");
     }
 
     #[test]
@@ -721,7 +999,7 @@ mod tests {
         for def in builtin::all() {
             if let Some(builtin::View::Field(f)) = def.layout.view {
                 let get = |p: &str| def.param(p).map_or(0.0, |q| q.default);
-                let p = plot(f.plot, &Input { get: &get, bpm: 120.0, n: 64, cycles: Some(0.3) })
+                let p = plot(f.plot, &Input { get: &get, bpm: 120.0, n: 64, cycles: Some(0.3), win: false })
                     .unwrap_or_else(|| panic!("{} has no model", def.id));
                 assert!(
                     !p.traces.is_empty() && p.traces.iter().all(|t| t.ys.len() >= 64 && t.ys.iter().all(|y| y.is_finite())),

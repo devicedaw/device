@@ -239,7 +239,8 @@ export struct WinBox { kind: int, x: length, y: length, w: length, h: length }
 // In / Out meter column: the bar's box (+12 dB at the top, -50 dB at the foot; zero-h down
 // to 0 dB), the left and right levels and holds (0..1 of the -50..0 dB part), the overs
 // light, the label over it and the readout under it.
-export struct WinMeter { x: length, y: length, w: length, h: length, zero-h: length, l: float, r: float, hold-l: float, hold-r: float, clip: bool, label: string, value: string }
+// label-x: centre of the label and readout over / under the column.
+export struct WinMeter { label-x: length, x: length, y: length, w: length, h: length, zero-h: length, l: float, r: float, hold-l: float, hold-r: float, clip: bool, label: string, value: string }
 export struct WinView {
     visible: bool,
     w: length, h: length,
