@@ -133,6 +133,15 @@ pub struct Audition {
     pub animating: bool,
 }
 
+/// Where a dragged browser file lands (Controller::files_drop_at).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FileDrop {
+    /// On the arrangement: a track (None: below the last one) and the beat under the pointer.
+    Lane(Option<TrackId>, Ticks),
+    /// On the selected track's sampler in the Devices panel.
+    Sampler(dstudio_core::DeviceId),
+}
+
 #[derive(Debug, Clone)]
 pub struct FileDrag {
     pub item: FileItem,
@@ -672,7 +681,16 @@ impl Controller {
                 if !d.active {
                     return;
                 }
-                let Some((track, at)) = self.files_drop_at(x, y) else { return };
+                let (track, at) = match self.files_drop_at(x, y, &d.item) {
+                    Some(FileDrop::Lane(track, at)) => (track, at),
+                    Some(FileDrop::Sampler(device)) => {
+                        if let FileItem::Audio(path) = d.item {
+                            self.load_into_sampler(device, vec![path]);
+                        }
+                        return;
+                    }
+                    None => return,
+                };
                 let p = self.project();
                 let index = track.and_then(|t| p.track_index(t)).map(|i| i + 1);
                 match d.item {
@@ -690,17 +708,25 @@ impl Controller {
         }
     }
 
-    /// Over the lanes: the track under (x, y) (None below the last track) and the beat there.
-    pub fn files_drop_at(&self, x: f32, y: f32) -> Option<(Option<TrackId>, Ticks)> {
+    /// Where a browser file dropped at window (x, y) goes: over the lanes, the track under the
+    /// pointer (None below the last track) and the beat there; over the Devices panel of a
+    /// track whose instrument is a sampler, that sampler (audio files only).
+    pub fn files_drop_at(&self, x: f32, y: f32, item: &FileItem) -> Option<FileDrop> {
         let l = self.layout();
         let (tx, tw) = (l.timeline_x(), l.timeline_w());
         let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - crate::timeline::MASTER_H);
+        if matches!(item, FileItem::Audio(_)) && !l.mixer && !l.clip_tab {
+            let by = l.bottom_y();
+            if x >= crate::devices::PANEL_X + crate::devices::CHAIN_AREA_X && x < l.w - 5.0 && y >= by + 27.0 && y < by + l.bottom_h() {
+                return self.selected_sampler().map(FileDrop::Sampler);
+            }
+        }
         if x < tx || x >= tx + tw || y < top || y >= bottom {
             return None;
         }
         let track = self.view.track_at(y - top + crate::timeline::RULER_H).and_then(|i| self.project().tracks.get(i)).map(|t| t.id);
         let beat = self.view.beat_at(x - tx).max(0.0).round();
-        Some((track, (beat * dstudio_core::PPQ as f64) as Ticks))
+        Some(FileDrop::Lane(track, (beat * dstudio_core::PPQ as f64) as Ticks))
     }
 
     fn preview_gain(&self) -> f32 {
@@ -914,13 +940,18 @@ impl Controller {
             s.set_browser_search(self.files.search.clone().into());
         }
         if let Some(d) = self.files.drag.as_ref().filter(|d| d.active) {
-            let drop = self.files_drop_at(d.pos.0, d.pos.1);
+            let drop = self.files_drop_at(d.pos.0, d.pos.1, &d.item);
             s.set_dnd_active(true);
             s.set_dnd_x(d.pos.0);
             s.set_dnd_y(d.pos.1);
             s.set_dnd_label(d.label.clone().into());
             s.set_dnd_ok(drop.is_some());
-            let rect = drop.and_then(|(t, _)| t).and_then(|t| self.track_rect(t));
+            let rect = match drop {
+                Some(FileDrop::Lane(Some(t), _)) => self.track_rect(t),
+                Some(FileDrop::Lane(None, _)) => self.new_track_rect(),
+                Some(FileDrop::Sampler(_)) => self.sampler_drop_rect(),
+                None => None,
+            };
             s.set_dnd_target_visible(rect.is_some());
             if let Some((x, y, w, h)) = rect {
                 s.set_dnd_tx(x);

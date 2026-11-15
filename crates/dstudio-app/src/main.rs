@@ -3292,6 +3292,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // at bar 3 of the Audio track (the export covers bars 1–6), then the dialog.
     let app_menu_timer = slint::Timer::default();
     app_menu_timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), appmenu::adopt_items);
+    slint::Timer::single_shot(Duration::ZERO, appmenu::set_dock_icon);
     let dialog_timer = slint::Timer::default();
     if args.dialog_state > 0 {
         let dir = std::env::temp_dir().join(format!("dstudio-ref-{}", std::process::id()));

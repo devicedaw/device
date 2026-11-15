@@ -1128,6 +1128,8 @@ export component AppWindow inherits Window {
     preferred-height: 820px;
     min-width: 960px;
     min-height: 600px;
+    // Title bar and taskbar icon on Windows and Linux (macOS uses the bundle's, src/appmenu.rs).
+    icon: @image-url("../icons/device-256.png");
     background: Tokens.bg-window;
     default-font-size: 9.5px;
     default-font-family: Tokens.font-ui;

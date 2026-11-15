@@ -24,3 +24,7 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
 - Automation for every device control and the channel strip.
 - Export to WAV or MP3 (mix or stems, whole song or loop) and to an Ableton Live set with return tracks and sends.
 - Undo and redo for every edit, and an optional assistant panel that uses your own Anthropic API key.
+- The app icon on macOS, Windows and Linux.
+- Browser drag and drop: drop a sample on a track, below the tracks for a new audio track, or on a Sampler or
+  Pad Sampler to load it. Drop an instrument on an instrument track to swap its instrument, or below the tracks
+  for a new instrument track; double-clicking an instrument with no instrument track selected adds one.

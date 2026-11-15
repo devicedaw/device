@@ -19,6 +19,20 @@ node tools/art/render.mjs hero         # one page
 `art.css` holds the shared look: colours from the app's `crates/dstudio-app/ui/tokens.slint` and the app's
 bundled Inter font. `mark.svg` is the mark: one cycle of a sine wave on the app's blue.
 
+## The app icon
+
+`icon/app-icon-macos.svg` (the macOS icon grid: an 824 pt tile with a soft shadow on a 1024 pt canvas) and
+`icon/app-icon.svg` (Windows and Linux: the mark with a small margin) are the app icon. Render them into the files
+the app and its packages carry, in `crates/dstudio-app/icons/`:
+
+```sh
+node tools/art/make-icons.mjs   # device.icns, device.ico, device-256.png, device-macos-512.png
+```
+
+`tools/macos-bundle.sh` puts `device.icns` in Device.app, `crates/dstudio-app/build.rs` builds `device.ico` into
+device-studio.exe (the installer uses it too), `tools/release/package-linux.sh` installs `device-256.png` for the
+desktop entry, and the window uses it as its title bar and taskbar icon.
+
 ## The app views
 
 `shots/` holds the app views the pages frame. They show a whole song, "Night Drive", rather than a
