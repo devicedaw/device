@@ -363,6 +363,10 @@ export struct ChoiceItem { label: string, checked: bool, hint: bool, y: length, 
 export struct MidiInputRow { name: string, on: bool, lit: bool }
 // Edit › Undo History row; state 0 applied, 1 current, 2 undone.
 export struct UndoHistoryRow { number: int, label: string, date: string, time: string, state: int }
+// Settings › Shortcuts (src/shortcuts.rs): one chord's badges ("⌘", "L"), and a list row
+// (a section header, or an action with its chords and context). y / h in list units.
+export struct ShortcutKey { parts: [string] }
+export struct ShortcutRow { header: bool, label: string, context: string, chords: [ShortcutKey], recording: bool, y: float, h: float }
 
 // swatch: a colour chip before the label (track colour menu); transparent for none.
 export struct MenuItem { label: string, shortcut: string, enabled: bool, separator: bool, submenu: bool, y: length, swatch: color }
@@ -984,6 +988,15 @@ export global Studio {
     callback toggle-settings();
     callback close-settings();
     callback settings-page-select(int);
+    in property <[ShortcutRow]> shortcut-rows;
+    in property <float> shortcut-list-h;
+    in property <bool> shortcut-recording;          // a row is waiting for keys
+    in property <bool> shortcut-reset-enabled;      // some shortcut differs from the defaults
+    in property <bool> shortcut-empty;              // the search matches nothing
+    callback shortcut-record(int);                  // click a row's keys: record new ones
+    callback shortcut-clear(int);                   // ×: unmapped
+    callback shortcuts-reset();
+    callback shortcuts-search(string);
     callback settings-dropdown(int);
     callback settings-menu-pick(int);
     callback settings-menu-dismiss();
