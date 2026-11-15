@@ -30,8 +30,9 @@ const STRONG: f32 = 0.13;
 const INK_LO: f32 = 0.3;
 const INK_HI: f32 = 0.92;
 const LEGEND_INK: f32 = 0.7;
-/// The accent wash under a motion curve.
+/// The accent wash under a motion curve, and the band a sweep travels.
 const WASH: f32 = 0.28;
+const BAND: f32 = 0.16;
 /// Series widths: the subject, and a dashed second series.
 const W_MAIN: f32 = 1.75;
 const W_DASH: f32 = 1.25;
@@ -78,10 +79,10 @@ impl Controller {
 
         // Caption: the name and the picture's one value, on the band above the plot.
         let base = (CAPTION_BASELINE - t) * Z;
-        let label = caption(def, &f);
+        let label: String = if plot.axis.caption.is_empty() { caption(def, &f).into() } else { plot.axis.caption.clone() };
         let lx = if def.id == "ring-mod" { 0.0 } else { 2.0 * Z };
-        texts.push(PanelText { weight: 700, ..text(lx, base - 4.4 * Z, 140.0 * Z, label, MUTE_TEXT, 12.0 * Z, 0) });
-        let vx = lx + (label_w(label) + CAPTION_GAP) * Z;
+        texts.push(PanelText { weight: 700, ..text(lx, base - 4.4 * Z, 240.0 * Z, label.clone(), MUTE_TEXT, 12.0 * Z, 0) });
+        let vx = lx + (label_w(&label) + CAPTION_GAP) * Z;
         texts.push(text(vx, base - 4.7 * Z, 260.0 * Z, plot.readout.clone(), white(INK_HI), 13.0 * Z, 0));
 
         // The ladder: a rule per rung (the rest line stronger), numerals in the left margin.
@@ -152,6 +153,15 @@ impl Controller {
                 rgba(accent, WASH),
             ));
         }
+        if plot.fill == Fill::Band {
+            let ys = plot.traces.iter().flat_map(|t| t.ys.iter().copied());
+            let (top, bottom) = ys.fold((f32::MAX, f32::MIN), |(a, b), y| (a.min(y), b.max(y)));
+            if top <= bottom {
+                let y0 = top.clamp(0.0, 1.0) * ph;
+                let y1 = (bottom.clamp(0.0, 1.0) * ph).max(y0 + 1.0);
+                paths.push(fill(format!("M0 {y0:.1} L{pw:.1} {y0:.1} L{pw:.1} {y1:.1} L0 {y1:.1} Z"), rgba(accent, BAND)));
+            }
+        }
         for tr in plot.traces.iter().skip(1) {
             if let Style::Dash { on, off, alpha } = tr.style {
                 paths.push(stroke(dashed(&points(&tr.ys), on * Z, off * Z), white(alpha), W_DASH * Z));
@@ -171,8 +181,10 @@ impl Controller {
         for ((mark, name), w) in plot.legend.iter().zip(widths) {
             match mark {
                 Mark::Band => {
-                    paths
-                        .push(fill(format!("M{x:.1} {:.1} h{glyph:.1} v{:.1} h{:.1} Z", y - 4.0 * Z, 8.0 * Z, -glyph), rgba(accent, WASH)));
+                    paths.push(fill(
+                        format!("M{x:.1} {:.1} h{glyph:.1} v{:.1} h{:.1} Z", y - 4.0 * Z, 8.0 * Z, -glyph),
+                        rgba(accent, if plot.fill == Fill::Band { BAND } else { WASH }),
+                    ));
                 }
                 Mark::Line(Style::Solid) => paths.push(stroke(format!("M{x:.1} {y:.1} L{:.1} {y:.1}", x + glyph), white(1.0), W_MAIN * Z)),
                 &Mark::Line(Style::Dash { on, off, alpha }) => {
@@ -202,7 +214,7 @@ impl Controller {
             paths: model(paths),
             texts: model(texts),
             zones: model(vec![zone]),
-            label: label.into(),
+            label: label.as_str().into(),
             value: plot.readout.into(),
             ..Default::default()
         }

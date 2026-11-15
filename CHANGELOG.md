@@ -34,3 +34,6 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
 - Expanded windows for Tremolo, Auto-Panner, Chorus, Flanger, Phaser and Ring Mod: a large plot of the effect's
   motion or frequency response with a time or frequency axis, units and a legend, which you can drag to set its
   rate and depth (or feedback or bias), In and Out meters, and every control on one row.
+- An expanded window for Character Mod: the circuit's motion in its own unit (delay, sweep, gain or pan) with the
+  band it travels and a legend, the circuit and LFO controls on one card, and a rack card with Input, the circuit's
+  artifacts, Depth-M and Depth-S, Seed (click for the next take), Mono and Output.
