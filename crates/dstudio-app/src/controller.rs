@@ -302,6 +302,9 @@ enum Drag {
         clip: ClipId,
         orig: (Ticks, Ticks),
         cur: (Ticks, Ticks),
+        /// From the top-right corner of a clip that isn't looping: turn its loop on and
+        /// repeat it out to the new end.
+        corner: Option<dstudio_core::midi::ClipLoop>,
     },
 }
 
@@ -1829,7 +1832,21 @@ impl Controller {
                                     start,
                                 },
                                 Zone::Left => Drag::MidiLeft { clip: id, orig: (start, len), cur: (start, len) },
-                                Zone::Right => Drag::MidiRight { clip: id, orig: (start, len), cur: (start, len) },
+                                Zone::Right => {
+                                    let in_corner = y < self.clip_vis[index].rect(&self.view).1 + timeline::LOOP_CORNER;
+                                    let (kept, looping, pattern) = self.project().midi_clip(id).map_or((None, false, false), |c| {
+                                        (c.clip_loop, c.clip_loop.is_some_and(|l| l.on), c.pattern.is_some())
+                                    });
+                                    let corner = (in_corner && !looping && !pattern).then(|| {
+                                        // A kept loop range comes back; otherwise loop the whole clip.
+                                        kept.map_or(dstudio_core::midi::ClipLoop::whole(len), |l| dstudio_core::midi::ClipLoop {
+                                            on: true,
+                                            span: 0,
+                                            ..l
+                                        })
+                                    });
+                                    Drag::MidiRight { clip: id, orig: (start, len), cur: (start, len), corner }
+                                }
                             });
                             self.ui_dirty = true;
                             return;
@@ -1935,9 +1952,9 @@ impl Controller {
                         let start = snap(beat).clamp(0, end - PPQ);
                         self.drag = Some(Drag::MidiLeft { clip, orig, cur: (start, end - start) });
                     }
-                    Drag::MidiRight { clip, orig, .. } => {
+                    Drag::MidiRight { clip, orig, corner, .. } => {
                         let end = snap(beat).max(orig.0 + PPQ);
-                        self.drag = Some(Drag::MidiRight { clip, orig, cur: (orig.0, end - orig.0) });
+                        self.drag = Some(Drag::MidiRight { clip, orig, cur: (orig.0, end - orig.0), corner });
                     }
                     Drag::LoopRight { clip, start, orig, .. } => {
                         let cur = snap(beat).max(start + PPQ / 4) - start;
@@ -1998,7 +2015,10 @@ impl Controller {
                         });
                         self.select_track(track);
                     }
-                    Some(Drag::MidiRight { clip, orig, cur }) if orig != cur => {
+                    Some(Drag::MidiRight { clip, orig, cur, corner: Some(l) }) if orig != cur => {
+                        self.execute(Command::SetMidiLoop { clip, clip_loop: Some(l), length: cur.1 });
+                    }
+                    Some(Drag::MidiRight { clip, orig, cur, .. }) if orig != cur => {
                         self.execute(Command::ResizeMidiClip { clip, start: cur.0, length: cur.1 });
                     }
                     Some(Drag::MidiLeft { clip, orig, cur }) if orig != cur => {
@@ -2150,8 +2170,12 @@ impl Controller {
                 let notes = if self.pr.clip == Some(c.id) { self.pr_notes() } else { c.notes.clone() };
                 let shift = start - c.start; // left-resize preview keeps notes in place on the timeline
                 // A looping clip repeats its loop to the clip end; repeats are drawn dimmer.
-                let looped =
-                    if self.pr.clip == Some(c.id) { self.pr_loop_preview() } else { c.clip_loop }.filter(|l| l.on && c.pattern.is_none());
+                let looped = match &self.drag {
+                    Some(Drag::MidiRight { clip, corner: Some(l), .. }) if *clip == c.id => Some(*l),
+                    _ if self.pr.clip == Some(c.id) => self.pr_loop_preview(),
+                    _ => c.clip_loop,
+                }
+                .filter(|l| l.on && c.pattern.is_none());
                 let notes: Vec<(dstudio_core::Note, bool)> = match looped {
                     Some(l) => l.unroll(&notes, shift + len),
                     None => notes.into_iter().map(|n| (n, false)).collect(),
