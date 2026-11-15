@@ -85,6 +85,10 @@ pub(crate) const ACT_TARGET: i32 = 11;
 pub(crate) const ACT_LOUD_RESET: i32 = 12;
 /// Multiband Compressor: the band the rack card edits (value: 0 Low, 1 Mid, 2 High).
 pub(crate) const ACT_MB_BAND: i32 = 13;
+/// Field devices (Delay, Echo, Reverb): the display's view (value: index into the card's views).
+pub(crate) const ACT_VIEW: i32 = 14;
+/// Delay: the repeat-EQ band the rack edits (value: 0..6).
+pub(crate) const ACT_DELAY_BAND: i32 = 15;
 const PILL_GHOST: i32 = 6;
 /// Character Mod's Mode parameter of each circuit (Ensemble has none).
 const CM_MODES: [Option<&str>; 11] = dstudio_core::builtin::character_mod::MODE_PARAMS;
@@ -99,6 +103,8 @@ pub(crate) const MENU_TARGET: i32 = -5;
 pub(crate) const MENU_MB_BAND: i32 = -6;
 /// The Multiband Compressor's bands, as its band picker names them.
 const MB_BANDS: [&str; 3] = ["Low", "Mid", "High"];
+/// Panel-menu code of the Delay's repeat-EQ band picker.
+pub(crate) const MENU_DELAY_BAND: i32 = -7;
 
 use crate::device_window_dynamics::TARGETS;
 
@@ -109,7 +115,7 @@ const CC_RMS_VCA: i32 = 5;
 
 /// Devices with an expanded window.
 pub(crate) fn has_window(def: &DeviceDef) -> bool {
-    matches!(def.id, "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor")
+    matches!(def.id, "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb")
         || is_field_window(def)
         || is_dynamics_window(def)
 }
@@ -149,6 +155,10 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
     };
     match def.id {
         "character-eq" => eq(52.0, 346.0),
+        // Delay: the field fills the display under its caption band.
+        "delay" => Kit { plot: (8.0, 25.0, 8.0, 8.0), ..eq(56.0, 450.0) },
+        // Reverb: a 1200 pt window; the tail picture fills the display.
+        "reverb" => Kit { w: 1200.0, display: (INSET, 56.0, 1020.0, 510.0), plot: (8.0, 8.0, 8.0, 8.0), narrow: false },
         // Transient Shaper: the scope fills the display; its legend sits on the caption row.
         "transient-shaper" => field_kit(880.0, 228.0, 8.0, 8.0),
         // Multiband: the band field over the dB ladder, its Hz axis and legend below.
@@ -558,6 +568,11 @@ enum Item {
     ActionPills(i32, Vec<&'static str>, usize, &'static str, f32, bool),
     /// One unlit pill that runs a window action: action, label, name, width.
     Button(i32, &'static str, &'static str, f32),
+    /// A latch over a menu picker (Delay's band column): latch parameter, its label and
+    /// state, the menu code, the picker's label, name, width.
+    LatchPicker(i32, String, bool, i32, String, &'static str, f32),
+    /// Two choice pickers stacked in one column: (parameter, label) of each, name, width, inert.
+    Pickers2([(i32, String); 2], &'static str, f32, bool),
     /// Fixed blank (keeps a column's width).
     Blank(f32),
 }
@@ -573,6 +588,8 @@ impl Item {
             Item::Picker(_, _, _, w, _) => *w,
             Item::Pills(.., w) => *w,
             Item::ActionPills(_, _, _, _, w, _) => *w,
+            Item::LatchPicker(.., w) => *w,
+            Item::Pickers2(_, _, w, _) => *w,
             Item::Blank(w) => *w,
         }
     }
@@ -595,6 +612,7 @@ impl Controller {
             _ if is_dynamics_window(def) => self.dynamics_window_canvas(d, def, &k, accent),
             _ if def.id == "transient-shaper" => self.shaper_window_canvas(d, def, &k, accent),
             _ if def.id == "multiband-compressor" => self.multiband_window_canvas(d, def, &k, accent),
+            Some(View::Custom(_)) if crate::panel_fields::field_name(def).is_some() => self.field_window_display(d, def, &k),
             _ => PanelCanvas::default(),
         };
         display.x = (dx + k.plot.0) * Z;
@@ -606,6 +624,8 @@ impl Controller {
             _ if is_dynamics_window(def) => self.dynamics_window(d, def, &mut b, dy + dh + 12.0),
             "transient-shaper" => self.shaper_window(d, def, &mut b, dy + dh + 12.0),
             "multiband-compressor" => self.multiband_window(d, def, &mut b, dy + dh + 12.0),
+            "delay" => self.delay_window(d, def, &mut b, dy + dh + 12.0),
+            "reverb" => self.reverb_window(d, def, &mut b, dy + dh + 12.0),
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
         let (meters, ticks, ticks_x) = self.window_meters(d.id, &k);
@@ -887,6 +907,20 @@ impl Controller {
                         let from = b.pills.len();
                         b.pill_row(PILL_ACTION, action, x + (w - rw) / 2.0, top + row.pill - 2.0, &items, 2.0, true);
                         for p in &mut b.pills[from..] {
+                            p.inert = inert;
+                        }
+                        b.name(x, w, row.name_y(), name, inert);
+                    }
+                    Item::LatchPicker(param, latch, on, menu, label, name, w) => {
+                        let pw = pill_w(&latch);
+                        b.rect(BOX_TRACK, x + (w - pw - 4.0) / 2.0, top + 12.0, pw + 4.0, 28.0);
+                        b.pill(PILL_TOGGLE, param, 0, x + (w - pw) / 2.0, top + 14.0, pw, &latch, on);
+                        b.pill(PILL_PICKER, menu, 0, x + w / 2.0, top + 46.0, 0.0, &label, false);
+                        b.name(x, w, row.name_y(), name, false);
+                    }
+                    Item::Pickers2(pickers, name, w, inert) => {
+                        for ((param, label), dy) in pickers.into_iter().zip([6.0, 36.0]) {
+                            let p = b.pill(PILL_PICKER, param, 0, x + w / 2.0, top + dy, 0.0, &label, false);
                             p.inert = inert;
                         }
                         b.name(x, w, row.name_y(), name, inert);
@@ -1366,6 +1400,7 @@ impl Controller {
             let mut sq = self.dynamics_square(d, def, accent_of(b));
             sq.x = (xs[i] + 4.0) * Z;
             sq.y = (row.top() + 4.0) * Z;
+            sq.well = true;
             b.square = sq;
         }
         if matches!(def.id, "character-compressor" | "mastering-limiter") {
@@ -1451,6 +1486,7 @@ impl Controller {
         let mut sq = self.shaper_picture(d, def, accent_of(b));
         sq.x = xs[2] * Z;
         sq.y = (row.top() + 4.0) * Z;
+        sq.well = true;
         b.square = sq;
         row.y + row.h + 16.0
     }
@@ -1511,8 +1547,303 @@ impl Controller {
         let mut sq = self.dynamics_square(d, def, accent_of(b));
         sq.x = (xs[4] + 4.0) * Z;
         sq.y = (rack.top() + 4.0) * Z;
+        sq.well = true;
         b.square = sq;
         rack.y + rack.h + 16.0
+    }
+
+    /// The display of a field device (Delay, Echo, Reverb): its card's field drawn at the
+    /// plot's size, with the view's caption in the band above it. Pointer events over it come
+    /// back through the card's field handlers with the window's geometry.
+    fn field_window_display(&self, d: &Device, def: &'static DeviceDef, k: &Kit) -> PanelCanvas {
+        let (_, _, dw, dh) = k.display;
+        let (l, t, r, bt) = k.plot;
+        let (w, h) = ((dw - l - r) * Z, (dh - t - bt) * Z);
+        let mut c = self.field_canvas(d, def, w, h, true);
+        c.well = false;
+        let (caption, value, right) = self.field_window_caption(d, def);
+        use slint::Model;
+        let mut texts: Vec<PanelText> = c.texts.iter().collect();
+        let y = -(t - 12.0) * Z;
+        texts.push(crate::device_canvas::text(
+            0.0,
+            y,
+            160.0 * Z,
+            caption.clone(),
+            Color::from_argb_u8(0x8c, 0xe5, 0xe5, 0xe8),
+            12.0 * Z,
+            0,
+        ));
+        let at = (crate::text_measure::value_width(&caption) * 1.0 + 12.0) * Z;
+        texts.push(crate::device_canvas::text(at, y, 240.0 * Z, value, TEXT, 13.0 * Z, 0));
+        if !right.is_empty() {
+            texts.push(crate::device_canvas::text(
+                w - 240.0 * Z,
+                y,
+                240.0 * Z,
+                right,
+                Color::from_argb_u8(0xb3, 0xe5, 0xe5, 0xe8),
+                11.0 * Z,
+                2,
+            ));
+        }
+        c.texts = model(texts);
+        c.label = s(caption);
+        c
+    }
+
+    /// Caption of a field window's display: (caption, its value, a right-aligned note).
+    fn field_window_caption(&self, d: &Device, def: &'static DeviceDef) -> (String, String, String) {
+        let fmt = |id: &str| def.param(id).map_or_else(String::new, |p| p.format(self.panel_value(d, def, p)));
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        match def.id {
+            "delay" => {
+                let synced = val("sync") >= 0.5;
+                let (l, r) = if synced { (fmt("timeDivision"), fmt("timeDivisionR")) } else { (fmt("timeMs"), fmt("timeMsR")) };
+                let r = if val("link") >= 0.5 { l.clone() } else { r };
+                if self.card_view(d.id) == 1 {
+                    let band = dstudio_core::builtin::delay::BANDS[self.delay_band(d.id)].0;
+                    ("Feedback Filter".into(), band.into(), format!("L {l}   R {r}"))
+                } else if l == r {
+                    ("Echoes".into(), l, String::new())
+                } else {
+                    ("Echoes".into(), format!("L {l}   R {r}"), String::new())
+                }
+            }
+            _ => (String::new(), String::new(), String::new()),
+        }
+    }
+
+    /// A latch toggle on its own track in the header, right-aligned at `right`; returns its left.
+    fn header_latch(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, id: &str, right: f32) -> f32 {
+        let Some(p) = def.param(id) else { return right };
+        let on = self.panel_value(d, def, p) >= 0.5;
+        let (off_text, on_text) = p.latch.unwrap_or(("Off", "On"));
+        let label = if on { on_text } else { off_text };
+        let pw = pill_w(label);
+        let x = right - pw - 4.0;
+        b.rect(BOX_TRACK, x, 7.5, pw + 4.0, 28.0);
+        b.pill(PILL_TOGGLE, def.index_of(id).map_or(-1, |i| i as i32), 0, x + 2.0, 9.5, pw, label, on);
+        x
+    }
+
+    /// A choice parameter's pills on a track in the header, right-aligned; returns the left.
+    fn header_choice(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, id: &str, right: f32) -> f32 {
+        let Some(p) = def.param(id) else { return right };
+        let cur = self.panel_value(d, def, p).round() as i32;
+        let items: Vec<(String, bool, i32)> =
+            p.choices.iter().enumerate().map(|(i, l)| (l.to_string(), cur == i as i32, i as i32)).collect();
+        let w = Builder::row_w(p.choices, 8.0);
+        b.pill_row(PILL_CHOICE, def.index_of(id).map_or(-1, |i| i as i32), right - w, 7.5, &items, 8.0, true);
+        right - w
+    }
+
+    /// The card's views (Echoes / EQ, Tail / EQ) as header pills after a "View" label; returns the left.
+    fn header_views(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, right: f32) -> f32 {
+        let views = def.layout.views;
+        let cur = self.card_view(d.id);
+        let items: Vec<(String, bool, i32)> = views.iter().enumerate().map(|(i, l)| (l.to_string(), cur == i, i as i32)).collect();
+        let w = Builder::row_w(views, 2.0);
+        let x = right - w;
+        b.pill_row(PILL_ACTION, ACT_VIEW, x, 7.5, &items, 2.0, true);
+        let lw = crate::text_measure::value_width("View") + 2.0;
+        b.texts.push(PanelText {
+            x: (x - 8.0 - lw) * Z,
+            y: 13.5 * Z,
+            w: lw * Z,
+            h: 16.0 * Z,
+            text: s("View"),
+            color: Color::from_argb_u8(0xb3, 0xe5, 0xe5, 0xe8),
+            size: 12.0 * Z,
+            weight: 600,
+            align: 2,
+        });
+        x - 8.0 - lw
+    }
+
+    /// A rule between header groups left of `x`; returns where the next group ends.
+    fn header_rule(b: &mut Builder, x: f32) -> f32 {
+        b.rect(BOX_HEADER_RULE, x - 17.0, 11.5, 1.0, 20.0);
+        x - 34.0
+    }
+
+    /// Delay: header (Link, Sync, Hold view, View, Dry, Mode), the echo train or repeat EQ
+    /// in the display, and one card: the times, Feedback and Grit, the wobble and width, the
+    /// selected repeat-EQ band, Mix.
+    fn delay_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let mut x = self.header_choice(d, def, b, "mode", b.w - INSET);
+        x = Self::header_rule(b, x);
+        x = self.header_latch(d, def, b, "dry", x);
+        x = Self::header_rule(b, x);
+        x = self.header_views(d, def, b, x);
+        x = Self::header_rule(b, x) - 77.5;
+        b.pill(PILL_GHOST_LATCH, ACT_HOLD, 0, x, 10.5, 77.5, "Hold view", self.win_held(d.id));
+        x = Self::header_rule(b, x);
+        x = self.header_latch(d, def, b, "sync", x);
+        self.header_latch(d, def, b, "link", x - 8.0);
+
+        let synced = val("sync") >= 0.5;
+        let linked = val("link") >= 0.5;
+        let (tl, tr, names) =
+            if synced { ("timeDivision", "timeDivisionR", ["Note L", "Note R"]) } else { ("timeMs", "timeMsR", ["Time L", "Time R"]) };
+        let band = self.delay_band(d.id);
+        let ids = crate::panel_fields::DELAY_BAND_IDS[band];
+        let on = val(ids[3]) >= 0.5;
+        let latch = if on { "Band On" } else { "Band Off" };
+        let band_name = dstudio_core::builtin::delay::BANDS[band].0.to_string();
+        let row = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (vec![Item::Knob(tl, names[0], 1, 62.0, false), Item::Knob(tr, names[1], 1, 62.0, linked)], 10.0),
+                (vec![Item::Knob("feedback", "Feedback", 2, 72.0, false), Item::Knob("grit", "Grit", 1, 62.0, false)], 10.0),
+                (
+                    vec![
+                        Item::Knob("modSpeed", "Rate", 1, 62.0, false),
+                        Item::Knob("modDepth", "Depth", 1, 62.0, false),
+                        Item::Knob("stereoWidth", "Width", 1, 62.0, false),
+                    ],
+                    10.0,
+                ),
+                (
+                    vec![
+                        Item::LatchPicker(idx(ids[3]), latch.into(), on, MENU_DELAY_BAND, band_name, "Band", 96.0),
+                        Item::Knob(ids[0], "Freq", 2, 72.0, false),
+                        Item::Knob(ids[1], "Gain", 2, 72.0, false),
+                        Item::Knob(ids[2], "Q", 1, 62.0, false),
+                    ],
+                    10.0,
+                ),
+                (vec![Item::Knob("mix", "Mix", 2, 72.0, false)], 10.0),
+            ],
+        );
+        row.y + row.h + 16.0
+    }
+
+    /// Reverb: header (View, Dry, Mode), the tail picture (or the EQ wash) in the display,
+    /// and one card: Decay, Damping, Size; the Filter range; Pre-Delay, Width; Diffusion and
+    /// the modulation; the shimmer's shifts and amount (lit in Shimmer); Mix.
+    fn reverb_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let fmt = |id: &str| def.param(id).map_or_else(String::new, |p| p.format(val(id)));
+        let mut x = self.header_choice(d, def, b, "mode2", b.w - INSET);
+        x = Self::header_rule(b, x);
+        x = self.header_latch(d, def, b, "dry", x);
+        x = Self::header_rule(b, x);
+        self.header_views(d, def, b, x);
+
+        let shimmer = val("mode2").round() as u32 != dstudio_core::builtin::reverb::SHIMMER;
+        let row = Row::main(y);
+        const RANGE_W: f32 = 150.0;
+        let clusters = vec![
+            (
+                vec![
+                    Item::Knob("decay", "Decay", 2, 72.0, false),
+                    Item::Knob("damping", "Damping", 2, 72.0, false),
+                    Item::Knob("size", "Size", 1, 62.0, false),
+                ],
+                14.0,
+            ),
+            (vec![Item::Blank(RANGE_W)], 14.0),
+            (vec![Item::Knob("predelay", "Pre-Delay", 1, 62.0, false), Item::Knob("width", "Width", 1, 62.0, false)], 14.0),
+            (
+                vec![
+                    Item::Knob("diffusion", "Diffusion", 1, 62.0, false),
+                    Item::Knob("moddepth", "Mod", 1, 62.0, false),
+                    Item::Knob("modrate", "Rate", 1, 62.0, false),
+                ],
+                14.0,
+            ),
+            (
+                vec![
+                    Item::Pickers2([(idx("shift1"), fmt("shift1")), (idx("shift2"), fmt("shift2"))], "Shift", 88.0, shimmer),
+                    Item::Knob("shimmer", "Shimmer", 1, 62.0, shimmer),
+                ],
+                14.0,
+            ),
+            (vec![Item::Knob("mix", "Mix", 2, 72.0, false)], 14.0),
+        ];
+        let widths: Vec<f32> = clusters
+            .iter()
+            .map(|(items, gap)| items.iter().map(Item::width).sum::<f32>() + gap * (items.len().saturating_sub(1)) as f32)
+            .collect();
+        self.win_card(d, def, b, row, clusters);
+        let (xs, _) = gutter(INSET, b.w - 2.0 * INSET, &widths);
+        let top = row.top();
+        b.name(xs[1], RANGE_W, row.name_y(), "Filter", false);
+        b.texts.push(PanelText {
+            x: (xs[1] - 8.0) * Z,
+            y: (top + row.value) * Z,
+            w: (RANGE_W + 16.0) * Z,
+            h: 16.0 * Z,
+            text: s(format!("{} \u{2013} {}", fmt("lowcut2"), fmt("highcut2"))),
+            color: accent_of(b),
+            size: 12.0 * Z,
+            weight: 600,
+            align: 1,
+        });
+        let mut range = self.range_canvas(d, def, ("lowcut2", "highcut2"), RANGE_W, accent_of(b));
+        range.x = xs[1] * Z;
+        range.y = (top + 12.0) * Z;
+        b.square = range;
+        row.y + row.h + 16.0
+    }
+
+    /// A two-handle range on a line (Reverb's Filter): the span between the handles lit, each
+    /// handle dragged along the line in its parameter's control range.
+    fn range_canvas(&self, d: &Device, def: &'static DeviceDef, ids: (&str, &str), w: f32, accent: Color) -> PanelCanvas {
+        use crate::device_canvas::{fill, stroke, white};
+        let (pw, ph) = (w * Z, 28.0 * Z);
+        let (x0, x1) = (6.0 * Z, pw - 6.0 * Z);
+        let cy = ph / 2.0;
+        let norm = |id: &str| def.param(id).map_or(0.0, |p| p.to_normalized(self.panel_value(d, def, p)));
+        let (a, bx) = (x0 + norm(ids.0) * (x1 - x0), x0 + norm(ids.1) * (x1 - x0));
+        let circle = |cx: f32| {
+            let r = 4.5 * Z;
+            format!("M{:.1} {cy:.1} a{r:.1} {r:.1} 0 1 0 {:.1} 0 a{r:.1} {r:.1} 0 1 0 {:.1} 0 Z", cx - r, 2.0 * r, -2.0 * r)
+        };
+        let mut paths = vec![
+            stroke(format!("M{x0:.1} {cy:.1} H{x1:.1}"), white(0.15), 1.5 * Z),
+            stroke(format!("M{a:.1} {cy:.1} H{bx:.1}"), accent, 1.5 * Z),
+        ];
+        for cx in [a, bx] {
+            paths.push(fill(circle(cx), Color::from_rgb_u8(0x1c, 0x1c, 0x20)));
+            paths.push(stroke(circle(cx), accent, 1.25 * Z));
+        }
+        let rate = 1.0 / (x1 - x0);
+        let zones = [(ids.0, a), (ids.1, bx)]
+            .iter()
+            .map(|(id, cx)| crate::PanelZone {
+                x: cx - 7.0 * Z,
+                y: 0.0,
+                w: 14.0 * Z,
+                h: ph,
+                param_x: def.index_of(id).map_or(-1, |i| i as i32),
+                param_y: -1,
+                rate_x: rate,
+                rate_y: 0.0,
+            })
+            .collect();
+        PanelCanvas { visible: true, w: pw, h: ph, paths: model(paths), zones: model(zones), label: "Filter".into(), ..Default::default() }
+    }
+
+    /// Delay band picker menu rows (panel-menu code MENU_DELAY_BAND).
+    pub(crate) fn win_delay_band_rows(&self, device: DeviceId) -> crate::device_mod::MenuRows {
+        let cur = self.delay_band(device);
+        dstudio_core::builtin::delay::BANDS
+            .iter()
+            .enumerate()
+            .map(|(i, (name, ..))| {
+                let pick = Some(crate::devices::MenuPick::Window(device, ACT_DELAY_BAND, i as i32));
+                (name.to_string(), if i == cur { "\u{2713}".to_string() } else { String::new() }, pick, false)
+            })
+            .collect()
     }
 
     /// Band picker menu rows (panel-menu code MENU_MB_BAND).
@@ -1722,6 +2053,7 @@ impl Controller {
         let mut sq = self.eq_shape_card(d, def, v, accent_of(b), 78.0 * Z);
         sq.x = (xs[1] + 4.0) * Z;
         sq.y = (row.top() + 4.0) * Z;
+        sq.well = true;
         b.square = sq;
         584.0
     }
@@ -1939,6 +2271,8 @@ impl Controller {
             (ACT_TARGET, _) => {
                 self.devices.wins.target.insert(device, value.clamp(0, TARGETS.len() as i32 - 1) as usize);
             }
+            (ACT_VIEW, _) => self.card_view_select(device, value),
+            (ACT_DELAY_BAND, _) => self.set_delay_band(device, value.clamp(0, 5) as usize),
             (ACT_MB_BAND, _) => {
                 self.devices.panel.views.entry(device).or_default().band = value.clamp(0, 2) as usize;
             }
@@ -2309,6 +2643,63 @@ mod tests {
         assert_eq!(view(&c, did, def).display.zones.iter().count(), 6);
     }
 
+    /// Delay: the field fills the display with a caption above it, the header carries the
+    /// latches, views and mode, and the rack follows the selected repeat-EQ band.
+    #[test]
+    fn delay_window_shows_the_field_and_the_selected_band() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("delay");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - WIN_W).abs() < 0.5 && (v.h / Z - 640.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert!(v.display.visible && v.display.pointer && v.display.paths.row_count() > 3);
+        assert!(v.display.texts.iter().any(|t| t.text == "Echoes"));
+        let idx = |id: &str| def.index_of(id).unwrap() as i32;
+        for id in ["link", "sync", "dry", "mode"] {
+            assert!(v.pills.iter().any(|p| p.param == idx(id)), "{id} in the header");
+        }
+        assert!(v.knobs.iter().any(|k| k.param == idx("eq2Freq")));
+        // Picking the High Shelf band moves the rack and names it on the picker.
+        c.win_action(did, ACT_DELAY_BAND, 4);
+        let v = view(&c, did, def);
+        assert!(v.knobs.iter().any(|k| k.param == idx("eq4Gain")) && !v.knobs.iter().any(|k| k.param == idx("eq2Gain")));
+        assert!(v.pills.iter().any(|p| p.param == MENU_DELAY_BAND && p.label == "High Shelf"));
+        assert_eq!(c.win_delay_band_rows(did)[4].1, "\u{2713}");
+        // The EQ view retitles the display.
+        c.win_action(did, ACT_VIEW, 1);
+        let v = view(&c, did, def);
+        assert!(v.display.texts.iter().any(|t| t.text == "Feedback Filter"));
+        assert!(v.pills.iter().any(|p| p.param == ACT_VIEW && p.index == 1 && p.active));
+        // Pointer events from the window hit-test the window's plot, not the card's well.
+        let card = c.field_size(def);
+        c.devices.panel.canvas.window = true;
+        assert_eq!(c.field_size(def), plot_size(def).unwrap());
+        assert!(c.field_size(def).0 > card.0);
+    }
+
+    /// Reverb: a 1200 pt window; the Filter range drags Low Cut and High Cut, and the shimmer
+    /// controls light only in Shimmer mode.
+    #[test]
+    fn reverb_window_drags_the_filter_range() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("reverb");
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 700.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert_eq!(knob_names(&v), ["Decay", "Damping", "Size", "Pre-Delay", "Width", "Diffusion", "Mod", "Rate", "Shimmer", "Mix"]);
+        let idx = |id: &str| def.index_of(id).unwrap() as i32;
+        let zones: Vec<_> = v.square.zones.iter().collect();
+        assert_eq!((zones[0].param_x, zones[1].param_x), (idx("lowcut2"), idx("highcut2")));
+        assert!(zones[0].x < zones[1].x && !v.square.well);
+        assert!(v.pills.iter().filter(|p| p.param == idx("shift1") || p.param == idx("shift2")).all(|p| p.inert));
+        c.execute(Command::SetDeviceParam { device: did, param: "mode2".into(), value: dstudio_core::builtin::reverb::SHIMMER as f32 });
+        let v = view(&c, did, def);
+        assert!(v.pills.iter().filter(|p| p.param == idx("shift1")).all(|p| !p.inert));
+        // Raising Low Cut moves its handle right.
+        let x0 = zones[0].x;
+        c.execute(Command::SetDeviceParam { device: did, param: "lowcut2".into(), value: 400.0 });
+        assert!(view(&c, did, def).square.zones.iter().next().unwrap().x > x0);
+    }
+
     /// A full ten-second history draws as one line per series, however many samples it holds.
     #[test]
     fn dynamics_history_draws_once_per_series() {
@@ -2337,6 +2728,8 @@ mod tests {
             "mastering-limiter",
             "transient-shaper",
             "multiband-compressor",
+            "delay",
+            "reverb",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =

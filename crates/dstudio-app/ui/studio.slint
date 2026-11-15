@@ -147,7 +147,7 @@ export struct PanelCanvas {
 // Intensity image of a field well (Reverb tail), stretched (bilinear) over the box x/y/w/h in
 // well coordinates under the paths. Kept out of PanelCanvas: an image field in that struct
 // doubled the first frames' render cost of every card.
-export struct PanelWash { device: int, img: image, x: length, y: length, w: length, h: length }
+export struct PanelWash { device: int, window: bool, img: image, x: length, y: length, w: length, h: length }
 // Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
 // (choice parameter, opens a menu of its choices).
 export struct PanelButton { kind: int, param: int, x: length, y: length, w: length, label: string, on: bool }

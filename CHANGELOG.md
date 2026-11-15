@@ -48,3 +48,7 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
   whose two handles set Attack, Sustain and their times) and Multiband Compressor (the three bands on a frequency axis
   with each band's level, gain, threshold and up threshold, crossovers you can drag, and a rack card for the selected
   band with its transfer curve).
+- Expanded windows for Delay (its echo train or repeat EQ across the display, the Link, Sync, Hold view, View, Dry and
+  Mode controls in the header, and a card whose band column edits the repeat-EQ band picked in its Band menu) and Reverb
+  (a 1200 pt window with the tail picture across the display, a Filter range whose two handles set Low Cut and High Cut,
+  and the shimmer controls lit in Shimmer mode).

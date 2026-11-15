@@ -372,7 +372,8 @@ export component DeviceWindowFace inherits Rectangle {
         }
         if root.card.win.square.visible: Rectangle {
             x: root.card.win.square.x; y: root.card.win.square.y; width: root.card.win.square.w; height: root.card.win.square.h;
-            border-radius: 6px * zm; background: WinStyle.deep; clip: true;
+            // well: the square's recessed box (a transfer picture); off for a bare control (a range).
+            border-radius: 6px * zm; background: root.card.win.square.well ? WinStyle.deep : transparent; clip: root.card.win.square.well;
             opacity: root.card.enabled ? 1 : 0.45;
             for p in root.card.win.square.paths: Path {
                 viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;

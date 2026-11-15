@@ -13,7 +13,7 @@
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
-//!              [--window-width <pt>  (OS window width, default 1440)] [--assistant-width <px>  (saved docked-assistant width, 297..600)]
+//!              [--window-width <pt>  (OS window width, default 1440)] [--window-height <pt>  (default 820)] [--assistant-width <px>  (saved docked-assistant width, 297..600)]
 //!              [--timeline-zoom <percent>  (horizontal timeline zoom, 100 = default; 100 is 12.76 pt per beat)]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = the design units)]
 //!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
@@ -280,6 +280,8 @@ struct Args {
     zoom: Option<u32>,
     /// --window-width <pt>: OS window width in points (default 1440), for narrow-window reviews.
     window_width: Option<f32>,
+    /// --window-height <pt>: OS window height in points (default 820), for tall device windows.
+    window_height: Option<f32>,
     /// --assistant-width <px>: saved docked-assistant width in 100%-zoom px (297..600), for reviews.
     assistant_width: Option<f32>,
     clip_menu: Option<i32>,
@@ -779,6 +781,13 @@ fn parse_args() -> Result<Args, String> {
                     return Err(format!("--window-width: want 600..4000 points, got {w}"));
                 }
                 a.window_width = Some(w);
+            }
+            "--window-height" => {
+                let h: f32 = value(&mut i)?.parse().map_err(|e| format!("--window-height: {e}"))?;
+                if !(400.0..=3000.0).contains(&h) {
+                    return Err(format!("--window-height: want 400..3000 points, got {h}"));
+                }
+                a.window_height = Some(h);
             }
             "--assistant-width" => {
                 let w: f32 = value(&mut i)?.parse().map_err(|e| format!("--assistant-width: {e}"))?;
@@ -4195,7 +4204,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     // The OS window is 1440×820 pt; interface zoom then sets how much
     // of the (85 %-unit) layout fits in it, see `zoom.rs`.
-    app.window().set_size(slint::LogicalSize::new(args.window_width.unwrap_or(1440.0), 820.0));
+    app.window().set_size(slint::LogicalSize::new(args.window_width.unwrap_or(1440.0), args.window_height.unwrap_or(820.0)));
     app.run()?;
     if args.frame_stats && exit_after.is_none() {
         println!("{}", stats_json(&frame.borrow(), &app));

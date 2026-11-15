@@ -460,7 +460,7 @@ export component DeviceCanvas inherits Rectangle {
         clip: root.f.well;
         accessible-role: groupbox; accessible-label: root.f.caption; accessible-value: root.f.value != "" ? root.f.value : root.f.readout;
         for w in Studio.field-washes: Image {
-            visible: w.device == root.device;
+            visible: w.device == root.device && w.window == root.window;
             x: w.x; y: w.y; width: w.w; height: w.h;
             source: w.img; image-fit: fill; image-rendering: smooth;
         }

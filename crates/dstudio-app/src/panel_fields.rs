@@ -90,8 +90,8 @@ pub struct FieldState {
     pub views: HashMap<DeviceId, usize>,
     /// Selected repeat-EQ band per delay.
     bands: HashMap<DeviceId, usize>,
-    /// Wash image and its well box per device (Reverb tail), set while its card is built.
-    pub(crate) washes: std::cell::RefCell<HashMap<DeviceId, Wash>>,
+    /// Wash image and its well box per device and surface (card, window), set while it is built.
+    pub(crate) washes: std::cell::RefCell<HashMap<(DeviceId, bool), Wash>>,
     /// A wash was added, redrawn or removed since the last push to the UI.
     pub(crate) washes_dirty: std::cell::Cell<bool>,
 }
@@ -123,6 +123,8 @@ struct Canvas {
     pills: Vec<PanelGrip>,
     /// Intensity image, its box (x, y, w, h) in well coordinates and the inputs it was drawn from.
     wash: Option<Wash>,
+    /// Drawn for the device's window (its wash is kept apart from the card's).
+    window: bool,
 }
 
 impl Canvas {
@@ -271,7 +273,7 @@ fn biquad_db(kind: u8, f0: f32, q: f32, gain: f32, f: f32) -> f32 {
 
 /// Band type of each repeat-EQ band of the delay (High Pass .. Low Pass).
 const DELAY_BAND_KIND: [u8; 6] = [0, 1, 2, 2, 3, 4];
-const DELAY_BAND_IDS: [[&str; 4]; 6] = [
+pub(crate) const DELAY_BAND_IDS: [[&str; 4]; 6] = [
     ["eq0Freq", "eq0Gain", "eq0Q", "eq0Enabled"],
     ["eq1Freq", "eq1Gain", "eq1Q", "eq1Enabled"],
     ["eq2Freq", "eq2Gain", "eq2Q", "eq2Enabled"],
@@ -508,10 +510,26 @@ impl Controller {
     }
 
     pub(crate) fn panel_field(&self, d: &Device, def: &'static DeviceDef, view_right: f32) -> PanelCanvas {
-        let Some(name) = field_name(def) else { return PanelCanvas::default() };
         let (x, y, w, h, well_y) = field_rect(def, view_right);
-        let wh = h - well_y;
-        let mut c = Canvas::default();
+        PanelCanvas { x, y, h, well_y, ..self.field_canvas(d, def, w, h - well_y, false) }
+    }
+
+    /// Size of the well a field pointer event comes from: the window's plot while the
+    /// event comes from a device window, else the card's well.
+    pub(crate) fn field_size(&self, def: &DeviceDef) -> (f32, f32) {
+        if self.devices.panel.canvas.window
+            && let Some(size) = crate::device_window::plot_size(def)
+        {
+            return size;
+        }
+        let (_, _, w, fh, well_y) = field_rect(def, crate::device_panel::view_right(def));
+        (w, fh - well_y)
+    }
+
+    /// A device's field drawn into a w x wh well (the card's, or its window's display).
+    pub(crate) fn field_canvas(&self, d: &Device, def: &'static DeviceDef, w: f32, wh: f32, window: bool) -> PanelCanvas {
+        let Some(name) = field_name(def) else { return PanelCanvas::default() };
+        let mut c = Canvas { window, ..Canvas::default() };
         let fields = &self.devices.panel.fields;
         let view = self.card_view(d.id);
         let drag = fields.drag.as_ref().filter(|g| g.device == d.id && g.active);
@@ -529,7 +547,7 @@ impl Controller {
                 draw_pitch(&mut c, &v, accent, w, wh, hot.is_some());
             }
             "delay" if view == 1 => {
-                let selected = fields.bands.get(&d.id).copied().unwrap_or(2);
+                let selected = self.delay_band(d.id);
                 draw_delay_eq(&mut c, &v, live, accent, w, wh, hot, selected);
             }
             "delay" => self.draw_delay_echoes(&mut c, d, def, live, accent, w, wh, drag),
@@ -554,8 +572,8 @@ impl Controller {
         };
         let mut washes = fields.washes.borrow_mut();
         let changed = match c.wash.take() {
-            Some(w) => washes.insert(d.id, w.clone()).is_none_or(|old| old.key != w.key),
-            None => washes.remove(&d.id).is_some(),
+            Some(w) => washes.insert((d.id, window), w.clone()).is_none_or(|old| old.key != w.key),
+            None => washes.remove(&(d.id, window)).is_some(),
         };
         drop(washes);
         if changed {
@@ -564,11 +582,8 @@ impl Controller {
         PanelCanvas {
             visible: true,
             well: true,
-            x,
-            y,
             w,
-            h,
-            well_y,
+            h: wh,
             caption: s(caption),
             readout: s(value),
             paths: model(c.paths),
@@ -743,7 +758,7 @@ impl Controller {
             .map(|v| v.to_bits())
             .chain([u32::from_be_bytes([accent.red(), accent.green(), accent.blue(), accent.alpha()])])
             .collect();
-        if let Some(w) = self.devices.panel.fields.washes.borrow().get(&d.id).filter(|w| w.key == key) {
+        if let Some(w) = self.devices.panel.fields.washes.borrow().get(&(d.id, c.window)).filter(|w| w.key == key) {
             c.wash = Some(w.clone());
         }
         if c.wash.is_none() {
@@ -1061,8 +1076,7 @@ impl Controller {
         let Some(d) = self.project().device(device).cloned() else { return };
         let Some(def) = dstudio_core::builtin::def_of(&d) else { return };
         let Some(name) = field_name(def) else { return };
-        let (_, _, w, fh, well_y) = field_rect(def, crate::device_panel::view_right(def));
-        let h = fh - well_y;
+        let (w, h) = self.field_size(def);
         match phase {
             0 => {
                 let Some(grab) = self.field_hit(&d, def, name, w, h, x, y) else { return };
@@ -1221,7 +1235,8 @@ impl Controller {
         self.devices.panel.fields.live.retain(|id, _| devs.iter().any(|d| d.0 == *id));
         let mut ro = Vec::new();
         for (id, name, frozen) in devs {
-            if self.engine.builtin_readouts(id.0, &mut ro).is_err() {
+            // A window's Hold view keeps the last picture.
+            if self.win_held(id) || self.engine.builtin_readouts(id.0, &mut ro).is_err() {
                 continue;
             }
             let live = self.devices.panel.fields.live.entry(id).or_default();
@@ -1270,6 +1285,16 @@ impl Controller {
 
     /// Card view switch (Echoes / EQ, Tail / EQ).
     /// Card view switch (picker `Control::Views`, sampler tabs): UI state, no undo step.
+    /// The delay's selected repeat-EQ band (its card's EQ view and window rack).
+    pub(crate) fn delay_band(&self, device: DeviceId) -> usize {
+        self.devices.panel.fields.bands.get(&device).copied().unwrap_or(2)
+    }
+
+    pub(crate) fn set_delay_band(&mut self, device: DeviceId, band: usize) {
+        self.devices.panel.fields.bands.insert(device, band.min(5));
+        self.ui_dirty = true;
+    }
+
     pub fn card_view_select(&mut self, device: DeviceId, view: i32) {
         if self.sampler_def(device).is_some() {
             return self.sampler_tab(device, view);
