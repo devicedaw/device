@@ -66,7 +66,7 @@ flowchart LR
   Character EQ and the plotted-field family: Tremolo, Auto-Panner, Chorus,
   Flanger, Phaser, Ring Mod and Character Mod; and the dynamics family:
   Compressor, Limiter, Gate, Glue Compressor, Character Compressor and Mastering
-  Limiter; Transient Shaper; Multiband Compressor), otherwise the card itself in a window. A
+  Limiter; Transient Shaper; Multiband Compressor; Delay and Reverb), otherwise the card itself in a window. A
   window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same
@@ -103,7 +103,17 @@ flowchart LR
   band meters), its Threshold and Up Threshold as lines you drag, and the two
   crossovers as vertical handles. Its rack card edits the band picked in its
   Band menu (`MENU_MB_BAND`, `ACT_MB_BAND`; the same selection as the card's)
-  beside that band's transfer square. The
+  beside that band's transfer square. Delay's and Reverb's windows draw their
+  card's field (`panel_fields.rs`, `field_canvas`) at the plot's size, with
+  its own wash image for the window (washes are keyed by device and surface),
+  and send the display's pointer events through the card's field handlers:
+  `field_size` hit-tests in the window's plot while the event comes from the
+  window (`canvas.window`). The header carries the card's View pills
+  (`ACT_VIEW`), Delay's rack edits the repeat-EQ band picked in its Band menu
+  (`MENU_DELAY_BAND`, `ACT_DELAY_BAND`), and Reverb's Filter range is a bare
+  canvas (`range_canvas`, the window square without its well) whose two
+  handles drag Low Cut and High Cut. `--window-height` sets the OS window's
+  height for screenshots of the 700 pt Reverb window. The
   meters read `se_builtin_set_metering` / `se_builtin_levels`
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app

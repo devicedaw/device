@@ -1679,12 +1679,13 @@ impl Controller {
             let fields = &self.devices.panel.fields;
             let mut washes = fields.washes.borrow_mut();
             let n = washes.len();
-            washes.retain(|id, _| self.project().device(*id).is_some());
+            washes.retain(|(id, window), _| self.project().device(*id).is_some() && (!*window || self.devices.windows.contains(id)));
             if fields.washes_dirty.replace(false) || washes.len() != n {
                 let rows: Vec<crate::PanelWash> = washes
                     .iter()
-                    .map(|(id, w)| crate::PanelWash {
+                    .map(|((id, window), w)| crate::PanelWash {
                         device: id.0 as i32,
+                        window: *window,
                         img: w.img.clone(),
                         x: w.rect[0],
                         y: w.rect[1],
