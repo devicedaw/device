@@ -1697,6 +1697,7 @@ impl Controller {
         let Some((d, def)) = self.panel_def(device) else { return };
         let check = |on: bool| if on { "✓".to_string() } else { String::new() };
         let rows = match which {
+            crate::device_window::MENU_ANALYZER => self.win_analyzer_rows(device),
             crate::device_window::MENU_BANDS => match self.win_band_rows(device) {
                 Some(rows) => rows,
                 None => return,

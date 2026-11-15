@@ -146,6 +146,8 @@ public:
     int32_t builtin_analysis(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count, uint64_t& seq);
     int32_t builtin_set_metering(uint64_t device_id, bool on);
     int32_t builtin_levels(uint64_t device_id, float* out);
+    int32_t builtin_set_spectrum(uint64_t device_id, int mode);
+    int32_t builtin_spectrum(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count, uint64_t& seq);
     // Plugin card controls and modulation bases (main thread; see dstudio_engine.h).
     int32_t plugin_set_param(uint64_t device_id, uint32_t param_id, float normalized);
     int32_t mod_base(uint64_t device_id, uint32_t param_id, float& out);

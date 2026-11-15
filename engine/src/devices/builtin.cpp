@@ -1,4 +1,5 @@
 #include "builtin.hpp"
+#include "window_spectrum.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -269,6 +270,7 @@ BuiltinInstance::BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc,
     for (std::size_t i = 0; i < desc_.params.size(); ++i) current_[i] = target_[i].load(std::memory_order_relaxed);
     modded_.assign(desc_.params.size(), 0.0f);
     mod_params_.assign(desc_.params.size(), 0.0f);
+    sample_rate_ = sample_rate;
     proc_->prepare(sample_rate, max_block);
     if (const uint32_t cap = proc_->analysis_capacity(); cap > 0) analysis_ = std::make_unique<AnalysisChannel>(cap);
     proc_->reset();
@@ -423,6 +425,20 @@ uint32_t BuiltinInstance::readouts(float* out, uint32_t capacity) const noexcept
     return n;
 }
 
+void BuiltinInstance::set_spectrum(int mode) {
+    mode = std::clamp(mode, 0, 2);
+    if (mode != 0 && !spectrum_) {
+        spectrum_ = std::make_unique<WindowSpectrum>(sample_rate_);
+        spectrum_rt_.store(spectrum_.get(), std::memory_order_release);
+    }
+    spectrum_mode_.store(mode, std::memory_order_relaxed);
+}
+
+uint32_t BuiltinInstance::spectrum(float* out, uint32_t capacity, uint64_t& seq) noexcept {
+    seq = 0;
+    return spectrum_ ? spectrum_->read(out, capacity, seq) : 0;
+}
+
 namespace {
 // Peak of a block into a running maximum (RT; the main thread resets it to 0).
 void accumulate_peak(std::atomic<float>& slot, const float* x, uint32_t frames) noexcept {
@@ -444,6 +460,9 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         accumulate_peak(peaks_[0], l, frames);
         accumulate_peak(peaks_[1], r, frames);
     }
+    const int spec_mode = spectrum_mode_.load(std::memory_order_relaxed);
+    WindowSpectrum* const spec = spec_mode != 0 ? spectrum_rt_.load(std::memory_order_acquire) : nullptr;
+    if (spec != nullptr && spec_mode == 1) spec->push(l, r, frames);
     const auto n_params = static_cast<uint32_t>(current_.size());
     float* const cur = current_.data();
     for (uint32_t i = 0; i < n_params; ++i) cur[i] = target_[i].load(std::memory_order_relaxed);
@@ -538,6 +557,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         accumulate_peak(peaks_[2], l, frames);
         accumulate_peak(peaks_[3], r, frames);
     }
+    if (spec != nullptr && spec_mode == 2) spec->push(l, r, frames);
     sc_l_ = sc_r_ = nullptr;
     mods_ = nullptr;
     mod_count_ = 0;

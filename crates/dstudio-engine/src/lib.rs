@@ -607,6 +607,26 @@ impl Engine {
         check(unsafe { ffi::se_builtin_levels(self.raw, device_id, out.as_mut_ptr()) })
     }
 
+    /// Number of bins in an analyser frame ([`Engine::builtin_spectrum`]).
+    pub const SPECTRUM_BINS: usize = 128;
+
+    /// The expanded window's analyser of a live built-in device: 0 off, 1 its
+    /// input (Pre), 2 its output (Post).
+    pub fn builtin_set_spectrum(&self, device_id: u64, mode: u8) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_builtin_set_spectrum(self.raw, device_id, mode) })
+    }
+
+    /// Newest analyser frame: [`Engine::SPECTRUM_BINS`] levels in dBFS, log spaced
+    /// from 20 Hz to 20 kHz (floor -90). Returns the frame number (0 = none yet,
+    /// unchanged = nothing new); `out` is left empty before the first frame.
+    pub fn builtin_spectrum(&self, device_id: u64, out: &mut Vec<f32>) -> Result<u64, EngineError> {
+        out.resize(Self::SPECTRUM_BINS, 0.0);
+        let (mut n, mut seq) = (0usize, 0u64);
+        let r = check(unsafe { ffi::se_builtin_spectrum(self.raw, device_id, out.as_mut_ptr(), out.len(), &mut n, &mut seq) });
+        out.truncate(if r.is_ok() { n.min(Self::SPECTRUM_BINS) } else { 0 });
+        r.map(|()| seq)
+    }
+
     /// Newest analysis frame of a live built-in device (bulk visualiser data,
     /// e.g. the Spectrum's band levels; layout per device). Returns the
     /// frame's publish number: 0 = nothing published yet, unchanged = the

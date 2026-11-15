@@ -247,6 +247,9 @@ struct Args {
     device_state: Option<&'static str>,
     /// window-<built-in device id>: as reference-<id>, with the device's window open.
     device_window: bool,
+    /// review-window-<id>: a test signal runs through the device so its window's meters and
+    /// analyser show something.
+    window_signal: bool,
     /// Files loaded as if dropped on the window (after the state is set up).
     load_sample: Vec<PathBuf>,
     /// --sampler-tab N: with a sampler state, show that tab (review screenshots).
@@ -657,6 +660,12 @@ fn parse_args() -> Result<Args, String> {
                     a.device_state = s.strip_prefix("window-").and_then(dstudio_core::builtin::find).map(|d| d.id);
                     a.device_window = true;
                 }
+                s if s.strip_prefix("review-window-").and_then(dstudio_core::builtin::find).is_some() => {
+                    a.reference_default = true;
+                    a.device_state = s.strip_prefix("review-window-").and_then(dstudio_core::builtin::find).map(|d| d.id);
+                    a.device_window = true;
+                    a.window_signal = true;
+                }
                 "review-settings-plugins" => {
                     a.reference_default = true;
                     a.plugins_page_review = true;
@@ -709,7 +718,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1287,6 +1296,45 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
 
 /// Synth test state (osc 2 FM, LFO 1 slow, 2 routes, one macro
 /// mapping, Tape off / Chorus / Delay / Reverb); not a factory sound.
+/// review-window-<id>'s test signal: a harmonic chord on 110 Hz over low-passed noise.
+#[derive(Default)]
+struct WindowSignal {
+    n: u64,
+    seed: u32,
+    lp: f64,
+}
+
+impl WindowSignal {
+    const STEP: usize = 1440;
+
+    /// Renders the next 30 ms offline with the signal as the injected input, then polls the
+    /// windows at `at`.
+    fn step(&mut self, c: &mut controller::Controller, at: Instant) {
+        let rate = 48_000.0f64;
+        let input: Vec<f32> = (0..Self::STEP)
+            .map(|_| {
+                let t = self.n as f64 / rate;
+                self.n += 1;
+                self.seed = self.seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let noise = (self.seed >> 8) as f64 / 8_388_608.0 - 1.0;
+                self.lp += 0.08 * (noise - self.lp);
+                let tones: f64 = [110.0, 220.0, 330.0, 440.0, 660.0, 1320.0]
+                    .iter()
+                    .enumerate()
+                    .map(|(h, f)| (std::f64::consts::TAU * f * t).sin() / (h + 1) as f64)
+                    .sum();
+                (0.18 * tones + 0.25 * self.lp + 0.02 * noise) as f32
+            })
+            .collect();
+        let mut out = vec![0f32; 2 * Self::STEP];
+        if let Err(e) = c.engine.render_offline_with_input(&input, 1, &mut out) {
+            c.set_status(format!("review-window: {e}"), 10);
+            return;
+        }
+        c.poll_window_meters_at(at);
+    }
+}
+
 fn synth_test_state(device: dstudio_core::DeviceId) -> dstudio_core::Command {
     let params = [
         ("osc1_wave", 1.0),
@@ -2270,6 +2318,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 && let Some(d) = c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id)
             {
                 c.device_window(d);
+            }
+            if args.window_signal {
+                // The test signal (WindowSignal) is injected as the track's monitored input and
+                // rendered offline: one second now, then 30 ms every 30 ms until exit, the window
+                // polled after each step, so its meters and analyser read as live.
+                c.rec.policy = recording::InputPolicy::InjectedOnly;
+                c.execute(dstudio_core::Command::SetTrackMonitor { track: t, monitor: true });
+                c.set_track_input(t, Some(dstudio_core::InputSource { channel: 0, stereo: false }));
+                let mut sig = WindowSignal::default();
+                let mut at = Instant::now() - Duration::from_millis(990);
+                for _ in 0..33 {
+                    sig.step(&mut c, at);
+                    at += Duration::from_millis(30);
+                }
+                let ctl2 = ctl.clone();
+                let sig = RefCell::new(sig);
+                let timer = slint::Timer::default();
+                timer.start(slint::TimerMode::Repeated, Duration::from_millis(30), move || {
+                    if let Ok(mut c) = ctl2.try_borrow_mut() {
+                        sig.borrow_mut().step(&mut c, Instant::now());
+                    }
+                });
+                std::mem::forget(timer); // runs until the review exits
             }
         }
         c.set_bottom_tab(BottomTab::Devices);
