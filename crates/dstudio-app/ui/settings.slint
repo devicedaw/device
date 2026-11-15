@@ -1,10 +1,10 @@
 // Settings window as an in-app modal panel (see src/settings.rs for why), drawn at the
 // settings window rect: x 255, y 6.5, 960 pt wide (216.75 / 5.5 / 816 in 85 % units), running
-// off the bottom of the main window. Sidebar 187; the Audio and Plugins
+// off the bottom of the main window. Sidebar 187; the Audio, MIDI, Plugins and Shortcuts
 // pages are real, General is laid out with PLACEHOLDER controls, the rest say "Not available yet".
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, ChoiceItem, MidiInputRow, PluginRow } from "studio.slint";
+import { Studio, ChoiceItem, MidiInputRow, PluginRow, ShortcutKey, ShortcutRow } from "studio.slint";
 
 // Checkable popup list (Settings dropdowns, the inspector "In" selector).
 export component ChoiceList inherits Rectangle {
@@ -164,6 +164,144 @@ component GeneralPage inherits Rectangle {
     SmallSelect { x: root.width - 20.5px - 117.5px; y: 515.9px; text: "Input 1"; opacity: 0.4; }
     RowLabel { x: 20.5px; y: 543.1px; text: "Language"; dim: true; }
     SmallSelect { x: root.width - 20.5px - 117.5px; y: 541.6px; text: "English"; opacity: 0.4; }
+}
+
+// ---------------------------------------------------------------- Shortcuts page
+// Settings › Shortcuts (src/shortcuts.rs). Every action by section, its keys as badges and
+// the context it works in. Click the keys to record new ones ("Press keys", Escape cancels),
+// hover a row for × (unmapped), Reset to defaults drops every change. One preset for now
+// (shown, not a menu).
+
+// One chord: a pill holding a round badge per key ("⌘", "L"), or a wider one for a name ("Space").
+component KeyChord inherits Rectangle {
+    in property <[string]> parts;
+    height: 17.85px;
+    width: row.preferred-width;
+    border-radius: 8.9px;
+    background: #28292c;
+    border-width: 0.75px;
+    border-color: @linear-gradient(180deg, #3a3b3f 0%, #2a2b2e 45%, #222326 100%);
+    row := HorizontalLayout {
+        padding-left: 3px; padding-right: 3px; padding-top: 2px; padding-bottom: 2px; spacing: 2.5px;
+        for p in root.parts: Rectangle {
+            width: max(17px, t.preferred-width + 11px);
+            height: 13.85px;
+            border-radius: 6.9px;
+            background: #2b2c30;
+            border-width: 0.5px;
+            border-color: #34353a;
+            t := Text { text: p; color: #e0e0e3; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        }
+    }
+}
+
+// "Unmapped": a dashed outline (drawn as dashes, as Slint borders are solid).
+component Unmapped inherits Rectangle {
+    width: 66.6px; height: 18.7px;
+    property <length> dash: 2.4px;
+    property <length> step: 4.4px;
+    property <int> nx: floor((self.width - 2px) / self.step);
+    property <int> ny: floor((self.height - 2px) / self.step);
+    for i in root.nx: Rectangle { x: 1px + i * root.step; y: 0; width: root.dash; height: 0.75px; background: #3e3f43; }
+    for i in root.nx: Rectangle { x: 1px + i * root.step; y: root.height - 0.75px; width: root.dash; height: 0.75px; background: #3e3f43; }
+    for i in root.ny: Rectangle { x: 0; y: 1.5px + i * root.step; width: 0.75px; height: root.dash; background: #3e3f43; }
+    for i in root.ny: Rectangle { x: root.width - 0.75px; y: 1.5px + i * root.step; width: 0.75px; height: root.dash; background: #3e3f43; }
+    Text { text: "Unmapped"; color: #6e6f74; font-size: 9.5px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+component ShortcutsPage inherits Rectangle {
+    property <length> list-y: 106px;
+    property <length> key-x: 212px;     // the keys column (centred badges)
+    property <length> key-w: 201px;
+    property <length> ctx-x: 395.6px;   // the context column (centred text)
+    property <length> ctx-w: 160px;
+    FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Shortcuts"; font-size: 17.25px; font-weight: 700; }
+    Text { x: 20.5px; y: 78px; height: 14px; text: "Preset"; color: #7e7f83; font-size: 10px; font-weight: 500; vertical-alignment: center; }
+    Rectangle {
+        x: 57.5px; y: 74.75px; width: 134px; height: 20.4px; border-radius: 10.2px; background: #2a2b30;
+        accessible-role: combobox; accessible-label: "Preset"; accessible-value: "Device Studio";
+        Text { x: 10.5px; text: "Device Studio"; color: #bdbec2; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+        Path { x: parent.width - 17.5px; y: (parent.height - 3.6px) / 2; width: 6px; height: 3.6px; viewbox-width: 6; viewbox-height: 3.6; commands: "M0 0 L6 0 L3 3.6 Z"; fill: #8e8f94; }
+    }
+    Rectangle {
+        x: 210.5px; y: 74.75px; width: 201.5px; height: 20.4px; border-radius: 10.2px; background: #292a2f;
+        Icon { x: 9px; y: (parent.height - 12px) / 2; width: 12px; height: 12px; d: Icons.search; ink: #a5a6aa; }
+        if search.text == "": Text { x: 26px; text: "Search actions or keys"; color: #95969b; font-size: 9.5px; vertical-alignment: center; }
+        search := TextInput {
+            x: 26px; width: parent.width - 34px; height: parent.height;
+            color: Tokens.text-primary; font-size: 9.5px; vertical-alignment: center; single-line: true;
+            accessible-label: "Search actions or keys";
+            edited => { Studio.shortcuts-search(self.text); }
+            changed has-focus => { Studio.search-focused = self.has-focus; }
+        }
+    }
+    Text {
+        x: 436.5px; y: 78px; height: 14px; text: "Reset to defaults";
+        color: Studio.shortcut-reset-enabled ? (reset-ta.has-hover ? #e5e5e8 : #bdbec2) : #424348;
+        font-size: 10px; font-weight: 500; vertical-alignment: center;
+        accessible-role: button; accessible-label: "Reset to defaults"; accessible-enabled: Studio.shortcut-reset-enabled;
+        reset-ta := TouchArea { enabled: Studio.shortcut-reset-enabled; clicked => { Studio.shortcuts-reset(); } }
+    }
+    Rectangle { x: 10.5px; y: root.list-y - 1px; width: root.width - 21px; height: 0.75px; background: #25262a; }
+    if Studio.shortcut-empty: Text {
+        x: 20.5px; y: root.list-y + 14px; height: 14px; text: "No shortcuts match your search";
+        color: Tokens.text-tertiary; font-size: 10px; vertical-alignment: center;
+    }
+    Flickable {
+        x: 0; y: root.list-y; width: root.width; height: root.height - root.list-y;
+        content-height: Studio.shortcut-list-h * 1px;
+        for r[i] in Studio.shortcut-rows: Rectangle {
+            x: 0; y: r.y * 1px; width: root.width; height: r.h * 1px;
+            if r.header: Rectangle {
+                x: 10.5px; y: 5.1px; width: parent.width - 21px; height: 23.8px; border-radius: 11.9px; background: #262729;
+                accessible-role: text; accessible-label: r.label;
+                Text { x: 10px; text: r.label; color: #808186; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+            }
+            if !r.header: Rectangle {
+                row-ta := TouchArea {}
+                if r.recording: Rectangle { x: 10.5px; width: parent.width - 21px; border-radius: 6px; background: #222327; }
+                Text { x: 20.5px; text: r.label; color: #dfdee3; font-size: 10px; font-weight: 600; letter-spacing: -0.15px; vertical-alignment: center; }
+                // Keys: click to record new ones.
+                Rectangle {
+                    x: root.key-x; y: (parent.height - 22px) / 2; width: root.key-w; height: 22px; border-radius: 4px;
+                    background: key-ta.has-hover && !r.recording ? #26272b : transparent;
+                    accessible-role: button; accessible-label: r.label + " shortcut"; accessible-action-default => { Studio.shortcut-record(i); }
+                    key-ta := TouchArea { clicked => { Studio.shortcut-record(i); } }
+                    if r.recording: Rectangle {
+                        x: (parent.width - 113px) / 2; y: (parent.height - 18.7px) / 2; width: 113px; height: 18.7px; border-radius: 9.35px;
+                        border-width: 0.75px; border-color: #55565b;
+                        Text { x: 13.6px; text: "Press keys"; color: #6e6f74; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+                        Text { x: 88.4px; text: "ESC"; color: #c0c1c5; font-size: 8.5px; font-weight: 600; vertical-alignment: center; }
+                    }
+                    if !r.recording && r.chords.length == 0: Unmapped { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+                    if !r.recording && r.chords.length > 0: HorizontalLayout {
+                        alignment: center; spacing: 4.5px;
+                        for c[ci] in r.chords: HorizontalLayout {
+                            spacing: 4.5px;
+                            if ci > 0: Text { text: "or"; color: #6e6f74; font-size: 9px; font-weight: 500; vertical-alignment: center; }
+                            VerticalLayout { alignment: center; KeyChord { parts: c.parts; } }
+                        }
+                    }
+                }
+                Text {
+                    x: root.ctx-x; width: root.ctx-w; text: r.context; color: #828388; font-size: 10px; font-weight: 600; letter-spacing: -0.15px;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+                // Hover: × leaves the action unmapped.
+                if (row-ta.has-hover || key-ta.has-hover || x-ta.has-hover) && r.chords.length > 0 && !r.recording: Rectangle {
+                    x: 539.4px; y: (parent.height - 22px) / 2; width: 77.3px; height: 22px; border-radius: 4px; background: #26272b;
+                }
+                Rectangle {
+                    x: 583.6px - 9px; y: (parent.height - 18px) / 2; width: 18px; height: 18px;
+                    visible: (row-ta.has-hover || key-ta.has-hover || x-ta.has-hover) && r.chords.length > 0 && !r.recording;
+                    accessible-role: button; accessible-label: "Remove " + r.label + " shortcut";
+                    accessible-action-default => { Studio.shortcut-clear(i); }
+                    Icon { x: 4.5px; y: 4.5px; width: 9px; height: 9px; d: Icons.close; ink: x-ta.has-hover ? #e5e5e8 : #a5a6aa; stroke-width: 1.3px; }
+                    x-ta := TouchArea { clicked => { Studio.shortcut-clear(i); } }
+                }
+            }
+        }
+    }
 }
 
 // MIDI page: default instrument for new instrument tracks (PLACEHOLDER: new instrument
@@ -407,7 +545,8 @@ export component SettingsPanel inherits Rectangle {
     if Studio.settings-page == 3: PluginsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 0: GeneralPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 2: MidiPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
-    if Studio.settings-page > 3: Rectangle {
+    if Studio.settings-page == 4: ShortcutsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
+    if Studio.settings-page > 4: Rectangle {
         x: 187px; y: 0; width: root.width - 187px; height: root.height;
         Text { x: 20.5px; y: 33px; height: 24px; text: Studio.settings-pages[Studio.settings-page]; color: #ececee; font-size: 17.25px; font-weight: 700; vertical-alignment: center; }
         // PLACEHOLDER pages

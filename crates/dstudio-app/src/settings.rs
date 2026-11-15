@@ -70,6 +70,8 @@ pub struct SettingsState {
     pub tone_asset: Option<AssetInfo>,
     pub tone_loading: bool,
     pub tone: Option<TestTone>,
+    /// Settings › Shortcuts and the live keymap (src/shortcuts.rs).
+    pub keys: crate::shortcuts::ShortcutsUi,
 }
 
 pub fn fmt_rate(r: f64) -> String {
@@ -164,6 +166,8 @@ impl Controller {
     pub fn close_settings(&mut self) {
         self.settings.open = false;
         self.settings.menu = None;
+        self.settings.keys.recording = None;
+        self.settings.keys.search.clear();
         self.ui_dirty = true;
     }
 
@@ -197,6 +201,8 @@ impl Controller {
     pub fn settings_page(&mut self, i: usize) {
         self.settings.page = i.min(PAGES.len() - 1);
         self.settings.menu = None;
+        self.settings.keys.recording = None;
+        self.settings.keys.search.clear();
         if self.settings.page == crate::midi_in::MIDI_PAGE {
             self.midi_scan(true);
         }
@@ -551,6 +557,9 @@ impl Controller {
         s.set_set_pdc_on(!self.settings.prefs.audio.pdc_off);
         if self.settings.page == crate::midi_in::MIDI_PAGE {
             self.push_midi_settings();
+        }
+        if self.settings.page == crate::shortcuts::SHORTCUTS_PAGE {
+            self.push_shortcuts(s);
         }
         let g = &self.settings.prefs.general;
         let on = [g.load_last_session, g.show_plugin_windows, g.show_builtin_windows, g.plugin_windows_on_top];

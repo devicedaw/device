@@ -89,6 +89,7 @@ mod selftest;
 mod send_to_sampler;
 mod settings;
 mod shape_rack;
+mod shortcuts;
 mod showcase;
 mod snap;
 mod splitters;
@@ -180,6 +181,8 @@ struct Args {
     midi_recording_review: bool,
     /// review-settings-midi: Settings › MIDI with a SCREENSHOT-ONLY fake input list.
     settings_midi_review: bool,
+    /// Settings › Shortcuts: 1 the page, 2 recording keys for Tap tempo, 3 Tap tempo unmapped.
+    shortcuts_review: u8,
     /// reference-automation: Instrument track 1 (MIDI clip at bar 6), Audio track 2 selected,
     /// playhead at bar 6, automation lanes shown (Track Volume at +0.0).
     automation_state: bool,
@@ -673,9 +676,17 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_midi_review = true;
                 }
+                st @ ("review-shortcuts" | "review-shortcuts-recording" | "review-shortcuts-unmapped") => {
+                    a.reference_default = true;
+                    a.shortcuts_review = match st {
+                        "review-shortcuts-recording" => 2,
+                        "review-shortcuts-unmapped" => 3,
+                        _ => 1,
+                    };
+                }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1336,6 +1347,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.provider = Arc::new(provider);
         c.settings.prefs = saved_prefs;
         c.settings.prefs_path = prefs_path;
+        c.shortcuts_load();
         c.settings.headless = !use_prefs;
         if args.self_test {
             // Recording in the self-test uses injected input only (render_offline_with_input)
@@ -2334,6 +2346,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.midi_tick();
         }
     }
+    if args.shortcuts_review > 0 {
+        let mut c = ctl.borrow_mut();
+        c.open_settings();
+        c.settings_page(shortcuts::SHORTCUTS_PAGE);
+        if args.shortcuts_review == 2 {
+            c.settings.keys.recording = Some("transport.tap_tempo");
+        }
+        if args.shortcuts_review == 3 {
+            // SCREENSHOT-ONLY: a changed keymap (prefs are never saved in --state runs).
+            c.settings.keys.map.set_chords("transport.tap_tempo", Vec::new());
+            c.settings.prefs.shortcuts = shortcuts::changes(&c.settings.keys.map);
+        }
+    }
     if args.settings_midi_review {
         // SCREENSHOT-ONLY fake MIDI inputs (midi_in::screenshot_fake_ports), never opened:
         // "USB Keyboard" on and sending (light lit), "Pad Controller" switched off.
@@ -2535,6 +2560,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     on!(on_settings_page_select, |c, i: i32| c.settings_page(i.max(0) as usize));
+    on!(on_shortcut_record, |c, row: i32| c.shortcut_record(row.max(0) as usize));
+    on!(on_shortcut_clear, |c, row: i32| c.shortcut_clear(row.max(0) as usize));
+    on!(on_shortcuts_reset, |c| c.shortcuts_reset());
+    on!(on_shortcuts_search, |c, text: slint::SharedString| c.shortcuts_search(text.as_str()));
     on!(on_settings_dropdown, |c, f: i32| c.settings_dropdown(f));
     on!(on_settings_menu_pick, |c, i: i32| c.settings_menu_pick(i.max(0) as usize));
     on!(on_settings_menu_dismiss, |c| c.settings_menu_dismiss());
@@ -3084,11 +3113,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ctl = ctl.clone();
         let aw = app.as_weak();
-        let keymap = app_keymap();
         let zm = zoom.clone();
         studio.on_key(move |text, primary, shift, alt, ctrl, repeat| {
             let Some(key) = key_name(text.as_str()) else { return false };
             let chord = Chord { key, primary, shift, alt, ctrl };
+            // Settings › Shortcuts is recording keys for an action: this chord is them.
+            if !repeat
+                && let Ok(mut c) = ctl.try_borrow_mut()
+                && c.shortcut_key(&chord)
+            {
+                if let Some(a) = aw.upgrade() {
+                    c.update_ui(&a);
+                }
+                return true;
+            }
             // View › Zoom In (⌘= / ⌘+), Zoom Out (⌘-), Reset Zoom (⌘0).
             if primary && !alt && !ctrl {
                 let step = match chord.key.as_str() {
@@ -3148,7 +3186,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     ..Default::default()
                 }
             };
-            let Some(action) = keymap.resolve(&chord, &cx).map(str::to_owned) else { return false };
+            let Some(action) = ctl.borrow().settings.keys.map.resolve(&chord, &cx).map(str::to_owned) else { return false };
             // A held key repeats: tap tempo counts only real presses.
             if repeat && !repeats(&action) {
                 return true;

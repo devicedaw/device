@@ -76,6 +76,46 @@ fn normalize_key(k: &str) -> Option<String> {
     None
 }
 
+impl Chord {
+    /// The text form `Chord::parse` reads back ("primary+shift+z"), for saving a binding.
+    pub fn spec(&self) -> String {
+        let mut s = String::new();
+        for (on, m) in [(self.primary, "primary+"), (self.ctrl, "ctrl+"), (self.shift, "shift+"), (self.alt, "alt+")] {
+            if on {
+                s.push_str(m);
+            }
+        }
+        s.push_str(&self.key.to_ascii_lowercase());
+        s
+    }
+
+    /// The badges a shortcut list shows for this chord, modifiers first in
+    /// ⌘ ⌃ ⇧ ⌥ order, then the key ("Space", "↑", "L").
+    pub fn badges(&self) -> Vec<String> {
+        let mut out: Vec<String> = [(self.primary, "⌘"), (self.ctrl, "⌃"), (self.shift, "⇧"), (self.alt, "⌥")]
+            .into_iter()
+            .filter(|(on, _)| *on)
+            .map(|(_, g)| g.to_string())
+            .collect();
+        out.push(
+            match self.key.as_str() {
+                "Up" => "↑",
+                "Down" => "↓",
+                "Left" => "←",
+                "Right" => "→",
+                "Comma" => ",",
+                "Period" => ".",
+                "Backspace" => "⌫",
+                "Delete" => "⌦",
+                "Escape" => "Esc",
+                k => k,
+            }
+            .to_string(),
+        );
+        out
+    }
+}
+
 impl fmt::Display for Chord {
     /// macOS-style glyphs, as shown in shortcut badges.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -204,6 +244,24 @@ impl Keymap {
         self.bindings.iter().filter(|b| b.action == action).flat_map(|b| &b.chords).collect()
     }
 
+    /// Replace the chords of `action` (all of them go on its first binding; an empty list
+    /// leaves the action unmapped). Returns false when the keymap has no such action.
+    pub fn set_chords(&mut self, action: &str, chords: Vec<Chord>) -> bool {
+        let mut first = true;
+        let mut found = false;
+        for b in self.bindings.iter_mut().filter(|b| b.action == action) {
+            found = true;
+            b.chords = if first { chords.clone() } else { Vec::new() };
+            first = false;
+        }
+        found
+    }
+
+    /// The condition of `action`'s first binding.
+    pub fn condition_of(&self, action: &str) -> Option<Condition> {
+        self.bindings.iter().find(|b| b.action == action).map(|b| b.when)
+    }
+
     /// Pairs of actions that share a chord and an equally specific condition
     /// (both could fire in the same context with no winner).
     pub fn conflicts(&self) -> Vec<(String, String, Chord)> {
@@ -302,6 +360,29 @@ mod tests {
         assert_eq!(ch("pagedown").key, "PageDown");
         assert!(Chord::parse("primary+").is_none());
         assert!(Chord::parse("hyper+q").is_none());
+    }
+
+    #[test]
+    fn spec_round_trips_and_badges_read_in_order() {
+        for s in ["primary+shift+z", "space", "alt+up", "ctrl+alt+k", "primary+comma"] {
+            let c = ch(s);
+            assert_eq!(Chord::parse(&c.spec()), Some(c.clone()), "{s}");
+        }
+        assert_eq!(ch("primary+shift+up").badges(), ["⌘", "⇧", "↑"]);
+        assert_eq!(ch("shift+alt+down").badges(), ["⇧", "⌥", "↓"]);
+        assert_eq!(ch("space").badges(), ["Space"]);
+    }
+
+    #[test]
+    fn set_chords_rebinds_and_unmaps() {
+        let mut k = Keymap::default_preset();
+        assert!(k.set_chords("transport.record", vec![ch("primary+shift+r")]));
+        assert_eq!(k.resolve(&ch("primary+shift+r"), &Context::default()), Some("transport.record"));
+        assert_eq!(k.resolve(&ch("r"), &Context::default()), None);
+        assert!(k.set_chords("transport.record", Vec::new()));
+        assert!(k.chords_for("transport.record").is_empty());
+        assert!(!k.set_chords("no.such_action", Vec::new()));
+        assert_eq!(k.condition_of("clip.reverse"), Some(Condition::ClipSelected));
     }
 
     #[test]

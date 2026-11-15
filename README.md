@@ -52,7 +52,8 @@ wgpu.
   Press W to fit the song (or the selected clips) to the width of the timeline, and H to fit every track into its height.
   Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
   Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected
-  clip or section, ⌘D duplicates the selected clip or section.
+  clip or section, ⌘D duplicates the selected clip or section. Settings › Shortcuts lists them all by section; click
+  one's keys to record new ones, search by name or key, and reset to the defaults at any time.
 - **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Printing clips.** Consolidate joins clips into one, Bounce to new track (⌘B, or Resample in the clip menu and the

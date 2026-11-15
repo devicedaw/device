@@ -12442,6 +12442,161 @@ fn key_change_steps() -> Vec<Step> {
 /// Expanded automation rows: expanding a track without other lanes opens Pan, + adds the next
 /// parameter below a row, × closes a row (its automation stays), and a row's right-click menu
 /// deletes its automation or closes it. The added track and the UI state are put back at the end.
+fn shortcut_page_steps() -> Vec<Step> {
+    use Step::*;
+    fn row_of(c: &Controller, action: &str) -> i32 {
+        c.settings.keys.shown.borrow().iter().position(|a| *a == Some(action)).map_or(-1, |i| i as i32)
+    }
+    fn rows(a: &AppWindow) -> Vec<crate::ShortcutRow> {
+        let m = a.global::<Studio>().get_shortcut_rows();
+        (0..slint::Model::row_count(&m)).filter_map(|i| slint::Model::row_data(&m, i)).collect()
+    }
+    fn chords(c: &Controller, action: &str) -> Vec<String> {
+        c.settings.keys.map.chords_for(action).iter().map(|ch| ch.spec()).collect()
+    }
+    vec![
+        DoC(
+            "shortcuts: open Settings › Shortcuts",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().open_settings();
+                a.global::<Studio>().invoke_settings_page_select(crate::shortcuts::SHORTCUTS_PAGE as i32);
+            }),
+        ),
+        Check(
+            "shortcuts: the page lists Transport first, Play / pause on Space (Always), nothing to reset",
+            Box::new(|_, a| {
+                let s = a.global::<Studio>();
+                let r = rows(a);
+                let play = r.iter().find(|r| r.label == "Play / pause");
+                let keys = play.and_then(|p| slint::Model::row_data(&p.chords, 0)).map(|k| {
+                    (0..slint::Model::row_count(&k.parts)).filter_map(|i| slint::Model::row_data(&k.parts, i)).collect::<Vec<_>>()
+                });
+                (s.get_settings_page() == 4
+                    && r.first().is_some_and(|h| h.header && h.label == "Transport")
+                    && play.is_some_and(|p| p.context == "Always")
+                    && keys == Some(vec!["Space".into()])
+                    && !s.get_shortcut_reset_enabled()
+                    && r.iter().filter(|r| r.header).count() == crate::shortcuts::SECTIONS.len())
+                .then_some(())
+                .ok_or(format!("page {} first {:?} play keys {keys:?}", s.get_settings_page(), r.first().map(|h| h.label.clone())))
+            }),
+        ),
+        DoC(
+            "shortcuts: click Tap tempo's keys",
+            Box::new(|a, ctl| {
+                let row = row_of(&ctl.borrow(), "transport.tap_tempo");
+                a.global::<Studio>().invoke_shortcut_record(row);
+            }),
+        ),
+        Check(
+            "shortcuts: Tap tempo is waiting for keys",
+            Box::new(|c, a| {
+                (a.global::<Studio>().get_shortcut_recording()
+                    && rows(a).iter().any(|r| r.label == "Tap tempo" && r.recording)
+                    && c.settings.keys.recording == Some("transport.tap_tempo"))
+                .then_some(())
+                .ok_or(format!("recording {:?}", c.settings.keys.recording))
+            }),
+        ),
+        Do("shortcuts: press ⇧⌘Y", Box::new(|a| key(a, "y", true, true))),
+        Check(
+            "shortcuts: Tap tempo is ⇧⌘Y, saved as a change, Reset to defaults lit",
+            Box::new(|c, a| {
+                let want = vec!["primary+shift+y".to_string()];
+                (chords(c, "transport.tap_tempo") == want
+                    && c.settings.prefs.shortcuts.get("transport.tap_tempo") == Some(&want)
+                    && c.settings.keys.recording.is_none()
+                    && a.global::<Studio>().get_shortcut_reset_enabled()
+                    && c.settings.open)
+                    .then_some(())
+                    .ok_or(format!("tap {:?} saved {:?}", chords(c, "transport.tap_tempo"), c.settings.prefs.shortcuts))
+            }),
+        ),
+        DoC(
+            "shortcuts: record Loop on / off, press Space (Play / pause has it in the same context)",
+            Box::new(|a, ctl| {
+                let row = row_of(&ctl.borrow(), "transport.loop_toggle");
+                a.global::<Studio>().invoke_shortcut_record(row);
+                key(a, " ", false, false);
+            }),
+        ),
+        Check(
+            "shortcuts: Space is Loop on / off now; Play / pause is Unmapped",
+            Box::new(|c, a| {
+                let play_unmapped = rows(a).iter().any(|r| r.label == "Play / pause" && slint::Model::row_count(&r.chords) == 0);
+                (chords(c, "transport.loop_toggle") == ["space"] && chords(c, "transport.play_pause").is_empty() && play_unmapped)
+                    .then_some(())
+                    .ok_or(format!("loop {:?} play {:?}", chords(c, "transport.loop_toggle"), chords(c, "transport.play_pause")))
+            }),
+        ),
+        DoC(
+            "shortcuts: record Cut selected clips, then Escape",
+            Box::new(|a, ctl| {
+                let row = row_of(&ctl.borrow(), "clip.cut");
+                a.global::<Studio>().invoke_shortcut_record(row);
+                key(a, Key::Escape, false, false);
+            }),
+        ),
+        Check(
+            "shortcuts: Escape cancelled the recording only (Cut keeps ⌘X, Settings stays open)",
+            Box::new(|c, _| {
+                (chords(c, "clip.cut") == ["primary+x"] && c.settings.keys.recording.is_none() && c.settings.open)
+                    .then_some(())
+                    .ok_or(format!("cut {:?} open {}", chords(c, "clip.cut"), c.settings.open))
+            }),
+        ),
+        DoC(
+            "shortcuts: × on Undo last action",
+            Box::new(|a, ctl| {
+                let row = row_of(&ctl.borrow(), "edit.undo");
+                a.global::<Studio>().invoke_shortcut_clear(row);
+            }),
+        ),
+        Check(
+            "shortcuts: Undo is unmapped and ⌘Z does nothing",
+            Box::new(|c, _| {
+                let z = dstudio_core::keymap::Chord::parse("primary+z").unwrap();
+                (chords(c, "edit.undo").is_empty() && c.settings.keys.map.resolve(&z, &dstudio_core::keymap::Context::default()).is_none())
+                    .then_some(())
+                    .ok_or(format!("undo {:?}", chords(c, "edit.undo")))
+            }),
+        ),
+        Do("shortcuts: search \"loop\"", Box::new(|a| a.global::<Studio>().invoke_shortcuts_search("loop".into()))),
+        Check(
+            "shortcuts: only Transport › Loop selection and Loop on / off are left",
+            Box::new(|_, a| {
+                let labels: Vec<String> = rows(a).iter().map(|r| r.label.to_string()).collect();
+                (labels == ["Transport", "Loop selection", "Loop on / off"]).then_some(()).ok_or(format!("{labels:?}"))
+            }),
+        ),
+        Do("shortcuts: search \"zzz\"", Box::new(|a| a.global::<Studio>().invoke_shortcuts_search("zzz".into()))),
+        Check(
+            "shortcuts: nothing matches",
+            Box::new(|_, a| (rows(a).is_empty() && a.global::<Studio>().get_shortcut_empty()).then_some(()).ok_or("rows left".into())),
+        ),
+        Do(
+            "shortcuts: clear the search, Reset to defaults",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_shortcuts_search("".into());
+                s.invoke_shortcuts_reset();
+            }),
+        ),
+        Check(
+            "shortcuts: every default is back and nothing is saved",
+            Box::new(|c, a| {
+                (c.settings.keys.map == crate::app_keymap()
+                    && c.settings.prefs.shortcuts.is_empty()
+                    && !a.global::<Studio>().get_shortcut_reset_enabled()
+                    && !rows(a).is_empty())
+                .then_some(())
+                .ok_or(format!("saved {:?}", c.settings.prefs.shortcuts))
+            }),
+        ),
+        DoC("shortcuts: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
+    ]
+}
+
 fn automation_lane_steps() -> Vec<Step> {
     use Step::*;
     use dstudio_core::{AutoPoint, AutomationLane, AutomationTarget};
@@ -15466,6 +15621,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(zoom_fit_steps());
     all.extend(key_change_steps());
     all.extend(automation_lane_steps());
+    all.extend(shortcut_page_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());
