@@ -16,7 +16,7 @@ use crate::device_window::Kit;
 use crate::{PanelCanvas, PanelGrip, PanelPath, PanelText, PanelZone};
 use dstudio_core::Device;
 use dstudio_core::builtin::DeviceDef;
-use slint::{Color, ModelRc, SharedString, VecModel};
+use slint::{Color, ModelRc, VecModel};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -57,6 +57,10 @@ pub(crate) struct DynSpec {
     pub detector: bool,
     /// Default window (s).
     pub span: f32,
+    /// A second, solid line (Mastering Limiter's ceiling): parameter and pill name.
+    pub line2: Option<(&'static str, &'static str)>,
+    /// A short-term loudness lane above the reduction lane (Mastering Limiter).
+    pub loudness: bool,
 }
 
 pub(crate) fn spec(id: &str) -> Option<DynSpec> {
@@ -69,28 +73,77 @@ pub(crate) fn spec(id: &str) -> Option<DynSpec> {
         pre_gain,
         detector,
         span,
+        line2: None,
+        loudness: false,
     };
     Some(match id {
         "compressor" => s(0.0, -36.0, 6.0, "threshold", "Threshold", true, true, 10.0),
         "limiter" => s(12.0, -30.0, 6.0, "ceiling", "Ceiling", false, false, 4.0),
         "gate" => s(12.0, -60.0, 12.0, "threshold", "Threshold", false, false, 4.0),
         "glue-compressor" => s(0.0, -48.0, 6.0, "threshold", "Threshold", false, true, 4.0),
+        "character-compressor" => s(0.0, -60.0, 6.0, "threshold", "Threshold", false, true, 4.0),
+        "mastering-limiter" => DynSpec {
+            line2: Some(("ceiling", "Ceiling")),
+            loudness: true,
+            ..s(12.0, -36.0, 6.0, "threshold", "Threshold", false, false, 4.0)
+        },
         _ => return None,
     })
 }
 
+/// The loudness lane's span (dB, centred on the target) and the band under it that holds
+/// the reduction lane's caption.
+const LOUD_DB: f32 = 12.0;
+const LOUD_GAP: f32 = 25.0;
+/// Short-term loudness integrates the last 3 s.
+const SHORT_TERM: f64 = 3.0;
+/// Loudness targets (name, LUFS) of the Mastering Limiter's Target picker.
+pub(crate) const TARGETS: [(&str, f32); 3] = [("Streaming", -14.0), ("Broadcast", -23.0), ("Hot", -9.0)];
+
 /// The lane and plot geometry of a display h pt high (plot-local, reference points):
-/// (lane height, plot top, plot height, px per dB).
-pub(crate) fn geometry(sp: &DynSpec, display_h: f32) -> (f32, f32, f32, f32) {
-    let avail = display_h - PAD * 2.0 - CAP_H - LANE_GAP - TIME_H;
-    let per_db = avail / (-GR_FLOOR + (sp.top - sp.bottom));
+/// (reduction lane top, lane height, plot top, plot height, px per dB). A loudness lane,
+/// when there is one, fills 0 .. lane top - LOUD_GAP.
+pub(crate) fn geometry(sp: &DynSpec, display_h: f32) -> (f32, f32, f32, f32, f32) {
+    let loud = if sp.loudness { LOUD_DB } else { 0.0 };
+    let avail = display_h - PAD * 2.0 - CAP_H - LANE_GAP - TIME_H - if sp.loudness { LOUD_GAP } else { 0.0 };
+    let per_db = avail / (loud - GR_FLOOR + (sp.top - sp.bottom));
+    let off = if sp.loudness { per_db * loud + LOUD_GAP } else { 0.0 };
     let lane = per_db * -GR_FLOOR;
-    (lane, lane + LANE_GAP, per_db * (sp.top - sp.bottom), per_db)
+    (off, lane, off + lane + LANE_GAP, per_db * (sp.top - sp.bottom), per_db)
+}
+
+/// Short-term level (dB, unweighted mean power over the last 3 s) of the output at each of
+/// `times`, from the samples after `from`; None while nothing was heard.
+fn short_term(h: &VecDeque<Sample>, from: f64, times: &[f64]) -> Vec<Option<f32>> {
+    let (mut t, mut sum) = (Vec::with_capacity(h.len()), Vec::with_capacity(h.len() + 1));
+    sum.push(0.0f64);
+    for s in h.iter().filter(|s| s.0 >= from) {
+        t.push(s.0);
+        let p = if s.2 > -100.0 { 10f64.powf(s.2 as f64 / 10.0) } else { 0.0 };
+        sum.push(sum[sum.len() - 1] + p);
+    }
+    times
+        .iter()
+        .map(|&at| {
+            let hi = t.partition_point(|x| *x <= at);
+            let lo = t.partition_point(|x| *x < at - SHORT_TERM);
+            if hi <= lo {
+                return None;
+            }
+            let mean = (sum[hi] - sum[lo]) / (hi - lo) as f64;
+            (mean > 1e-10).then(|| (10.0 * mean.log10()) as f32)
+        })
+        .collect()
 }
 
 /// A gain-reduction amount as the caption reads it: "0.0", "−3.2".
 fn gr_text(gr: f32) -> String {
     if gr < -0.05 { format!("\u{2212}{:.1}", -gr) } else { "0.0".into() }
+}
+
+/// A level with one decimal and a true minus: "−14.2", "0.3".
+fn db_tenth(db: f32) -> String {
+    if db < -0.05 { format!("\u{2212}{:.1}", -db) } else { format!("{:.1}", db.max(0.0)) }
 }
 
 fn db_rung(db: f32) -> String {
@@ -125,8 +178,8 @@ impl Controller {
         let (_, _, dw, dh) = k.display;
         let (l, _, r, _) = k.plot;
         let pw = (dw - l - r) * Z;
-        let (lane_h, plot_t, plot_h, per_db) = geometry(&sp, dh);
-        let (lane_h, plot_t, plot_h) = (lane_h * Z, plot_t * Z, plot_h * Z);
+        let (off, lane_h, plot_t, plot_h, per_db) = geometry(&sp, dh);
+        let (off, lane_h, plot_t, plot_h) = (off * Z, lane_h * Z, plot_t * Z, plot_h * Z);
         let span = self.win_span(d.id, &sp);
         let held = self.win_held(d.id);
         let hist = self.win_history(d.id);
@@ -135,7 +188,7 @@ impl Controller {
         let mut texts: Vec<PanelText> = Vec::new();
 
         let db_y = |db: f32| plot_t + ((sp.top - db) / (sp.top - sp.bottom)).clamp(0.0, 1.0) * plot_h;
-        let gr_y = |gr: f32| (gr / GR_FLOOR).clamp(0.0, 1.0) * lane_h;
+        let gr_y = |gr: f32| off + (gr / GR_FLOOR).clamp(0.0, 1.0) * lane_h;
         let grid = if span <= 1.0 {
             0.25
         } else if span <= 4.0 {
@@ -167,32 +220,76 @@ impl Controller {
         let gr_now = pts.last().map_or(0.0, |s| s.3);
         let gr_peak = pts.iter().map(|s| s.3).fold(0.0f32, f32::min);
 
-        // Caption: the reduction now, then its peak over the window.
-        let base = -(CAP_H - 6.0) * Z;
+        // Caption: the reduction now, then its peak (the limiter's maximum) over the window.
+        let base = off - (CAP_H - 6.0) * Z;
         let label = "Gain Reduction";
         texts.push(PanelText { weight: 700, ..text(2.0 * Z, base, 120.0 * Z, label, MUTE_TEXT, 12.0 * Z, 0) });
         let vx = 2.0 * Z + (crate::text_measure::value_width(label) * 1.2 + 12.0) * Z;
         let value = format!("{} dB", gr_text(gr_now));
         texts.push(text(vx, base - 0.3 * Z, 80.0 * Z, value.clone(), white(0.92), 13.0 * Z, 0));
         let px = vx + (crate::text_measure::value_width(&value) * 1.3 + 12.0) * Z;
-        texts.push(text(px, base, 80.0 * Z, format!("Peak {}", gr_text(gr_peak)), white(0.55), 11.0 * Z, 0));
+        let peak = if sp.loudness { "Max" } else { "Peak" };
+        texts.push(text(px, base, 80.0 * Z, format!("{peak} {}", gr_text(gr_peak)), white(0.55), 11.0 * Z, 0));
 
-        // The lane: a light box, time rules, the reduction filled down from its top edge.
+        // A lane: a light box with time rules.
         let r = LANE_R * Z;
-        let lane_box = format!(
-            "M{r:.1} 0 L{:.1} 0 Q{pw:.1} 0 {pw:.1} {r:.1} L{pw:.1} {:.1} Q{pw:.1} {lane_h:.1} {:.1} {lane_h:.1} L{r:.1} {lane_h:.1} Q0 {lane_h:.1} 0 {:.1} L0 {r:.1} Q0 0 {r:.1} 0 Z",
-            pw - r,
-            lane_h - r,
-            pw - r,
-            lane_h - r
-        );
-        paths.push(fill(lane_box.clone(), white(0.035)));
-        let mut sec = grid;
-        while sec < span - 1e-3 {
-            let x = ((1.0 - sec / span) * pw).round() + 0.5;
-            paths.push(stroke(format!("M{x:.1} 0 L{x:.1} {lane_h:.1}"), white(0.04), 1.0));
-            sec += grid;
+        let lane_box = |top: f32, h: f32| {
+            let b = top + h;
+            format!(
+                "M{r:.1} {top:.1} L{:.1} {top:.1} Q{pw:.1} {top:.1} {pw:.1} {:.1} L{pw:.1} {:.1} Q{pw:.1} {b:.1} {:.1} {b:.1} L{r:.1} {b:.1} Q0 {b:.1} 0 {:.1} L0 {:.1} Q0 {top:.1} {r:.1} {top:.1} Z",
+                pw - r,
+                top + r,
+                b - r,
+                pw - r,
+                b - r,
+                top + r
+            )
+        };
+        let time_rules = |paths: &mut Vec<PanelPath>, top: f32, h: f32, ink: f32| {
+            let mut sec = grid;
+            while sec < span - 1e-3 {
+                let x = ((1.0 - sec / span) * pw).round() + 0.5;
+                paths.push(stroke(format!("M{x:.1} {top:.1} L{x:.1} {:.1}", top + h), white(ink), 1.0));
+                sec += grid;
+            }
+        };
+
+        // The loudness lane: short-term loudness of the output against the target.
+        if sp.loudness {
+            let target = TARGETS[self.win_target(d.id)].1;
+            let loud_h = LOUD_DB * per_db * Z;
+            let ly = |db: f32| ((target + LOUD_DB / 2.0 - db) / LOUD_DB).clamp(0.0, 1.0) * loud_h;
+            let lb = lane_box(0.0, loud_h);
+            paths.push(fill(lb.clone(), white(0.035)));
+            time_rules(&mut paths, 0.0, loud_h, 0.04);
+            for db in [target + 6.0, target, target - 6.0] {
+                texts.push(text(-8.0 * Z, ly(db), 40.0 * Z, db_rung(db), white(if db == target { 0.7 } else { 0.3 }), 11.0 * Z, 2));
+            }
+            let ty = ly(target).round() + 0.5;
+            paths.push(stroke(crate::device_canvas::dashed(&[(0.0, ty), (pw, ty)], 3.0 * Z, 3.0 * Z), rgba(accent, 0.7), 1.0));
+            let from = self.win_loud_from(d.id);
+            let times: Vec<f64> = pts.iter().map(|s| s.0).collect();
+            let st = hist.map(|h| short_term(h, from, &times)).unwrap_or_default();
+            let loud_now = st.last().copied().flatten();
+            let line: Vec<(f32, f32, bool)> =
+                pts.iter().zip(&st).map(|(s, v)| (x_of(s.0), ly(v.unwrap_or(-120.0)), v.is_some_and(|v| v > -70.0))).collect();
+            paths.push(stroke(runs(&line), accent, 1.5 * Z));
+            paths.push(stroke(lb, white(0.06), 1.0));
+            let cap = -(CAP_H - 6.0) * Z;
+            texts.push(PanelText { weight: 700, ..text(2.0 * Z, cap, 120.0 * Z, "Loudness", MUTE_TEXT, 12.0 * Z, 0) });
+            let lx = 2.0 * Z + (crate::text_measure::value_width("Loudness") * 1.2 + 12.0) * Z;
+            let lv = loud_now.map_or("\u{2014}".to_string(), |v| format!("{} LUFS", db_tenth(v)));
+            texts.push(text(lx, cap - 0.3 * Z, 90.0 * Z, lv.clone(), white(0.92), 13.0 * Z, 0));
+            let tx = lx + (crate::text_measure::value_width(&lv) * 1.3 + 12.0) * Z;
+            let tp = pts.iter().map(|s| s.2).fold(f32::MIN, f32::max);
+            let tp = if tp > -100.0 { db_tenth(tp) } else { "\u{2014}".into() };
+            texts.push(text(tx, cap, 90.0 * Z, format!("True Peak {tp}"), white(0.55), 11.0 * Z, 0));
         }
+
+        // The reduction lane, the reduction filled down from its top edge.
+        let lb = lane_box(off, lane_h);
+        paths.push(fill(lb.clone(), white(0.035)));
+        time_rules(&mut paths, off, lane_h, 0.04);
         for g in [6.0, 12.0] {
             let y = gr_y(-g).round() + 0.5;
             paths.push(stroke(format!("M0 {y:.1} L{pw:.1} {y:.1}"), white(0.05), 1.0));
@@ -202,15 +299,15 @@ impl Controller {
         }
         if pts.len() > 1 {
             let line: Vec<(f32, f32)> = pts.iter().map(|s| (x_of(s.0), gr_y(s.3))).collect();
-            let mut area = format!("M{:.1} 0 ", line[0].0);
+            let mut area = format!("M{:.1} {off:.1} ", line[0].0);
             for (x, y) in &line {
                 area.push_str(&format!("L{x:.1} {y:.1} "));
             }
-            area.push_str(&format!("L{:.1} 0 Z", line[line.len() - 1].0));
+            area.push_str(&format!("L{:.1} {off:.1} Z", line[line.len() - 1].0));
             paths.push(fill(area, rgba(accent, 0.55)));
             paths.push(stroke(crate::device_canvas::path(&line), accent, 1.25 * Z));
         }
-        paths.push(stroke(lane_box, white(0.06), 1.0));
+        paths.push(stroke(lb, white(0.06), 1.0));
 
         // The level plot: time rules, the ladder, then the traces.
         let mut sec = grid;
@@ -281,17 +378,22 @@ impl Controller {
         let sidechain = d.sidechain.is_some();
         let thresh_ink = Color::from_argb_u8(140, 200, 198, 188);
         let detector_ink = Color::from_argb_u8(115, 200, 198, 188);
+        let ceiling_ink = Color::from_argb_u8(120, 200, 198, 188);
         let mut entries: Vec<(&str, u8)> = vec![("Input", 0), ("Output", 1)];
-        if sp.pre_gain {
+        if sp.loudness {
+            entries.extend([(sp.line_name, 5), ("Ceiling", 6), ("Short-term", 7), ("Target", 8)]);
+        } else if sp.pre_gain {
             entries.push(("Pre-Gain", 2));
         }
-        entries.push(("Reduction", 3));
-        if sp.detector && def.id == "compressor" {
-            entries.push(("Detector", 4));
-        }
-        entries.push((sp.line_name, 5));
-        if sp.detector && def.id != "compressor" {
-            entries.push(("Detector", 4));
+        if !sp.loudness {
+            entries.push(("Reduction", 3));
+            if sp.detector && def.id == "compressor" {
+                entries.push(("Detector", 4));
+            }
+            entries.push((sp.line_name, 5));
+            if sp.detector && def.id != "compressor" {
+                entries.push(("Detector", 4));
+            }
         }
         let mut x = 0.0;
         for (name, kind) in entries {
@@ -309,6 +411,11 @@ impl Controller {
                     rgba(detector_ink, 0.45 * a),
                     1.0,
                 )),
+                6 => paths.push(stroke(line, ceiling_ink, 1.5 * Z)),
+                7 => paths.push(stroke(line, accent, 1.5 * Z)),
+                8 => {
+                    paths.push(stroke(crate::device_canvas::dashed(&[(x, ly), (x + glyph, ly)], 3.0 * Z, 3.0 * Z), rgba(accent, 0.7), 1.0))
+                }
                 _ => paths.push(stroke(crate::device_canvas::dashed(&[(x, ly), (x + glyph, ly)], 6.0 * Z, 5.0 * Z), thresh_ink, 1.5 * Z)),
             }
             let w = crate::text_measure::value_width(name) * 0.9 * Z;
@@ -332,25 +439,37 @@ impl Controller {
             texts.push(text(pw - 8.0 * Z - 60.0 * Z, plot_t + 12.0 * Z, 60.0 * Z, "Held", accent, 9.0 * Z, 2));
         }
 
-        // The dashed line and its grip pill at the oldest edge; dragging the band moves it.
-        let p = def.param(sp.line);
-        let v = p.map_or(0.0, |p| self.panel_value(d, def, p));
-        let ly = db_y(v.clamp(sp.bottom, sp.top)).round() + 0.5;
-        paths.push(stroke(crate::device_canvas::dashed(&[(0.0, ly), (pw, ly)], 6.0 * Z, 5.0 * Z), thresh_ink, 1.5 * Z));
-        let value: SharedString = p.map_or_else(String::new, |p| def.text(d, p, v)).into();
-        let grips = vec![PanelGrip { x: 6.0 * Z, y: ly, anchor: 0, label: sp.line_name.into(), value, hot: false, plain: false }];
-        let index = def.index_of(sp.line).map_or(-1, |i| i as i32);
-        let range = p.map_or(1.0, |p| (p.max - p.min).max(1e-3));
-        let zone = PanelZone {
-            x: 0.0,
-            y: ly - 8.0 * Z,
-            w: pw,
-            h: 16.0 * Z,
-            param_x: -1,
-            param_y: index,
-            rate_x: 0.0,
-            rate_y: 1.0 / (per_db * Z * range),
-        };
+        // The lines (the solid ceiling first, then the dashed threshold), each with a grip
+        // pill from the oldest edge; dragging a line's band moves it.
+        let mut grips = Vec::new();
+        let mut zones = Vec::new();
+        let mut gx = 6.0 * Z;
+        let lines = sp.line2.map(|l| (l, true)).into_iter().chain([((sp.line, sp.line_name), false)]);
+        for ((id, name), solid) in lines {
+            let p = def.param(id);
+            let v = p.map_or(0.0, |p| self.panel_value(d, def, p));
+            let ly = db_y(v.clamp(sp.bottom, sp.top)).round() + 0.5;
+            if solid {
+                paths.push(stroke(format!("M0 {ly:.1} L{pw:.1} {ly:.1}"), ceiling_ink, 1.5 * Z));
+            } else {
+                paths.push(stroke(crate::device_canvas::dashed(&[(0.0, ly), (pw, ly)], 6.0 * Z, 5.0 * Z), thresh_ink, 1.5 * Z));
+            }
+            let value: String = p.map_or_else(String::new, |p| def.text(d, p, v));
+            let gw = (30.0 + crate::text_measure::value_width(name) + crate::text_measure::value_width(&value) * 1.1) * Z;
+            grips.push(PanelGrip { x: gx, y: ly, anchor: 0, label: name.into(), value: value.into(), hot: false, plain: false });
+            gx += gw + 10.0 * Z;
+            let range = p.map_or(1.0, |p| (p.max - p.min).max(1e-3));
+            zones.push(PanelZone {
+                x: 0.0,
+                y: ly - 8.0 * Z,
+                w: pw,
+                h: 16.0 * Z,
+                param_x: -1,
+                param_y: def.index_of(id).map_or(-1, |i| i as i32),
+                rate_x: 0.0,
+                rate_y: 1.0 / (per_db * Z * range),
+            });
+        }
         PanelCanvas {
             visible: true,
             w: pw,
@@ -358,7 +477,7 @@ impl Controller {
             paths: model(paths),
             texts: model(texts),
             grips: model(grips),
-            zones: model(vec![zone]),
+            zones: model(zones),
             label: label.into(),
             value: value_of(&pts).into(),
             ..Default::default()
@@ -375,7 +494,9 @@ impl Controller {
         let out_y = |db: f32| m + (db / -RANGE).clamp(0.0, 1.0) * s;
         let num = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
         let face = def.layout.faces.first().map(|f| f.1);
-        let Some((law, at, knee)) = face.and_then(|f| crate::device_panel::face_law(f, num)) else { return PanelCanvas::default() };
+        let Some((law, at, knee)) = face.and_then(|f| crate::device_panel::face_law(f, num)).or_else(|| behavior_law(def, d)) else {
+            return PanelCanvas::default();
+        };
         let mut paths = Vec::new();
         for i in 1..4 {
             let q = m + i as f32 / 4.0 * s;
@@ -407,6 +528,33 @@ impl Controller {
     }
 }
 
+/// The static curve a device's behaviour computes (Character Compressor's models), as a law
+/// over all input levels: unity below the computed span, its last slope above it.
+#[allow(clippy::type_complexity)]
+fn behavior_law(def: &DeviceDef, d: &Device) -> Option<(Box<dyn Fn(f32) -> f32>, f32, (f32, f32))> {
+    let t = dstudio_core::builtin::behavior(def).and_then(|b| (b.transfer)(def, d))?;
+    let pts = t.points;
+    if pts.len() < 2 {
+        return None;
+    }
+    let at = def.param("threshold").map_or(t.bend.0, |p| def.value(d, p));
+    let law = move |x: f32| {
+        let (first, last) = (pts[0], pts[pts.len() - 1]);
+        if x <= first.0 {
+            return x + (first.1 - first.0);
+        }
+        if x >= last.0 {
+            let prev = pts[pts.len() - 2];
+            let slope = (last.1 - prev.1) / (last.0 - prev.0).max(1e-6);
+            return last.1 + slope * (x - last.0);
+        }
+        let i = pts.partition_point(|p| p.0 < x).clamp(1, pts.len() - 1);
+        let (a, b) = (pts[i - 1], pts[i]);
+        a.1 + (b.1 - a.1) * (x - a.0) / (b.0 - a.0).max(1e-6)
+    };
+    Some((Box::new(law), at, t.bend))
+}
+
 /// The accessible value of the display: the reduction now.
 fn value_of(pts: &[Sample]) -> String {
     format!("{} dB", gr_text(pts.last().map_or(0.0, |s| s.3)))
@@ -431,7 +579,8 @@ mod tests {
     #[test]
     fn one_px_per_db_serves_lane_and_plot() {
         let sp = spec("compressor").unwrap();
-        let (lane, plot_t, plot_h, per_db) = geometry(&sp, 394.0);
+        let (off, lane, plot_t, plot_h, per_db) = geometry(&sp, 394.0);
+        assert_eq!(off, 0.0);
         assert!((lane - 101.7).abs() < 0.2, "{lane}");
         assert!((plot_h - 203.3).abs() < 0.2, "{plot_h}");
         assert!((plot_t - lane - 20.0).abs() < 1e-3);

@@ -79,6 +79,10 @@ pub(crate) const ACT_HOLD: i32 = 8;
 pub(crate) const ACT_SEED: i32 = 9;
 /// Dynamics windows: the history's length (value: index into 1 s, 4 s, 10 s).
 pub(crate) const ACT_SPAN: i32 = 10;
+/// Mastering Limiter: the loudness target (value: index into device_window_dynamics::TARGETS).
+pub(crate) const ACT_TARGET: i32 = 11;
+/// Mastering Limiter: restart the loudness measurement.
+pub(crate) const ACT_LOUD_RESET: i32 = 12;
 const PILL_GHOST: i32 = 6;
 /// Character Mod's Mode parameter of each circuit (Ensemble has none).
 const CM_MODES: [Option<&str>; 11] = dstudio_core::builtin::character_mod::MODE_PARAMS;
@@ -87,6 +91,15 @@ const PILL_GHOST_LATCH: i32 = 7;
 pub(crate) const MENU_BANDS: i32 = -3;
 /// Panel-menu code of the analyser view picker (Character EQ).
 pub(crate) const MENU_ANALYZER: i32 = -4;
+/// Panel-menu code of the loudness target picker (Mastering Limiter).
+pub(crate) const MENU_TARGET: i32 = -5;
+
+use crate::device_window_dynamics::TARGETS;
+
+/// Character Compressor models (its `model` choices).
+const CC_CLEAN: i32 = 0;
+const CC_OPTO: i32 = 4;
+const CC_RMS_VCA: i32 = 5;
 
 /// Devices with an expanded window.
 pub(crate) fn has_window(def: &DeviceDef) -> bool {
@@ -137,6 +150,7 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         // The level-history family: the plot's ladder in a 52 pt column, the caption band above.
         "compressor" | "limiter" | "gate" => field_kit(WIN_W, 394.0, 52.0, 6.0),
         "glue-compressor" => field_kit(WIN_W, 282.0, 52.0, 6.0),
+        "character-compressor" | "mastering-limiter" => field_kit(WIN_W, 342.0, 52.0, 6.0),
         _ => eq(56.0, 394.0),
     }
 }
@@ -169,6 +183,9 @@ pub(crate) struct WinUi {
     /// Level histories of the open dynamics windows, and the window each shows (s).
     history: HashMap<DeviceId, std::collections::VecDeque<crate::device_window_dynamics::Sample>>,
     span: HashMap<DeviceId, f32>,
+    /// Mastering Limiter: loudness target per window, and where its measurement restarts (s).
+    target: HashMap<DeviceId, usize>,
+    loud_from: HashMap<DeviceId, f64>,
     /// Start of the histories' clock.
     epoch: Option<Instant>,
 }
@@ -523,6 +540,8 @@ enum Item {
     Pills(&'static str, Vec<(&'static str, f32)>, &'static str, f32),
     /// Pill row of window actions: action, labels, selected index, name, width, inert.
     ActionPills(i32, Vec<&'static str>, usize, &'static str, f32, bool),
+    /// One unlit pill that runs a window action: action, label, name, width.
+    Button(i32, &'static str, &'static str, f32),
     /// Fixed blank (keeps a column's width).
     Blank(f32),
 }
@@ -534,6 +553,7 @@ impl Item {
             Item::Toggle(..) => 56.0,
             Item::ToggleW(.., w) => *w,
             Item::Action(.., w) => *w,
+            Item::Button(.., w) => *w,
             Item::Picker(_, _, _, w, _) => *w,
             Item::Pills(.., w) => *w,
             Item::ActionPills(_, _, _, _, w, _) => *w,
@@ -821,6 +841,12 @@ impl Controller {
                         b.pill(PILL_ACTION, action, 1, x + (w - pw) / 2.0, top + row.pill, pw, &label, true);
                         b.name(x, w, row.name_y(), name, false);
                     }
+                    Item::Button(action, label, name, w) => {
+                        let pw = pill_w(label);
+                        b.rect(BOX_TRACK, x + (w - pw - 4.0) / 2.0, top + row.pill - 2.0, pw + 4.0, 28.0);
+                        b.pill(PILL_ACTION, action, 1, x + (w - pw) / 2.0, top + row.pill, pw, label, false);
+                        b.name(x, w, row.name_y(), name, false);
+                    }
                     Item::Picker(param, label, name, w, inert) => {
                         let p = b.pill(PILL_PICKER, param, 0, x + w / 2.0, top + row.pill, 0.0, &label, false);
                         p.inert = inert;
@@ -1085,6 +1111,32 @@ impl Controller {
         self.devices.wins.span.get(&id).copied().unwrap_or(sp.span)
     }
 
+    pub(crate) fn win_target(&self, id: DeviceId) -> usize {
+        self.devices.wins.target.get(&id).copied().unwrap_or(0).min(TARGETS.len() - 1)
+    }
+
+    /// Where the loudness measurement starts (history clock, s).
+    pub(crate) fn win_loud_from(&self, id: DeviceId) -> f64 {
+        self.devices.wins.loud_from.get(&id).copied().unwrap_or(f64::MIN)
+    }
+
+    /// Loudness target menu rows (panel-menu code MENU_TARGET).
+    pub(crate) fn win_target_rows(&self, device: DeviceId) -> crate::device_mod::MenuRows {
+        let cur = self.win_target(device);
+        TARGETS
+            .iter()
+            .enumerate()
+            .map(|(i, (name, lufs))| {
+                (
+                    format!("{name}  \u{2212}{:.0} LUFS", -lufs),
+                    if i == cur { "\u{2713}".to_string() } else { String::new() },
+                    Some(crate::devices::MenuPick::Window(device, ACT_TARGET, i as i32)),
+                    false,
+                )
+            })
+            .collect()
+    }
+
     pub(crate) fn win_held(&self, id: DeviceId) -> bool {
         self.devices.wins.held.contains(&id)
     }
@@ -1102,6 +1154,18 @@ impl Controller {
         self.engine.transport().playing
     }
 
+    /// The 1s / 4s / 10s pills, right-aligned at `right`; returns their left edge.
+    fn win_span_pills(&self, b: &mut Builder, span: f32, right: f32) -> f32 {
+        let widths = [33.2, 36.1, 40.8];
+        let left = right - widths.iter().sum::<f32>() - 2.0 * 8.0;
+        let mut x = left;
+        for (i, (s, w)) in crate::device_window_dynamics::SPANS.iter().zip(widths).enumerate() {
+            b.pill(PILL_GHOST, ACT_SPAN, i as i32, x, 10.5, w, &format!("{s:.0}s"), (span - s).abs() < 1e-3);
+            x += w + 8.0;
+        }
+        left
+    }
+
     /// Header and control cards of a level-history window: the window lengths (and the
     /// Compressor's Hold view and style), then the device's controls with its transfer square.
     fn dynamics_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
@@ -1111,27 +1175,39 @@ impl Controller {
         // Header, from the right: the style pills, Hold view, then the window lengths.
         let span = self.win_span(d.id, &sp);
         let mut x = b.w - INSET;
-        if def.id == "compressor" {
-            let style = val("style").round() as i32;
-            let items: Vec<(String, bool, i32)> = ["Clean", "Opto", "Punch", "Smooth"]
-                .iter()
-                .enumerate()
-                .map(|(i, l)| (l.to_string(), style == i as i32, i as i32))
-                .collect();
-            let w = Builder::row_w(&["Clean", "Opto", "Punch", "Smooth"], 8.0);
-            x -= w;
-            b.pill_row(PILL_CHOICE, idx("style"), x, 7.5, &items, 8.0, true);
-            b.rect(BOX_HEADER_RULE, x - 17.0, 11.5, 1.0, 20.0);
-            x -= 34.0 + 77.5;
-            b.pill(PILL_GHOST_LATCH, ACT_HOLD, 0, x, 10.5, 77.5, "Hold view", self.win_held(d.id));
+        // The circuit pills: Compressor's style (then Hold view), Character Compressor's model.
+        let circuit = match def.id {
+            "compressor" => Some("style"),
+            "character-compressor" => Some("model"),
+            "mastering-limiter" => Some("style"),
+            _ => None,
+        };
+        // Character Compressor keeps its window lengths at the right edge.
+        let spans_first = matches!(def.id, "character-compressor" | "mastering-limiter");
+        if spans_first {
+            x = self.win_span_pills(b, span, x);
             b.rect(BOX_HEADER_RULE, x - 17.0, 11.5, 1.0, 20.0);
             x -= 34.0;
         }
-        let widths = [33.2, 36.1, 40.8];
-        x -= widths.iter().sum::<f32>() + 2.0 * 8.0;
-        for (i, (s, w)) in crate::device_window_dynamics::SPANS.iter().zip(widths).enumerate() {
-            b.pill(PILL_GHOST, ACT_SPAN, i as i32, x, 10.5, w, &format!("{s:.0}s"), (span - s).abs() < 1e-3);
-            x += w + 8.0;
+        if let Some(id) = circuit {
+            let cur = val(id).round() as i32;
+            let labels: Vec<&str> = def.param(id).map_or_else(Vec::new, |p| p.choices.to_vec());
+            let items: Vec<(String, bool, i32)> =
+                labels.iter().enumerate().map(|(i, l)| (l.to_string(), cur == i as i32, i as i32)).collect();
+            let w = Builder::row_w(&labels, 8.0);
+            x -= w;
+            b.pill_row(PILL_CHOICE, idx(id), x, 7.5, &items, 8.0, true);
+            b.rect(BOX_HEADER_RULE, x - 17.0, 11.5, 1.0, 20.0);
+            x -= 34.0;
+            if def.id == "compressor" {
+                x -= 77.5;
+                b.pill(PILL_GHOST_LATCH, ACT_HOLD, 0, x, 10.5, 77.5, "Hold view", self.win_held(d.id));
+                b.rect(BOX_HEADER_RULE, x - 17.0, 11.5, 1.0, 20.0);
+                x -= 34.0;
+            }
+        }
+        if !spans_first {
+            self.win_span_pills(b, span, x);
         }
 
         let sidechain = || {
@@ -1187,6 +1263,57 @@ impl Controller {
                 ),
                 (vec![Item::Knob("mix", "Mix", 1, 64.0, false)], 14.0),
             ],
+            "mastering-limiter" => {
+                let target = TARGETS[self.win_target(d.id)].0.to_string();
+                vec![
+                    (vec![Item::Knob("threshold", "Threshold", 2, 64.0, false), Item::Knob("ceiling", "Ceiling", 2, 64.0, false)], 10.0),
+                    (vec![Item::Knob("release", "Release", 1, 64.0, false), Item::ToggleW("auto_release", "Auto", 56.0)], 10.0),
+                    (vec![square], 10.0),
+                    (vec![Item::ToggleW("unity_monitor", "Unity", 64.0), Item::ToggleW("delta_monitor", "Delta", 64.0)], 10.0),
+                    (
+                        vec![
+                            Item::Picker(MENU_TARGET, target, "Target", 104.0, false),
+                            Item::Button(ACT_LOUD_RESET, "Reset", "Loudness", 64.0),
+                        ],
+                        10.0,
+                    ),
+                ]
+            }
+            "character-compressor" => {
+                let model = val("model").round() as i32;
+                let first = if model == CC_OPTO {
+                    let ratio = vec![("Comp", 3.0), ("Limit", 8.0)];
+                    (vec![Item::Knob("threshold", "Threshold", 2, 64.0, false), Item::Pills("ratio", ratio, "Ratio", 112.0)], 10.0)
+                } else {
+                    (vec![Item::Knob("threshold", "Threshold", 2, 64.0, false), Item::Knob("ratio", "Ratio", 2, 64.0, false)], 10.0)
+                };
+                let os = vec![("2x", 0.0), ("4x", 1.0)];
+                let drive =
+                    (vec![Item::Knob("drive", "Drive", 1, 56.0, false), Item::Pills("oversampling", os, "Oversampling", 112.0)], 10.0);
+                let out = (
+                    vec![
+                        Item::Knob("mix", "Mix", 1, 56.0, false),
+                        Item::Knob("makeup", "Makeup", 1, 56.0, false),
+                        Item::ToggleW("auto_gain", "Auto Gain", 64.0),
+                        Item::ToggleW("delta_monitor", "Delta", 64.0),
+                    ],
+                    10.0,
+                );
+                let times = |knee: bool| {
+                    let mut v = Vec::new();
+                    if knee {
+                        v.push(Item::Knob("knee", "Knee", 1, 56.0, false));
+                    }
+                    v.push(Item::Knob("attack", "Attack", 1, 56.0, false));
+                    v.push(Item::Knob("release", "Release", 1, 56.0, false));
+                    (v, 10.0)
+                };
+                match model {
+                    CC_CLEAN => vec![first, times(true), (vec![square], 10.0), out],
+                    CC_OPTO | CC_RMS_VCA => vec![first, (vec![square], 10.0), drive, out],
+                    _ => vec![first, times(false), (vec![square], 10.0), drive, out],
+                }
+            }
             _ => {
                 // The unit is in the column's name: the pills carry the numbers alone.
                 let pills = |id: &'static str| -> Vec<(&'static str, f32)> {
@@ -1221,6 +1348,38 @@ impl Controller {
             sq.y = (row.top() + 4.0) * Z;
             b.square = sq;
         }
+        if matches!(def.id, "character-compressor" | "mastering-limiter") {
+            let rack = Row::rack(row.y + row.h + 12.0);
+            let clusters = if def.id == "mastering-limiter" {
+                let choice = |id: &str| def.param(id).and_then(|p| p.choices.get(val(id).round() as usize)).map_or("", |c| *c).to_string();
+                let os = def
+                    .param("oversampling")
+                    .map_or_else(Vec::new, |p| p.choices.iter().enumerate().map(|(i, c)| (*c, i as f32)).collect());
+                vec![
+                    (vec![Item::Knob("lookahead", "Lookahead", 1, 64.0, false), Item::Knob("attack", "Attack", 1, 56.0, false)], 10.0),
+                    (
+                        vec![
+                            Item::Knob("transient_link", "Transient Link", 2, 80.0, false),
+                            Item::Knob("release_link", "Release Link", 2, 80.0, false),
+                            Item::ToggleW("ms_mode", "Mid-Side", 56.0),
+                        ],
+                        10.0,
+                    ),
+                    (vec![Item::Pills("oversampling", os, "Oversampling", 156.0), Item::ToggleW("true_peak", "True Peak", 56.0)], 10.0),
+                    (
+                        vec![
+                            Item::Picker(idx("dither_bits"), choice("dither_bits"), "Dither", 88.0, false),
+                            Item::Picker(idx("dither_shape"), choice("dither_shape"), "Shape", 88.0, false),
+                        ],
+                        10.0,
+                    ),
+                ]
+            } else {
+                self.character_compressor_rack(d, def)
+            };
+            self.win_card(d, def, b, rack, clusters);
+            return rack.y + rack.h + 16.0;
+        }
         if def.id != "glue-compressor" {
             return row.y + row.h + 16.0;
         }
@@ -1241,6 +1400,90 @@ impl Controller {
             ],
         );
         rack.y + rack.h + 16.0
+    }
+
+    /// Character Compressor's rack card: the Section pills, then the section's controls
+    /// (Detector: release behaviour, lookahead and stereo; Sidechain: the detector's source
+    /// and filters; Level: the slow rider and its weighting bands).
+    fn character_compressor_rack(&self, d: &Device, def: &'static DeviceDef) -> Vec<(Vec<Item>, f32)> {
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let section = self.devices.wins.section.get(&d.id).copied().unwrap_or(0).min(2);
+        let pills = |id: &'static str| -> Vec<(&'static str, f32)> {
+            def.param(id).map_or_else(Vec::new, |p| p.choices.iter().enumerate().map(|(i, c)| (*c, i as f32)).collect())
+        };
+        let head = (vec![Item::ActionPills(ACT_SECTION, vec!["Detector", "Sidechain", "Level"], section, "Section", 220.0, false)], 10.0);
+        match section {
+            1 => vec![
+                head,
+                (vec![Item::Pills("sc_source", pills("sc_source"), "Source", 156.0)], 10.0),
+                (vec![Item::ToggleW("sc_hpf_on", "HPF", 64.0), Item::Knob("sc_hpf_freq", "HPF Freq", 1, 64.0, false)], 10.0),
+                (
+                    vec![
+                        Item::Knob("sc_eq_freq", "Bell Freq", 1, 64.0, false),
+                        Item::Knob("sc_eq_gain", "Bell Gain", 1, 64.0, false),
+                        Item::Knob("sc_eq_q", "Bell Q", 1, 64.0, false),
+                    ],
+                    6.0,
+                ),
+                (vec![Item::ToggleW("sc_listen", "Listen", 64.0)], 10.0),
+            ],
+            2 => {
+                const BANDS: [[&str; 4]; 4] = [
+                    ["level1_enabled", "level1_freq", "level1_q", "level1_weight"],
+                    ["level2_enabled", "level2_freq", "level2_q", "level2_weight"],
+                    ["level3_enabled", "level3_freq", "level3_q", "level3_weight"],
+                    ["level4_enabled", "level4_freq", "level4_q", "level4_weight"],
+                ];
+                let band = self.devices.wins.tame_band.get(&d.id).copied().unwrap_or(0).min(3);
+                let [on, freq, q, weight] = BANDS[band];
+                vec![
+                    head,
+                    (
+                        vec![
+                            Item::ToggleW("level_enabled", "Level", 64.0),
+                            Item::Knob("level_amount", "Amount", 1, 58.0, false),
+                            Item::Knob("level_response", "Response", 1, 58.0, false),
+                            Item::Knob("level_tilt", "Tilt", 1, 58.0, false),
+                        ],
+                        10.0,
+                    ),
+                    (
+                        vec![
+                            Item::ActionPills(ACT_TAME_BAND, vec!["1", "2", "3", "4"], band, "Band", 136.0, false),
+                            Item::ToggleW(on, "Band On", 64.0),
+                            Item::Knob(freq, "Freq", 1, 56.0, false),
+                            Item::Knob(q, "Q", 1, 56.0, false),
+                            Item::Knob(weight, "Weight", 1, 56.0, false),
+                        ],
+                        10.0,
+                    ),
+                ]
+            }
+            _ => {
+                let model = val("model").round() as i32;
+                let release = if matches!(model, CC_OPTO | CC_RMS_VCA) {
+                    vec![Item::Knob("range", "Range", 1, 56.0, false)]
+                } else {
+                    vec![
+                        Item::ToggleW("adapt", "Adapt", 64.0),
+                        Item::Knob("hold", "Hold", 1, 56.0, false),
+                        Item::Knob("range", "Range", 1, 56.0, false),
+                    ]
+                };
+                vec![
+                    head,
+                    (release, 10.0),
+                    (vec![Item::Knob("lookahead", "Lookahead", 1, 64.0, false)], 10.0),
+                    (
+                        vec![
+                            Item::Knob("stereo_link", "Stereo Link", 1, 64.0, false),
+                            Item::Pills("ms_mode", pills("ms_mode"), "M/S Mode", 156.0),
+                        ],
+                        10.0,
+                    ),
+                ]
+            }
+        }
     }
 
     // ------------------------------------------------------------ EQs
@@ -1567,6 +1810,13 @@ impl Controller {
                 let next = p.min + (cur + step).rem_euclid(span) as f32;
                 self.panel_commit(Command::SetDeviceParam { device, param: p.id.into(), value: next });
             }
+            (ACT_TARGET, _) => {
+                self.devices.wins.target.insert(device, value.clamp(0, TARGETS.len() as i32 - 1) as usize);
+            }
+            (ACT_LOUD_RESET, _) => {
+                let now = self.win_now();
+                self.devices.wins.loud_from.insert(device, now);
+            }
             (ACT_SPAN, _) => {
                 let span = crate::device_window_dynamics::SPANS[value.clamp(0, 2) as usize];
                 self.devices.wins.span.insert(device, span);
@@ -1768,7 +2018,7 @@ mod tests {
     #[test]
     fn dynamics_windows_show_levels_and_every_control() {
         use slint::Model;
-        for id in ["compressor", "limiter", "gate", "glue-compressor"] {
+        for id in ["compressor", "limiter", "gate", "glue-compressor", "character-compressor"] {
             let (mut c, did, def) = controller_with(id);
             assert!(has_window(def), "{id}");
             let v = view(&c, did, def);
@@ -1787,6 +2037,68 @@ mod tests {
             c.win_action(did, ACT_SPAN, 2);
             assert_eq!(lit(&c), ["10s"], "{id}");
         }
+    }
+
+    /// Character Compressor: each model lays out its own main card (Opto's Comp / Limit
+    /// pills, Drive and Oversampling for the coloured models), and the Section pills switch
+    /// the rack card; every control sits once inside the face.
+    #[test]
+    fn character_compressor_window_follows_model_and_section() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("character-compressor");
+        let model = def.index_of("model").unwrap() as i32;
+        let check = |c: &Controller, what: &str| {
+            let v = view(c, did, def);
+            assert!((v.h / Z - 640.0).abs() < 0.5, "{what}: {}", v.h / Z);
+            let mut params = std::collections::HashSet::new();
+            for k in v.knobs.iter() {
+                assert!(k.x >= 0.0 && k.x + 40.0 * Z <= v.w && k.y > 0.0 && k.y < v.h, "{what}: {} outside", k.label);
+                assert!(params.insert(k.param), "{what}: {} shown twice", k.label);
+            }
+            for p in v.pills.iter() {
+                assert!(p.x >= 0.0 && p.x + p.w <= v.w, "{what}: pill {} outside", p.label);
+            }
+            knob_names(&v)
+        };
+        assert_eq!(
+            check(&c, "Clean"),
+            ["Threshold", "Ratio", "Knee", "Attack", "Release", "Mix", "Makeup", "Hold", "Range", "Lookahead", "Stereo Link"]
+        );
+        c.win_choice(did, model, 1);
+        assert!(check(&c, "Vari-Mu").contains(&"Drive".to_string()));
+        c.win_choice(did, model, 4);
+        let opto = check(&c, "Opto");
+        assert!(!opto.contains(&"Ratio".to_string()) && !opto.contains(&"Hold".to_string()), "{opto:?}");
+        assert!(view(&c, did, def).pills.iter().any(|p| p.label == "Limit"));
+        c.win_action(did, ACT_SECTION, 1);
+        assert!(check(&c, "Sidechain").contains(&"Bell Q".to_string()));
+        c.win_action(did, ACT_SECTION, 2);
+        let level = check(&c, "Level");
+        assert!(level.contains(&"Weight".to_string()) && level.contains(&"Tilt".to_string()), "{level:?}");
+        c.win_action(did, ACT_TAME_BAND, 3);
+        check(&c, "Level band 4");
+    }
+
+    /// Mastering Limiter: the target picker moves the loudness lane's ladder, the caption
+    /// reads the short-term level of the output, and Reset starts the measurement again.
+    #[test]
+    fn mastering_limiter_measures_loudness_against_the_target() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("mastering-limiter");
+        let texts = |c: &Controller| view(c, did, def).display.texts.iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
+        assert!(texts(&c).contains(&"\u{2212}14".to_string()), "{:?}", texts(&c));
+        c.win_action(did, ACT_TARGET, 1);
+        assert!(texts(&c).contains(&"\u{2212}23".to_string()));
+        assert!(view(&c, did, def).pills.iter().any(|p| p.param == MENU_TARGET && p.label == "Broadcast"));
+        // Four seconds at -14 dB out read as -14.0 short-term.
+        let h: std::collections::VecDeque<_> = (0..240).map(|i| (i as f64 / 60.0, -10.0, -14.0, -2.0)).collect();
+        c.devices.wins.history.insert(did, h);
+        c.devices.wins.epoch = Some(Instant::now() - std::time::Duration::from_secs(4));
+        assert!(texts(&c).iter().any(|t| t == "\u{2212}14.0 LUFS"), "{:?}", texts(&c));
+        c.win_action(did, ACT_LOUD_RESET, 0);
+        assert!(!texts(&c).iter().any(|t| t.ends_with("LUFS")));
+        let ceiling = view(&c, did, def).display.grips.iter().next().unwrap();
+        assert_eq!((ceiling.label.as_str(), ceiling.value.as_str()), ("Ceiling", "\u{2212}1.0 dBTP"));
     }
 
     /// A full ten-second history draws as one line per series, however many samples it holds.
@@ -1808,7 +2120,7 @@ mod tests {
     #[ignore]
     fn bench_dynamics_windows() {
         let n = 500;
-        for id in ["compressor", "limiter", "gate", "glue-compressor"] {
+        for id in ["compressor", "limiter", "gate", "glue-compressor", "character-compressor", "mastering-limiter"] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =
                 (0..630).map(|i| (i as f64 / 60.0, -12.0 + (i as f32 * 0.1).sin() * 6.0, -18.0, -6.0)).collect();

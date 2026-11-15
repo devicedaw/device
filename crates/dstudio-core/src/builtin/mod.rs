@@ -1012,6 +1012,7 @@ pub fn behavior(def: &DeviceDef) -> Option<&'static Behavior> {
         "delay" => Some(&delay::BEHAVIOR),
         "echo" => Some(&echo::BEHAVIOR),
         "grains" => Some(&grains::BEHAVIOR),
+        "mastering-limiter" => Some(&mastering_limiter::BEHAVIOR),
         "reverb" => Some(&reverb::BEHAVIOR),
         _ => None,
     }

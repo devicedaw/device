@@ -39,7 +39,7 @@ pub static MASTERING_LIMITER: DeviceDef = DeviceDef {
             .not_automatable()
             .overlays(STYLE_OVERLAYS)
             .help("Clean is transparent, Loud recovers fastest, Gentle is a single slow stage, Dense leans on the slow stage."),
-        ParamDef::new("lookahead", "Lookahead", 0.1, 5.0, 2.0, LINEAR, "ms", Format::Ms(1))
+        ParamDef::new("lookahead", "Lookahead", 0.1, 5.0, 2.0, LINEAR, "ms", Format::Ms(2))
             .step(0.01)
             .not_automatable()
             .help("How far ahead peaks are seen; longer is smoother, shorter is punchier."),
@@ -154,3 +154,26 @@ pub static MASTERING_LIMITER: DeviceDef = DeviceDef {
     sidechain: false,
     samples: 0,
 };
+
+/// The ceiling reads in dBTP while True Peak limiting is on: "−1.0 dBTP".
+fn text(def: &DeviceDef, d: &Device, p: &ParamDef, v: f32) -> Option<String> {
+    let true_peak = def.param("true_peak").is_some_and(|tp| def.value(d, tp) >= 0.5);
+    (p.id == "ceiling" && true_peak).then(|| if v < -0.05 { format!("\u{2212}{:.1} dBTP", -v) } else { "0.0 dBTP".into() })
+}
+
+pub(super) static BEHAVIOR: Behavior = Behavior { text, ..Behavior::NONE };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ceiling_reads_true_peak_while_limiting_true_peak() {
+        let def = &MASTERING_LIMITER;
+        let mut d = def.instantiate();
+        let ceiling = def.param("ceiling").unwrap();
+        assert_eq!(def.text(&d, ceiling, -1.0), "\u{2212}1.0 dBTP");
+        d.params.insert("true_peak".into(), 0.0);
+        assert!(!def.text(&d, ceiling, -1.0).contains("TP"));
+    }
+}

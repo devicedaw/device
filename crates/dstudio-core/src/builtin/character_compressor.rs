@@ -127,16 +127,16 @@ pub static CHARACTER_COMPRESSOR: DeviceDef = DeviceDef {
         ParamDef::new("release", "Release", 20.0, 8000.0, 200.0, Taper::Linear { skew: 0.3 }, "ms", Format::Custom(TextFn(release_text)))
             .help("How fast reduction lets go."),
         ParamDef::choice("adapt", "Adapt", OFF_ON, 0).help("Program-dependent release: sustained reduction recovers more slowly."),
-        ParamDef::new("hold", "Hold", 0.0, 500.0, 0.0, Taper::Linear { skew: 0.5 }, "ms", Format::Custom(TextFn(release_text)))
+        ParamDef::new("hold", "Hold", 0.0, 500.0, 0.0, Taper::Linear { skew: 0.5 }, "ms", Format::Ms(2))
             .help("Time the reduction is held before it releases."),
-        ParamDef::new("range", "Range", 0.0, 24.0, 24.0, LINEAR, "dB", Format::Db).step(0.1).help("Largest gain reduction allowed."),
+        ParamDef::new("range", "Range", 0.0, 24.0, 24.0, LINEAR, "dB", Format::DbNoPlus).step(0.1).help("Largest gain reduction allowed."),
         ParamDef::new("drive", "Drive", 0.0, 2.0, 1.0, LINEAR, "", Format::Plain(2))
             .help("Amount of the model's saturation; 1 is the model's normal colour."),
         ParamDef::new("mix", "Mix", 0.0, 200.0, 100.0, LINEAR, "%", PCT)
             .help("Blend of dry and compressed signal; above 100% the compression is exaggerated."),
         ParamDef::new("makeup", "Makeup", -12.0, 24.0, 0.0, LINEAR, "dB", Format::Db).step(0.1).help("Gain after compression."),
         ParamDef::choice("auto_gain", "Auto Gain", OFF_ON, 0).help("Adds make-up gain that follows the threshold and ratio."),
-        ParamDef::new("lookahead", "Lookahead", 0.0, 20.0, 0.0, LINEAR, "ms", Format::Time)
+        ParamDef::new("lookahead", "Lookahead", 0.0, 20.0, 0.0, LINEAR, "ms", Format::MsAuto)
             .step(0.1)
             .help("Delays the audio so the detector reacts before peaks arrive (adds latency)."),
         ParamDef::choice("oversampling", "Oversampling", &["2x", "4x"], 0).help("Oversampling of the saturation stage."),

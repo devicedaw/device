@@ -399,24 +399,28 @@ component ButtonCell inherits Rectangle {
 
 // Drag zone of a device field: one or two parameters (horizontal / vertical), Shift fine,
 // Alt-click or double-click resets them.
-component ZoneDrag inherits TouchArea {
+// The pointer is tracked in window coordinates: a zone that follows its line (a threshold,
+// a handle) moves under the pointer while it is dragged.
+export component ZoneDrag inherits TouchArea {
     in property <int> device;
     in property <PanelZone> zone;
     property <length> last-x;
     property <length> last-y;
+    property <length> at-x: self.absolute-position.x + self.mouse-x;
+    property <length> at-y: self.absolute-position.y + self.mouse-y;
     mouse-cursor: root.zone.param-x >= 0 && root.zone.param-y >= 0 ? MouseCursor.move : root.zone.param-x >= 0 ? MouseCursor.ew-resize : MouseCursor.ns-resize;
     function reset() { Studio.panel-reset-xy(root.device, root.zone.param-x, root.zone.param-y); }
     pointer-event(e) => {
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
             if (e.modifiers.alt) { root.reset(); return; }
-            root.last-x = self.mouse-x;
-            root.last-y = self.mouse-y;
+            root.last-x = root.at-x;
+            root.last-y = root.at-y;
             Studio.panel-drag-xy(root.device, root.zone.param-x, root.zone.param-y, 0, 0, 0, root.zone.rate-x, root.zone.rate-y, e.modifiers.shift);
         }
         if (e.kind == PointerEventKind.move && self.pressed) {
-            Studio.panel-drag-xy(root.device, root.zone.param-x, root.zone.param-y, 1, (self.mouse-x - root.last-x) / 1px, (root.last-y - self.mouse-y) / 1px, root.zone.rate-x, root.zone.rate-y, e.modifiers.shift);
-            root.last-x = self.mouse-x;
-            root.last-y = self.mouse-y;
+            Studio.panel-drag-xy(root.device, root.zone.param-x, root.zone.param-y, 1, (root.at-x - root.last-x) / 1px, (root.last-y - root.at-y) / 1px, root.zone.rate-x, root.zone.rate-y, e.modifiers.shift);
+            root.last-x = root.at-x;
+            root.last-y = root.at-y;
         }
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-drag-xy(root.device, root.zone.param-x, root.zone.param-y, 2, 0, 0, root.zone.rate-x, root.zone.rate-y, false); }
         if (e.kind == PointerEventKind.cancel) { Studio.panel-drag-xy(root.device, root.zone.param-x, root.zone.param-y, 3, 0, 0, root.zone.rate-x, root.zone.rate-y, false); }

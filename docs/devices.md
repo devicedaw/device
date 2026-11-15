@@ -65,7 +65,8 @@ flowchart LR
   device has one (`device_window::has_window`; Auto Filter, Channel EQ,
   Character EQ and the plotted-field family: Tremolo, Auto-Panner, Chorus,
   Flanger, Phaser, Ring Mod and Character Mod; and the dynamics family:
-  Compressor, Limiter, Gate and Glue Compressor), otherwise the card itself in a window. A
+  Compressor, Limiter, Gate, Glue Compressor, Character Compressor and Mastering
+  Limiter), otherwise the card itself in a window. A
   window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same
@@ -84,7 +85,15 @@ flowchart LR
   over a dBFS level plot, one pixel per dB in both, with the threshold (or
   ceiling) as a dashed line you drag. Hold view freezes the history. Each
   device's first card carries a transfer square: the static curve of the
-  card's law over −48..0 dB with the knee and the live operating point. The
+  card's law over −48..0 dB with the knee and the live operating point
+  (Character Compressor's comes from its model's computed curve). Character
+  Compressor's rack card switches between Detector, Sidechain and Level
+  sections (`ACT_SECTION`; the Level band pills reuse `ACT_TAME_BAND`).
+  Mastering Limiter's display adds a loudness lane: the output's short-term
+  level (unweighted mean power over 3 s) against the Target picker's level
+  (`MENU_TARGET`: Streaming −14, Broadcast −23, Hot −9 LUFS), restarted by
+  Loudness Reset (`ACT_LOUD_RESET`), and draws its ceiling as a second,
+  solid line with its own grip. The
   meters read `se_builtin_set_metering` / `se_builtin_levels`
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app
