@@ -106,6 +106,31 @@ pub fn parse_bpm(text: &str) -> Option<f64> {
     Some(((v * 100.0).round() / 100.0).clamp(MIN_BPM, MAX_BPM))
 }
 
+/// A key change waiting on the "Change project key?" prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyChange {
+    pub old: ProjectKey,
+    pub new: ProjectKey,
+    /// MIDI clips in the project.
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyChoice {
+    Cancel,
+    Keep,
+    Transpose,
+}
+
+impl KeyChange {
+    /// "Your project has 2 MIDI clips. Transpose them from C Major to D Minor?"
+    pub fn message(&self) -> String {
+        let name = |k: ProjectKey| format!("{} {}", KEY_NAMES[k.root as usize % 12], if k.minor { "Minor" } else { "Major" });
+        let (s, them) = if self.count == 1 { ("", "it") } else { ("s", "them") };
+        format!("Your project has {} MIDI clip{s}. Transpose {them} from {} to {}?", self.count, name(self.old), name(self.new))
+    }
+}
+
 /// The key readout: "C", "F#m"; empty when the project has no key.
 pub fn key_text(key: Option<ProjectKey>) -> String {
     key.map_or(String::new(), |k| format!("{}{}", KEY_NAMES[k.root as usize % 12], if k.minor { "m" } else { "" }))
@@ -349,12 +374,45 @@ impl Controller {
         self.tf.key_menu = false;
     }
 
+    /// A new key for a project that has one and holds MIDI clips asks first ("Change project
+    /// key?"): Transpose MIDI moves the clips' notes to the new key, Don't transpose only changes
+    /// the key, Cancel keeps both. Setting a first key or clearing it never asks.
     fn set_project_key(&mut self, key: Option<ProjectKey>) {
-        if self.project().transport.key != key {
-            self.doc.seal_coalescing();
-            self.execute(Command::SetProjectKey { key });
+        let old = self.project().transport.key;
+        if old != key {
+            let count = dstudio_core::key_change::midi_clip_count(self.project());
+            if let (Some(old), Some(new)) = (old, key)
+                && count > 0
+            {
+                self.key_change = Some(KeyChange { old, new, count });
+                self.tf.key_menu = false;
+            } else {
+                self.doc.seal_coalescing();
+                self.execute(Command::SetProjectKey { key });
+            }
         }
         self.ui_dirty = true;
+    }
+
+    /// The "Change project key?" buttons (Enter is Transpose MIDI, Escape is Cancel).
+    pub fn key_change_choice(&mut self, choice: KeyChoice) {
+        let Some(k) = self.key_change.take() else { return };
+        self.ui_dirty = true;
+        if self.project().transport.key != Some(k.old) {
+            return;
+        }
+        self.doc.seal_coalescing();
+        match choice {
+            KeyChoice::Cancel => {}
+            KeyChoice::Keep => {
+                self.execute(Command::SetProjectKey { key: Some(k.new) });
+            }
+            KeyChoice::Transpose => {
+                let commands = dstudio_core::key_change::transpose_commands(self.project(), k.new);
+                self.execute(Command::Batch { label: "Key Change".into(), commands });
+            }
+        }
+        self.doc.seal_coalescing();
     }
 
     /// Close the Sig and Key popups; true if one was open.

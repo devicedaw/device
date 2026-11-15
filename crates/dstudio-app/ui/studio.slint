@@ -957,6 +957,9 @@ export global Studio {
     callback undo-history-travel(int);
     callback undo-history-close();
     callback updates-close();
+    in property <bool> key-change-open;                     // "Change project key?"
+    in property <string> key-change-text;
+    callback key-change-choose(int);                        // 0 Cancel, 1 Don't transpose, 2 Transpose MIDI
     callback unsaved-cancel();
     callback unsaved-dont-save();
     callback unsaved-save();

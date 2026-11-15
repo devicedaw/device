@@ -12322,6 +12322,123 @@ fn group_steps() -> Vec<Step> {
         ),
     ]
 }
+/// "Change project key?": a new key for a project with a key and MIDI clips asks first.
+/// Cancel keeps the key, Don't transpose changes only the key, Transpose MIDI (Enter) moves
+/// the notes too, in one undo step. Everything is undone at the end.
+fn key_change_steps() -> Vec<Step> {
+    use Step::*;
+    let start: Rc<std::cell::Cell<usize>> = Rc::new(std::cell::Cell::new(0));
+    let (s1, s2) = (start.clone(), start.clone());
+    fn pitches(c: &Controller) -> Vec<u8> {
+        c.project().tracks.iter().flat_map(|t| &t.midi_clips).flat_map(|m| m.notes.iter().map(|n| n.pitch)).collect()
+    }
+    fn pick_d_minor(ctl: &Rc<RefCell<Controller>>) {
+        let mut c = ctl.borrow_mut();
+        c.key_menu_toggle();
+        c.tf.key_minor = true;
+        c.key_pick(2);
+    }
+    vec![
+        DoC(
+            "key change: C Major, a MIDI clip with a C, then pick D Minor in the key picker",
+            Box::new(move |_, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    s1.set(c.doc.history_labels().len());
+                    c.execute(dstudio_core::Command::SetProjectKey {
+                        key: Some(dstudio_core::model::ProjectKey { root: 0, minor: false }),
+                    });
+                    if let Some(track) = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id) {
+                        let mut clip = dstudio_core::MidiClip::empty(64 * dstudio_core::PPQ, 4 * dstudio_core::PPQ);
+                        clip.notes =
+                            vec![dstudio_core::midi::Note { id: 1, pitch: 60, start: 0, length: dstudio_core::PPQ, velocity: 100 }];
+                        c.execute(dstudio_core::Command::AddMidiClip { track, clip });
+                    }
+                }
+                pick_d_minor(ctl);
+            }),
+        ),
+        Check(
+            "key change: the prompt asks, naming the clips and both keys; the key is still C",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let n = dstudio_core::key_change::midi_clip_count(c.project());
+                let want = format!("Your project has {n} MIDI clip{}", if n == 1 { "" } else { "s" });
+                (s.get_key_change_open()
+                    && s.get_key_change_text().starts_with(&want)
+                    && s.get_key_change_text().ends_with("from C Major to D Minor?")
+                    && c.project().transport.key.is_some_and(|k| k.root == 0 && !k.minor))
+                .then_some(())
+                .ok_or(format!("open {} text {:?}", s.get_key_change_open(), s.get_key_change_text()))
+            }),
+        ),
+        Do("key change: Escape (Cancel)", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check(
+            "key change: closed, the key stays C Major and the notes stay",
+            Box::new(|c, a| {
+                (!a.global::<Studio>().get_key_change_open()
+                    && c.project().transport.key.is_some_and(|k| k.root == 0 && !k.minor)
+                    && pitches(c).contains(&60))
+                .then_some(())
+                .ok_or(format!("key {:?}", c.project().transport.key))
+            }),
+        ),
+        DoC(
+            "key change: pick D Minor again, click Don't transpose",
+            Box::new(|a, ctl| {
+                pick_d_minor(ctl);
+                a.global::<Studio>().invoke_key_change_choose(1);
+            }),
+        ),
+        Check(
+            "key change: the key is D Minor, the C is where it was (Key Change)",
+            Box::new(|c, _| {
+                (c.project().transport.key.is_some_and(|k| k.root == 2 && k.minor)
+                    && pitches(c).contains(&60)
+                    && !pitches(c).contains(&62)
+                    && c.key_change.is_none()
+                    && c.doc.undo_label() == Some("Key Change"))
+                .then_some(())
+                .ok_or(format!("key {:?} undo {:?}", c.project().transport.key, c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "key change: undo, pick D Minor again, press Enter (Transpose MIDI)",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().undo();
+                pick_d_minor(ctl);
+                key(a, Key::Return, false, false);
+            }),
+        ),
+        Check(
+            "key change: the key is D Minor and the C moved up to D, in one undo step",
+            Box::new(|c, a| {
+                (c.project().transport.key.is_some_and(|k| k.root == 2 && k.minor)
+                    && pitches(c).contains(&62)
+                    && !pitches(c).contains(&60)
+                    && !a.global::<Studio>().get_key_change_open()
+                    && c.doc.undo_label() == Some("Key Change"))
+                .then_some(())
+                .ok_or(format!("key {:?} pitches {:?} undo {:?}", c.project().transport.key, pitches(c), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "key change: undo back to the start",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                for _ in s2.get()..c.doc.history_labels().len() {
+                    c.undo();
+                }
+            }),
+        ),
+        Check(
+            "key change: the project is as it was",
+            Box::new(move |c, _| {
+                (c.doc.history_labels().len() == start.get()).then_some(()).ok_or(format!("history {}", c.doc.history_labels().len()))
+            }),
+        ),
+    ]
+}
 /// Zoom to fit: W fits the song, then the selected clip, to the lanes' width; H sizes the
 /// track rows to fill the lanes' height. The view and row heights are put back at the end.
 fn zoom_fit_steps() -> Vec<Step> {
@@ -15200,6 +15317,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(track_menu_steps());
     all.extend(group_steps());
     all.extend(zoom_fit_steps());
+    all.extend(key_change_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());

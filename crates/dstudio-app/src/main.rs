@@ -213,6 +213,7 @@ struct Args {
     devices_minimap_review: bool,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
+    key_change_review: bool,
     /// review-count-in-menu: count-in set to 1 bar, the record button's count-in menu open.
     count_in_menu_review: bool,
     /// review-track-menu: track 1's header menu open with its Color submenu.
@@ -603,6 +604,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-track-rename" => {
                     a.reference_default = true;
                     a.track_rename_review = true;
+                }
+                "review-key-change" => {
+                    a.reference_default = true;
+                    a.key_change_review = true;
                 }
                 "review-snap-menu" => {
                     a.reference_default = true;
@@ -2029,6 +2034,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.track_drag(id, 1, y1);
         }
     }
+    if args.key_change_review {
+        // A project in C Major with two MIDI clips, then D Minor picked: the prompt asks.
+        let mut c = ctl.borrow_mut();
+        c.execute(dstudio_core::Command::SetProjectKey { key: Some(dstudio_core::model::ProjectKey { root: 0, minor: false }) });
+        if let Some(track) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) {
+            for start in [0, 8] {
+                let clip = dstudio_core::MidiClip::empty(start * 4 * dstudio_core::PPQ, 4 * 4 * dstudio_core::PPQ);
+                c.execute(dstudio_core::Command::AddMidiClip { track, clip });
+            }
+        }
+        c.key_menu_toggle();
+        c.key_mode(true);
+        c.key_pick(2);
+    }
     if args.snap_menu_review {
         let mut c = ctl.borrow_mut();
         c.snap.pick(5);
@@ -2462,6 +2481,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     on!(on_open_recent, |c, i: i32| c.open_recent(i as usize));
     on!(on_updates_close, |c| c.dialogs_close());
+    on!(on_key_change_choose, |c, i: i32| c.key_change_choice(match i {
+        2 => transport_fields::KeyChoice::Transpose,
+        1 => transport_fields::KeyChoice::Keep,
+        _ => transport_fields::KeyChoice::Cancel,
+    }));
     on!(on_general_toggle, |c, i: i32| c.general_toggle(i));
     on!(on_general_stop_mode, |c, on: bool| c.general_stop_in_place(on));
     on!(on_undo_history_close, |c| c.dialogs_close());
@@ -3073,7 +3097,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // (Not behind a modal: Settings and the dialogs keep their keys.)
             if !primary && !alt && !ctrl {
                 let used = ctl.try_borrow_mut().is_ok_and(|mut c| {
-                    let modal = c.settings.open || c.export.open || c.unsaved_open || c.updates_open || c.undo_history_open;
+                    let modal = c.modal_open();
                     !modal && c.transport_menu_key(&chord.key)
                 });
                 if used {
@@ -3111,8 +3135,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // The export dialog and the unsaved-changes prompt are modal: Escape closes them (Cancel).
             {
                 let mut c = ctl.borrow_mut();
-                if c.export.open || c.unsaved_open || c.updates_open || c.undo_history_open {
-                    if action == "view.escape" && !c.export_close_menu() {
+                if c.export.open || c.unsaved_open || c.updates_open || c.undo_history_open || c.key_change.is_some() {
+                    if c.key_change.is_some() && chord.key == "Enter" {
+                        c.key_change_choice(crate::transport_fields::KeyChoice::Transpose);
+                    } else if action == "view.escape" && !c.export_close_menu() {
                         c.dialogs_close();
                     }
                     drop(c);

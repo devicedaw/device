@@ -437,6 +437,8 @@ pub struct Controller {
     pub(crate) pending_import: Option<crate::live_import::PendingImport>,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
+    /// "Change project key?": the key change waiting on Transpose MIDI / Don't transpose / Cancel.
+    pub key_change: Option<crate::transport_fields::KeyChange>,
     /// Settings › General › Playhead on stop: where the last playback started, whether the
     /// transport is paused there since (Space), and a position the user chose since (a seek, or
     /// 0 after Stop), kept because the engine may apply it only at the next block.
@@ -622,6 +624,7 @@ impl Controller {
             unsaved_open: false,
             pending_import: None,
             updates_open: false,
+            key_change: None,
             play_start: None,
             paused: false,
             cue: None,
@@ -857,7 +860,12 @@ impl Controller {
     }
 
     pub fn modal_open(&self) -> bool {
-        self.settings.open || self.export.open || self.unsaved_open || self.updates_open || self.undo_history_open
+        self.settings.open
+            || self.export.open
+            || self.unsaved_open
+            || self.updates_open
+            || self.undo_history_open
+            || self.key_change.is_some()
     }
 
     /// File › Open Recent item `i` (newest first). A project that no longer opens leaves the list.

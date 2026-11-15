@@ -15,6 +15,7 @@ pub mod device;
 pub mod history;
 pub mod import;
 pub mod instrument;
+pub mod key_change;
 pub mod keymap;
 pub mod library;
 pub mod midi;
