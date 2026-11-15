@@ -105,6 +105,8 @@ pub(crate) const MENU_TARGET: i32 = -5;
 pub(crate) const MENU_MB_BAND: i32 = -6;
 /// The Multiband Compressor's bands, as its band picker names them.
 const MB_BANDS: [&str; 3] = ["Low", "Mid", "High"];
+/// Width of the waveshaper and Bit Crusher windows.
+const WAVE_W: f32 = 960.0;
 /// Panel-menu code of the Delay's repeat-EQ band picker.
 pub(crate) const MENU_DELAY_BAND: i32 = -7;
 
@@ -120,13 +122,20 @@ pub(crate) fn has_window(def: &DeviceDef) -> bool {
     matches!(
         def.id,
         "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb" | "echo"
-    ) || is_field_window(def)
+    ) || is_wave_window(def)
+        || def.id == "bitcrusher"
+        || is_field_window(def)
         || is_dynamics_window(def)
 }
 
 /// Windows of the level-history family (src/device_window_dynamics.rs).
 fn is_dynamics_window(def: &DeviceDef) -> bool {
     crate::device_window_dynamics::spec(def.id).is_some()
+}
+
+/// Windows of the waveshaper family (src/device_window_wave.rs).
+fn is_wave_window(def: &DeviceDef) -> bool {
+    matches!(def.id, "distortion" | "tapesaturation" | "soft-clipper")
 }
 
 /// Windows of the plotted-field family (motion and response pictures).
@@ -169,6 +178,10 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         "transient-shaper" => field_kit(880.0, 228.0, 8.0, 8.0),
         // Multiband: the band field over the dB ladder, its Hz axis and legend below.
         "multiband-compressor" => field_kit(WIN_W, 336.0, 52.0, 43.0),
+        // Waveshapers: the transfer square and the wave over a dB axis and legend.
+        "distortion" | "tapesaturation" | "soft-clipper" => field_kit(WAVE_W, 454.0, 60.0, 44.0),
+        // Bit Crusher: one crushed cycle fills the display.
+        "bitcrusher" => field_kit(WAVE_W, 454.0, 8.0, 8.0),
         "tremolo" => field_kit(WIN_W, 234.0, 60.0, 44.0),
         "autopanner" => field_kit(WIN_W, 234.0, 40.0, 44.0),
         "chorus" | "flanger" => field_kit(WIN_W, 354.0, 56.0, 44.0),
@@ -621,6 +634,8 @@ impl Controller {
             _ if is_dynamics_window(def) => self.dynamics_window_canvas(d, def, &k, accent),
             _ if def.id == "transient-shaper" => self.shaper_window_canvas(d, def, &k, accent),
             _ if def.id == "multiband-compressor" => self.multiband_window_canvas(d, def, &k, accent),
+            _ if is_wave_window(def) => self.wave_window_canvas(d, def, &k, accent),
+            _ if def.id == "bitcrusher" => self.crush_window_canvas(d, def, &k, accent),
             Some(View::Custom(_)) if crate::panel_fields::field_name(def).is_some() => self.field_window_display(d, def, &k),
             _ => PanelCanvas::default(),
         };
@@ -636,6 +651,7 @@ impl Controller {
             "delay" => self.delay_window(d, def, &mut b, dy + dh + 12.0),
             "reverb" => self.reverb_window(d, def, &mut b, dy + dh + 12.0),
             "echo" => self.echo_window(d, def, &mut b, dy + dh + 12.0),
+            _ if is_wave_window(def) || def.id == "bitcrusher" => self.wave_window(d, def, &mut b, dy + dh + 12.0),
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
         let (meters, ticks, ticks_x) = self.window_meters(d.id, &k);
@@ -1472,6 +1488,62 @@ impl Controller {
             ],
         );
         rack.y + rack.h + 16.0
+    }
+
+    /// Waveshapers and the Bit Crusher: one card under the display. Distortion: Drive and
+    /// Bias, the Mode pills, Tone, then Gain, Mix and Output. Tape Saturation: Drive and
+    /// Compression, Mode, Warmth and Noise, Mix and Output. Soft Clipper: Input and Ceiling,
+    /// Shape and Softness, Gain Match, Mix and Output. Bit Crusher (its card under the
+    /// display only, the meters running beside it): Bit Depth, Dither, Downsample and
+    /// Jitter, Mix.
+    fn wave_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let pills = |id: &str| -> Vec<(&'static str, f32)> {
+            def.param(id).map_or_else(Vec::new, |p| p.choices.iter().enumerate().map(|(i, c)| (*c, i as f32)).collect())
+        };
+        let knob = |id, name, size, w| Item::Knob(id, name, size, w, false);
+        let row = Row::main(y);
+        let clusters = match def.id {
+            "distortion" => vec![
+                (vec![knob("drive", "Drive", 2, 70.0), knob("bias", "Bias", 1, 52.0)], 8.0),
+                (vec![Item::Pills("mode", pills("mode"), "Mode", 268.0)], 8.0),
+                (vec![knob("tone", "Tone", 1, 52.0)], 8.0),
+                (vec![knob("output", "Gain", 1, 62.0), knob("mix", "Mix", 1, 52.0), knob("output_gain", "Output", 1, 62.0)], 8.0),
+            ],
+            "tapesaturation" => vec![
+                (vec![knob("drive", "Drive", 2, 70.0), knob("compression", "Compression", 1, 76.0)], 8.0),
+                (vec![Item::Pills("mode", pills("mode"), "Mode", 224.0)], 8.0),
+                (vec![knob("warmth", "Warmth", 1, 76.0), knob("noise", "Noise", 1, 76.0)], 8.0),
+                (vec![knob("mix", "Mix", 1, 76.0), knob("output_gain", "Output", 1, 76.0)], 8.0),
+            ],
+            "soft-clipper" => vec![
+                (vec![knob("input", "Input", 2, 64.0), knob("ceiling", "Ceiling", 2, 64.0)], 12.0),
+                (vec![Item::Pills("shape", pills("shape"), "Shape", 184.0), knob("softness", "Softness", 1, 62.0)], 24.0),
+                (
+                    vec![
+                        Item::ToggleW("gain_match", "Gain Match", 72.0),
+                        knob("mix", "Mix", 1, 62.0),
+                        knob("output_gain", "Output", 1, 62.0),
+                    ],
+                    14.0,
+                ),
+            ],
+            _ => vec![
+                (vec![knob("bitdepth", "Bit Depth", 2, 70.0)], 8.0),
+                (
+                    vec![knob("dither", "Dither", 1, 76.0), knob("downsample", "Downsample", 1, 76.0), knob("jitter", "Jitter", 1, 76.0)],
+                    14.0,
+                ),
+                (vec![knob("mix", "Mix", 1, 76.0)], 8.0),
+            ],
+        };
+        // The Bit Crusher's card ends under the display, its meters running down beside it.
+        let full = b.w;
+        if def.id == "bitcrusher" {
+            b.w = kit(def).display.2 + 2.0 * INSET;
+        }
+        self.win_card(d, def, b, row, clusters);
+        b.w = full;
+        row.y + row.h + 16.0
     }
 
     /// Transient Shaper: Hold view in the header; one card with Attack and Sustain, Sense,
@@ -2917,6 +2989,63 @@ mod tests {
         assert!(!view(&c, did, def).pills.iter().any(|p| p.kind == PILL_MOMENTARY && p.active));
     }
 
+    /// The waveshaper windows read their transfer and every card control; the caption
+    /// follows the output gain.
+    #[test]
+    fn wave_windows_show_the_transfer_and_every_control() {
+        use slint::Model;
+        for (id, knobs, pills) in [
+            ("distortion", &["drive", "bias", "tone", "output", "mix", "output_gain"][..], "mode"),
+            ("tapesaturation", &["drive", "compression", "warmth", "noise", "mix", "output_gain"][..], "mode"),
+            ("soft-clipper", &["input", "ceiling", "softness", "mix", "output_gain"][..], "shape"),
+        ] {
+            let (mut c, did, def) = controller_with(id);
+            assert!(has_window(def), "{id}");
+            let v = view(&c, did, def);
+            assert!((v.w / Z - WAVE_W).abs() < 0.5 && (v.h / Z - 640.0).abs() < 0.5, "{id} {} x {}", v.w / Z, v.h / Z);
+            let idx = |p: &str| def.index_of(p).unwrap() as i32;
+            for k in knobs {
+                assert!(v.knobs.iter().any(|n| n.param == idx(k)), "{id} {k}");
+            }
+            let n = def.param(pills).unwrap().choices.len();
+            assert_eq!(v.pills.iter().filter(|p| p.param == idx(pills)).count(), n, "{id}");
+            assert!(v.display.texts.iter().any(|t| t.text == "Wave"), "{id}");
+            let db = |c: &Controller| {
+                let d = c.project().device(did).unwrap().clone();
+                let (caption, value) = c.wave_caption(&d, def);
+                (caption, value.trim_end_matches(" dB").replace('\u{2212}', "-").parse::<f32>().unwrap())
+            };
+            let (caption, before) = db(&c);
+            assert_eq!(caption, if id == "soft-clipper" { "Clipping" } else { "Transfer" }, "{id}");
+            c.execute(Command::SetDeviceParam { device: did, param: "output_gain".into(), value: -12.0 });
+            let after = db(&c).1;
+            if id != "soft-clipper" {
+                assert!((after - before + 12.0).abs() < 0.2, "{id} {before} -> {after}");
+            }
+        }
+    }
+
+    /// The Bit Crusher's window: the crushed cycle under its rate caption, the card under
+    /// the display only, every control on it.
+    #[test]
+    fn bitcrusher_window_reads_rate_and_levels() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("bitcrusher");
+        assert!(has_window(def));
+        c.execute(Command::SetDeviceParam { device: did, param: "downsample".into(), value: 2.0 });
+        c.execute(Command::SetDeviceParam { device: did, param: "bitdepth".into(), value: 8.0 });
+        let v = view(&c, did, def);
+        assert!(v.display.texts.iter().any(|t| t.text == "24.0 kHz"));
+        assert!(v.display.texts.iter().any(|t| t.text == "and 256 levels"));
+        let idx = |p: &str| def.index_of(p).unwrap() as i32;
+        for k in ["bitdepth", "dither", "downsample", "jitter", "mix"] {
+            assert!(v.knobs.iter().any(|n| n.param == idx(k)), "{k}");
+        }
+        let card = v.boxes.iter().find(|b| b.kind == BOX_CARD).unwrap();
+        let (dx, _, dw, _) = kit(def).display;
+        assert!(((card.x + card.w) / Z - (dx + dw)).abs() < 0.5, "{}", (card.x + card.w) / Z);
+    }
+
     /// A full ten-second history draws as one line per series, however many samples it holds.
     #[test]
     fn dynamics_history_draws_once_per_series() {
@@ -2948,6 +3077,10 @@ mod tests {
             "delay",
             "reverb",
             "echo",
+            "distortion",
+            "tapesaturation",
+            "soft-clipper",
+            "bitcrusher",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =
