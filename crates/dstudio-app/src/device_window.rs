@@ -83,6 +83,8 @@ pub(crate) const ACT_SPAN: i32 = 10;
 pub(crate) const ACT_TARGET: i32 = 11;
 /// Mastering Limiter: restart the loudness measurement.
 pub(crate) const ACT_LOUD_RESET: i32 = 12;
+/// Multiband Compressor: the band the rack card edits (value: 0 Low, 1 Mid, 2 High).
+pub(crate) const ACT_MB_BAND: i32 = 13;
 const PILL_GHOST: i32 = 6;
 /// Character Mod's Mode parameter of each circuit (Ensemble has none).
 const CM_MODES: [Option<&str>; 11] = dstudio_core::builtin::character_mod::MODE_PARAMS;
@@ -93,6 +95,10 @@ pub(crate) const MENU_BANDS: i32 = -3;
 pub(crate) const MENU_ANALYZER: i32 = -4;
 /// Panel-menu code of the loudness target picker (Mastering Limiter).
 pub(crate) const MENU_TARGET: i32 = -5;
+/// Panel-menu code of the Multiband Compressor's band picker.
+pub(crate) const MENU_MB_BAND: i32 = -6;
+/// The Multiband Compressor's bands, as its band picker names them.
+const MB_BANDS: [&str; 3] = ["Low", "Mid", "High"];
 
 use crate::device_window_dynamics::TARGETS;
 
@@ -103,7 +109,9 @@ const CC_RMS_VCA: i32 = 5;
 
 /// Devices with an expanded window.
 pub(crate) fn has_window(def: &DeviceDef) -> bool {
-    matches!(def.id, "auto-filter" | "channeleq" | "character-eq") || is_field_window(def) || is_dynamics_window(def)
+    matches!(def.id, "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor")
+        || is_field_window(def)
+        || is_dynamics_window(def)
 }
 
 /// Windows of the level-history family (src/device_window_dynamics.rs).
@@ -141,6 +149,10 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
     };
     match def.id {
         "character-eq" => eq(52.0, 346.0),
+        // Transient Shaper: the scope fills the display; its legend sits on the caption row.
+        "transient-shaper" => field_kit(880.0, 228.0, 8.0, 8.0),
+        // Multiband: the band field over the dB ladder, its Hz axis and legend below.
+        "multiband-compressor" => field_kit(WIN_W, 336.0, 52.0, 43.0),
         "tremolo" => field_kit(WIN_W, 234.0, 60.0, 44.0),
         "autopanner" => field_kit(WIN_W, 234.0, 40.0, 44.0),
         "chorus" | "flanger" => field_kit(WIN_W, 354.0, 56.0, 44.0),
@@ -512,6 +524,10 @@ impl Row {
     fn main(y: f32) -> Row {
         Row { y, h: 106.0, dial: 28.0, value: 54.0, pill: 30.0, picker: 46.0 }
     }
+    /// A tall card (Transient Shaper's, around its 104 pt picture): 132 high.
+    fn tall(y: f32) -> Row {
+        Row { y, h: 132.0, dial: 54.0, value: 80.0, pill: 56.0, picker: 72.0 }
+    }
     /// The rack card (Character EQ's sections): 100 high.
     fn rack(y: f32) -> Row {
         Row { y, h: 100.0, dial: 22.0, value: 48.0, pill: 22.0, picker: 40.0 }
@@ -577,6 +593,8 @@ impl Controller {
             Some(View::Custom("auto-filter")) => self.auto_filter_window_field(d, def, accent),
             Some(View::Field(f)) => self.field_window_canvas(d, def, f, &k, accent),
             _ if is_dynamics_window(def) => self.dynamics_window_canvas(d, def, &k, accent),
+            _ if def.id == "transient-shaper" => self.shaper_window_canvas(d, def, &k, accent),
+            _ if def.id == "multiband-compressor" => self.multiband_window_canvas(d, def, &k, accent),
             _ => PanelCanvas::default(),
         };
         display.x = (dx + k.plot.0) * Z;
@@ -586,6 +604,8 @@ impl Controller {
             "channeleq" => self.channel_eq_window(d, def, &mut b),
             "character-eq" => self.character_eq_window(d, def, &mut b),
             _ if is_dynamics_window(def) => self.dynamics_window(d, def, &mut b, dy + dh + 12.0),
+            "transient-shaper" => self.shaper_window(d, def, &mut b, dy + dh + 12.0),
+            "multiband-compressor" => self.multiband_window(d, def, &mut b, dy + dh + 12.0),
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
         let (meters, ticks, ticks_x) = self.window_meters(d.id, &k);
@@ -1402,6 +1422,112 @@ impl Controller {
         rack.y + rack.h + 16.0
     }
 
+    /// Transient Shaper: Hold view in the header; one card with Attack and Sustain, Sense,
+    /// the shape picture (its handles set the two times), then Mix, Output and Clip.
+    fn shaper_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let x = b.w - INSET - 77.5;
+        b.pill(PILL_GHOST_LATCH, ACT_HOLD, 0, x, 10.5, 77.5, "Hold view", self.win_held(d.id));
+        let row = Row::tall(y);
+        let pic = crate::device_window_shaper::PIC_W;
+        let clusters = vec![
+            (vec![Item::Knob("attack", "Attack", 2, 70.0, false), Item::Knob("sustain", "Sustain", 2, 70.0, false)], 10.0),
+            (vec![Item::Knob("sensitivity", "Sense", 1, 52.0, false)], 10.0),
+            (vec![Item::Blank(pic)], 10.0),
+            (
+                vec![
+                    Item::Knob("mix", "Mix", 1, 56.0, false),
+                    Item::Knob("output_gain", "Output", 1, 56.0, false),
+                    Item::ToggleW("clip", "Clip", 56.0),
+                ],
+                10.0,
+            ),
+        ];
+        let widths: Vec<f32> = clusters
+            .iter()
+            .map(|(items, gap)| items.iter().map(Item::width).sum::<f32>() + gap * (items.len().saturating_sub(1)) as f32)
+            .collect();
+        self.win_card(d, def, b, row, clusters);
+        let (xs, _) = gutter(INSET, b.w - 2.0 * INSET, &widths);
+        let mut sq = self.shaper_picture(d, def, accent_of(b));
+        sq.x = xs[2] * Z;
+        sq.y = (row.top() + 4.0) * Z;
+        b.square = sq;
+        row.y + row.h + 16.0
+    }
+
+    /// Multiband Compressor: the global card (Input, the crossovers, Depth and Time, the
+    /// upward and downward amounts, Mix and Output), then the rack card of the selected band
+    /// (picker, Band Input, its thresholds and ratios, its times and makeup, its transfer).
+    fn multiband_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let row = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (vec![Item::Knob("input_gain", "Input", 1, 52.0, false)], 10.0),
+                (
+                    vec![
+                        Item::Knob("low_crossover", "Low Crossover", 1, 84.0, false),
+                        Item::Knob("high_crossover", "High Crossover", 1, 84.0, false),
+                    ],
+                    10.0,
+                ),
+                (vec![Item::Knob("depth", "Depth", 2, 64.0, false), Item::Knob("time", "Time", 2, 64.0, false)], 10.0),
+                (vec![Item::Knob("upward", "Upward", 2, 64.0, false), Item::Knob("downward", "Downward", 2, 64.0, false)], 10.0),
+                (vec![Item::Knob("mix", "Mix", 1, 52.0, false), Item::Knob("output_gain", "Output", 1, 52.0, false)], 10.0),
+            ],
+        );
+        let band = self.multiband_band(d.id);
+        let ids = dstudio_core::builtin::MULTIBAND_BANDS[band];
+        let rack = Row::main(row.y + row.h + 12.0);
+        let clusters = vec![
+            (
+                vec![
+                    Item::Picker(MENU_MB_BAND, MB_BANDS[band].to_string(), "Band", 72.0, false),
+                    Item::Knob(ids[5], "Band Input", 2, 64.0, false),
+                ],
+                10.0,
+            ),
+            (vec![Item::Knob(ids[0], "Threshold", 2, 64.0, false), Item::Knob(ids[1], "Ratio", 2, 64.0, false)], 10.0),
+            (vec![Item::Knob(ids[6], "Up Threshold", 2, 80.0, false), Item::Knob(ids[7], "Up Ratio", 2, 60.0, false)], 10.0),
+            (
+                vec![
+                    Item::Knob(ids[2], "Attack", 1, 56.0, false),
+                    Item::Knob(ids[3], "Release", 1, 56.0, false),
+                    Item::Knob(ids[4], "Makeup", 1, 56.0, false),
+                ],
+                6.0,
+            ),
+            (vec![Item::Blank(86.0)], 10.0),
+        ];
+        let widths: Vec<f32> = clusters
+            .iter()
+            .map(|(items, gap)| items.iter().map(Item::width).sum::<f32>() + gap * (items.len().saturating_sub(1)) as f32)
+            .collect();
+        self.win_card(d, def, b, rack, clusters);
+        let (xs, _) = gutter(INSET, b.w - 2.0 * INSET, &widths);
+        let mut sq = self.dynamics_square(d, def, accent_of(b));
+        sq.x = (xs[4] + 4.0) * Z;
+        sq.y = (rack.top() + 4.0) * Z;
+        b.square = sq;
+        rack.y + rack.h + 16.0
+    }
+
+    /// Band picker menu rows (panel-menu code MENU_MB_BAND).
+    pub(crate) fn win_mb_band_rows(&self, device: DeviceId) -> crate::device_mod::MenuRows {
+        let cur = self.multiband_band(device);
+        MB_BANDS
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let pick = Some(crate::devices::MenuPick::Window(device, ACT_MB_BAND, i as i32));
+                (name.to_string(), if i == cur { "\u{2713}".to_string() } else { String::new() }, pick, false)
+            })
+            .collect()
+    }
+
     /// Character Compressor's rack card: the Section pills, then the section's controls
     /// (Detector: release behaviour, lookahead and stereo; Sidechain: the detector's source
     /// and filters; Level: the slow rider and its weighting bands).
@@ -1813,6 +1939,9 @@ impl Controller {
             (ACT_TARGET, _) => {
                 self.devices.wins.target.insert(device, value.clamp(0, TARGETS.len() as i32 - 1) as usize);
             }
+            (ACT_MB_BAND, _) => {
+                self.devices.panel.views.entry(device).or_default().band = value.clamp(0, 2) as usize;
+            }
             (ACT_LOUD_RESET, _) => {
                 let now = self.win_now();
                 self.devices.wins.loud_from.insert(device, now);
@@ -2101,6 +2230,85 @@ mod tests {
         assert_eq!((ceiling.label.as_str(), ceiling.value.as_str()), ("Ceiling", "\u{2212}1.0 dBTP"));
     }
 
+    /// Transient Shaper: the scope fills the display, one card holds every control but the
+    /// two times, which are the shape picture's handles (drag zones).
+    #[test]
+    fn transient_shaper_window_sets_times_from_the_picture() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("transient-shaper");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.h / Z - 440.0).abs() < 0.5 && (v.w / Z - 880.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert_eq!(knob_names(&v), ["Attack", "Sustain", "Sense", "Mix", "Output"]);
+        assert!(v.display.visible && v.display.paths.row_count() > 3);
+        let zones: Vec<_> = v.square.zones.iter().collect();
+        let idx = |id: &str| def.index_of(id).unwrap() as i32;
+        assert_eq!(zones.len(), 2);
+        assert_eq!((zones[0].param_x, zones[0].param_y), (idx("attack_time"), idx("attack")));
+        assert_eq!((zones[1].param_x, zones[1].param_y), (idx("sustain_time"), idx("sustain")));
+        for z in &zones {
+            assert!(z.x + z.w / 2.0 >= 0.0 && z.x + z.w / 2.0 <= v.square.w && z.y + z.h / 2.0 <= v.square.h);
+        }
+        // Raising Attack lifts its handle.
+        let y0 = zones[0].y;
+        c.execute(Command::SetDeviceParam { device: did, param: "attack".into(), value: 80.0 });
+        assert!(view(&c, did, def).square.zones.iter().next().unwrap().y < y0);
+        c.win_action(did, ACT_HOLD, 0);
+        assert!(view(&c, did, def).pills.iter().any(|p| p.param == ACT_HOLD && p.active));
+    }
+
+    /// Multiband Compressor: the band field's handles edit the selected band's thresholds
+    /// and the crossovers; the band picker switches the rack card to another band.
+    #[test]
+    fn multiband_window_edits_the_selected_band() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("multiband-compressor");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.h / Z - 640.0).abs() < 0.5 && (v.w / Z - WIN_W).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert_eq!(
+            knob_names(&v),
+            [
+                "Input",
+                "Low Crossover",
+                "High Crossover",
+                "Depth",
+                "Time",
+                "Upward",
+                "Downward",
+                "Mix",
+                "Output",
+                "Band Input",
+                "Threshold",
+                "Ratio",
+                "Up Threshold",
+                "Up Ratio",
+                "Attack",
+                "Release",
+                "Makeup"
+            ]
+        );
+        let idx = |id: &str| def.index_of(id).unwrap() as i32;
+        let zones: Vec<_> = v.display.zones.iter().collect();
+        // Two threshold lines per band, then the two crossovers.
+        assert_eq!(zones.len(), 8);
+        assert_eq!(zones[0].param_y, idx("low_threshold"));
+        assert_eq!(zones[5].param_y, idx("high_up_threshold"));
+        assert_eq!((zones[6].param_x, zones[7].param_x), (idx("low_crossover"), idx("high_crossover")));
+        assert!(v.square.visible && v.square.paths.row_count() > 0);
+        assert!(v.knobs.iter().any(|k| k.param == idx("low_threshold")));
+        // Picking Mid moves the rack to the mid band's parameters and lights its pills.
+        c.win_action(did, ACT_MB_BAND, 1);
+        let v = view(&c, did, def);
+        assert!(v.pills.iter().any(|p| p.param == MENU_MB_BAND && p.label == "Mid"));
+        assert!(v.knobs.iter().any(|k| k.param == idx("mid_up_ratio")) && !v.knobs.iter().any(|k| k.param == idx("low_threshold")));
+        assert_eq!(v.display.grips.iter().filter(|g| g.hot).count(), 2);
+        assert_eq!(c.win_mb_band_rows(did)[1].1, "\u{2713}");
+        // A narrow low band (crossover at its floor) drops its handles.
+        c.execute(Command::SetDeviceParam { device: did, param: "low_crossover".into(), value: 20.0 });
+        assert_eq!(view(&c, did, def).display.zones.iter().count(), 6);
+    }
+
     /// A full ten-second history draws as one line per series, however many samples it holds.
     #[test]
     fn dynamics_history_draws_once_per_series() {
@@ -2120,7 +2328,16 @@ mod tests {
     #[ignore]
     fn bench_dynamics_windows() {
         let n = 500;
-        for id in ["compressor", "limiter", "gate", "glue-compressor", "character-compressor", "mastering-limiter"] {
+        for id in [
+            "compressor",
+            "limiter",
+            "gate",
+            "glue-compressor",
+            "character-compressor",
+            "mastering-limiter",
+            "transient-shaper",
+            "multiband-compressor",
+        ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =
                 (0..630).map(|i| (i as f64 / 60.0, -12.0 + (i as f32 * 0.1).sin() * 6.0, -18.0, -6.0)).collect();

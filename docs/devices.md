@@ -66,7 +66,7 @@ flowchart LR
   Character EQ and the plotted-field family: Tremolo, Auto-Panner, Chorus,
   Flanger, Phaser, Ring Mod and Character Mod; and the dynamics family:
   Compressor, Limiter, Gate, Glue Compressor, Character Compressor and Mastering
-  Limiter), otherwise the card itself in a window. A
+  Limiter; Transient Shaper; Multiband Compressor), otherwise the card itself in a window. A
   window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same
@@ -93,7 +93,17 @@ flowchart LR
   level (unweighted mean power over 3 s) against the Target picker's level
   (`MENU_TARGET`: Streaming −14, Broadcast −23, Hot −9 LUFS), restarted by
   Loudness Reset (`ACT_LOUD_RESET`), and draws its ceiling as a second,
-  solid line with its own grip. The
+  solid line with its own grip. Transient Shaper's window
+  (`device_window_shaper.rs`) scopes the output (the card's gain scope) with
+  the gain it applied, and its card holds a picture of a model hit (the
+  kernel's detector run on a synthetic kick) whose two handles drag Attack
+  with its time and Sustain with its time. Multiband Compressor's window
+  (`device_window_multiband.rs`) draws the three bands on a log 20 Hz..20 kHz
+  axis against 0..−80 dBFS: each band's level and gain (the card's smoothed
+  band meters), its Threshold and Up Threshold as lines you drag, and the two
+  crossovers as vertical handles. Its rack card edits the band picked in its
+  Band menu (`MENU_MB_BAND`, `ACT_MB_BAND`; the same selection as the card's)
+  beside that band's transfer square. The
   meters read `se_builtin_set_metering` / `se_builtin_levels`
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app

@@ -57,6 +57,8 @@ mod device_views;
 mod device_window;
 mod device_window_dynamics;
 mod device_window_fields;
+mod device_window_multiband;
+mod device_window_shaper;
 mod devices;
 mod devminimap;
 mod dialogs;

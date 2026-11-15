@@ -7,7 +7,7 @@
 // with 40 / 48 pt knobs whose value and name stack under the ring.
 
 import { Studio, DeviceCard, PanelKnob, WinPill, WinBox, WinMeter, PanelTick } from "studio.slint";
-import { PanelStyle, ParamDrag, ParamKeys, ValueEditor, DeviceCanvas } from "device_panel.slint";
+import { PanelStyle, ParamDrag, ParamKeys, ValueEditor, DeviceCanvas, ZoneDrag } from "device_panel.slint";
 
 export global WinStyle {
     out property <color> well: #0e0e11;        // window body
@@ -383,6 +383,7 @@ export component DeviceWindowFace inherits Rectangle {
                 x: t.x; y: t.y; width: t.w; height: t.h;
                 text: t.text; color: t.color; font-size: t.size; font-weight: t.weight; vertical-alignment: center;
             }
+            for z in root.card.win.square.zones: ZoneDrag { x: z.x; y: z.y; width: z.w; height: z.h; device: root.card.id; zone: z; }
         }
         Rectangle {
             opacity: root.card.enabled ? 1 : 0.45;

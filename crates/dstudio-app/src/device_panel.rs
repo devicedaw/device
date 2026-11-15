@@ -631,7 +631,7 @@ impl Controller {
     }
 
     /// Transfer curve of a `Face::Transfer` knob.
-    fn device_transfer(&self, live: &Device, def: &DeviceDef) -> Option<Transfer> {
+    pub(crate) fn device_transfer(&self, live: &Device, def: &DeviceDef) -> Option<Transfer> {
         dstudio_core::builtin::behavior(def).and_then(|b| (b.transfer)(def, live)).or_else(|| self.view_transfer(live, def))
     }
 
@@ -1217,6 +1217,10 @@ impl Controller {
         }
         let now_ms = self.devices.panel.scope_clock.get_or_insert_with(std::time::Instant::now).elapsed().as_secs_f64() * 1e3;
         for id in scopes {
+            // Hold view (the expanded window) freezes the scope.
+            if self.win_held(id) {
+                continue;
+            }
             // Merge the newest column frame; the head moves while there is something to show.
             let seq = self.engine.builtin_analysis(id.0, &mut out).unwrap_or(0);
             let h = self.devices.panel.scopes.entry(id).or_default();
@@ -1700,6 +1704,7 @@ impl Controller {
         let rows = match which {
             crate::device_window::MENU_ANALYZER => self.win_analyzer_rows(device),
             crate::device_window::MENU_TARGET => self.win_target_rows(device),
+            crate::device_window::MENU_MB_BAND => self.win_mb_band_rows(device),
             crate::device_window::MENU_BANDS => match self.win_band_rows(device) {
                 Some(rows) => rows,
                 None => return,
