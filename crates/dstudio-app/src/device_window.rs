@@ -93,6 +93,8 @@ const PILL_GHOST: i32 = 6;
 /// Character Mod's Mode parameter of each circuit (Ensemble has none).
 const CM_MODES: [Option<&str>; 11] = dstudio_core::builtin::character_mod::MODE_PARAMS;
 const PILL_GHOST_LATCH: i32 = 7;
+/// A momentary latch: on while held (Echo's Throw).
+const PILL_MOMENTARY: i32 = 8;
 /// panel-menu code of the band picker (a menu of the EQ's bands).
 pub(crate) const MENU_BANDS: i32 = -3;
 /// Panel-menu code of the analyser view picker (Character EQ).
@@ -115,8 +117,10 @@ const CC_RMS_VCA: i32 = 5;
 
 /// Devices with an expanded window.
 pub(crate) fn has_window(def: &DeviceDef) -> bool {
-    matches!(def.id, "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb")
-        || is_field_window(def)
+    matches!(
+        def.id,
+        "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb" | "echo"
+    ) || is_field_window(def)
         || is_dynamics_window(def)
 }
 
@@ -157,6 +161,8 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         "character-eq" => eq(52.0, 346.0),
         // Delay: the field fills the display under its caption band.
         "delay" => Kit { plot: (8.0, 25.0, 8.0, 8.0), ..eq(56.0, 450.0) },
+        // Echo: the tape strip above a display of the tail.
+        "echo" => Kit { plot: (8.0, 25.0, 8.0, 8.0), ..eq(160.0, 354.0) },
         // Reverb: a 1200 pt window; the tail picture fills the display.
         "reverb" => Kit { w: 1200.0, display: (INSET, 56.0, 1020.0, 510.0), plot: (8.0, 8.0, 8.0, 8.0), narrow: false },
         // Transient Shaper: the scope fills the display; its legend sits on the caption row.
@@ -571,6 +577,8 @@ enum Item {
     /// A latch over a menu picker (Delay's band column): latch parameter, its label and
     /// state, the menu code, the picker's label, name, width.
     LatchPicker(i32, String, bool, i32, String, &'static str, f32),
+    /// Momentary latch column (on while held): parameter, label, name, width.
+    Momentary(&'static str, &'static str, &'static str, f32),
     /// Two choice pickers stacked in one column: (parameter, label) of each, name, width, inert.
     Pickers2([(i32, String); 2], &'static str, f32, bool),
     /// Fixed blank (keeps a column's width).
@@ -590,6 +598,7 @@ impl Item {
             Item::ActionPills(_, _, _, _, w, _) => *w,
             Item::LatchPicker(.., w) => *w,
             Item::Pickers2(_, _, w, _) => *w,
+            Item::Momentary(.., w) => *w,
             Item::Blank(w) => *w,
         }
     }
@@ -626,6 +635,7 @@ impl Controller {
             "multiband-compressor" => self.multiband_window(d, def, &mut b, dy + dh + 12.0),
             "delay" => self.delay_window(d, def, &mut b, dy + dh + 12.0),
             "reverb" => self.reverb_window(d, def, &mut b, dy + dh + 12.0),
+            "echo" => self.echo_window(d, def, &mut b, dy + dh + 12.0),
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
         let (meters, ticks, ticks_x) = self.window_meters(d.id, &k);
@@ -916,6 +926,13 @@ impl Controller {
                         b.rect(BOX_TRACK, x + (w - pw - 4.0) / 2.0, top + 12.0, pw + 4.0, 28.0);
                         b.pill(PILL_TOGGLE, param, 0, x + (w - pw) / 2.0, top + 14.0, pw, &latch, on);
                         b.pill(PILL_PICKER, menu, 0, x + w / 2.0, top + 46.0, 0.0, &label, false);
+                        b.name(x, w, row.name_y(), name, false);
+                    }
+                    Item::Momentary(id, label, name, w) => {
+                        let held = def.index_of(id).is_some_and(|i| self.devices.panel.held == Some((d.id, i)));
+                        let pw = pill_w(label);
+                        b.rect(BOX_TRACK, x + (w - pw - 4.0) / 2.0, top + row.pill - 2.0, pw + 4.0, 28.0);
+                        b.pill(PILL_MOMENTARY, idx(id), 0, x + (w - pw) / 2.0, top + row.pill, pw, label, held);
                         b.name(x, w, row.name_y(), name, false);
                     }
                     Item::Pickers2(pickers, name, w, inert) => {
@@ -1597,6 +1614,7 @@ impl Controller {
         let fmt = |id: &str| def.param(id).map_or_else(String::new, |p| p.format(self.panel_value(d, def, p)));
         let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
         match def.id {
+            "echo" => ("Tail".into(), String::new(), String::new()),
             "delay" => {
                 let synced = val("sync") >= 0.5;
                 let (l, r) = if synced { (fmt("timeDivision"), fmt("timeDivisionR")) } else { (fmt("timeMs"), fmt("timeMsR")) };
@@ -1831,6 +1849,179 @@ impl Controller {
             })
             .collect();
         PanelCanvas { visible: true, w: pw, h: ph, paths: model(paths), zones: model(zones), label: "Filter".into(), ..Default::default() }
+    }
+
+    /// Echo: header (the machine's Mode menu, the machine pills), the tape strip with its
+    /// heads, the tail in the display, the main card (spacing, the transport, width, mix,
+    /// Throw) and a rack that shows the tail filters and ducking, or the machine's character.
+    fn echo_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let fmt = |id: &str| def.param(id).map_or_else(String::new, |p| p.format(val(id)));
+        let machine = (val("machine").round() as usize).min(2);
+        let mut x = self.header_choice(d, def, b, "machine", b.w - INSET);
+        x = Self::header_rule(b, x);
+        let mode = ["mode_loop", "combo_drum", "mode_cartridge"][machine];
+        let label = fmt(mode);
+        let pw = pill_w(&label) + 14.0;
+        b.pill(PILL_PICKER, idx(mode), 0, x - pw / 2.0, 9.5, 0.0, &label, false);
+        let lw = crate::text_measure::value_width("Mode") * 1.15 + 6.0;
+        b.texts.push(PanelText {
+            x: (x - pw - 8.0 - lw) * Z,
+            y: 13.5 * Z,
+            w: lw * Z,
+            h: 16.0 * Z,
+            text: s("Mode"),
+            color: Color::from_argb_u8(0xb3, 0xe5, 0xe5, 0xe8),
+            size: 12.0 * Z,
+            weight: 600,
+            align: 2,
+        });
+
+        // The tape strip: the machine's name, the Character latch and the heads on the tape.
+        let character = self.devices.wins.section.get(&d.id).copied().unwrap_or(0) == 1;
+        b.rect(BOX_DISPLAY, INSET, 52.0, b.w - 2.0 * INSET, 96.0);
+        b.pill(PILL_GHOST_LATCH, ACT_SECTION, if character { 0 } else { 1 }, b.w - INSET - 86.0, 58.0, 77.8, "Character", character);
+        let mut strip = self.echo_tape_canvas(d, def, b.w - 2.0 * INSET, accent_of(b));
+        strip.x = INSET * Z;
+        strip.y = 52.0 * Z;
+        b.square = strip;
+
+        let heads = ["heads_machine", "heads"];
+        let row = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (
+                    vec![
+                        Item::Picker(idx("spacing"), fmt("spacing"), "Spacing", 88.0, false),
+                        Item::Knob("spacing_morph", "Morph", 1, 60.0, false),
+                        Item::Picker(idx(heads[1]), fmt(heads[1]), "Heads", 88.0, false),
+                    ],
+                    10.0,
+                ),
+                (
+                    vec![
+                        Item::Knob("motor", "Motor", 2, 64.0, false),
+                        Item::Knob("intensity", "Intensity", 2, 64.0, false),
+                        Item::Knob("generations", "Generations", 2, 72.0, false),
+                        Item::Knob("swell", "Smear", 1, 60.0, false),
+                    ],
+                    10.0,
+                ),
+                (vec![Item::Knob("width", "Width", 1, 60.0, false), Item::Knob("mix", "Mix", 2, 64.0, false)], 10.0),
+                (vec![Item::Momentary("throw", "Tap", "Throw", 64.0)], 10.0),
+            ],
+        );
+        let rack = Row::rack(row.y + row.h + 12.0);
+        let clusters = if character {
+            vec![
+                (vec![Item::Knob("input_drive", "Input", 1, 60.0, false), Item::Knob("rec_level", "Rec Level", 1, 60.0, false)], 10.0),
+                (vec![Item::Knob("tone_bass", "Bass", 1, 60.0, false), Item::Knob("tone_treble", "Treble", 1, 60.0, false)], 10.0),
+                (
+                    vec![
+                        Item::Knob("art_hiss", "Hiss", 1, 60.0, false),
+                        Item::Knob("art_wf", "Wow & Flutter", 1, 84.0, false),
+                        Item::Knob("art_splice", "Splice", 1, 60.0, false),
+                        Item::Knob("art_bias", "Bias", 1, 60.0, false),
+                        Item::Knob("art_scrape", "Scrape", 1, 60.0, false),
+                    ],
+                    10.0,
+                ),
+                (vec![Item::ToggleW("spring_on", "Spring", 56.0), Item::Knob("spring", "Amount", 1, 60.0, false)], 10.0),
+            ]
+        } else {
+            let tail = val("tail_on") < 0.5;
+            let duck = val("duck_on") < 0.5;
+            vec![
+                (
+                    vec![
+                        Item::ToggleW("tail_on", "Tail", 56.0),
+                        Item::Knob("tail_hp_l", "HP Left", 1, 60.0, tail),
+                        Item::Knob("tail_lp_l", "LP Left", 1, 60.0, tail),
+                        Item::Knob("tail_hp_r", "HP Right", 1, 60.0, tail),
+                        Item::Knob("tail_lp_r", "LP Right", 1, 60.0, tail),
+                    ],
+                    6.0,
+                ),
+                (
+                    vec![
+                        Item::ToggleW("duck_on", "Duck", 56.0),
+                        Item::Knob("duck_amount", "Amount", 1, 60.0, duck),
+                        Item::Knob("duck_thresh", "Threshold", 2, 64.0, duck),
+                        Item::Knob("duck_attack", "Attack", 1, 60.0, duck),
+                        Item::Knob("duck_release", "Release", 1, 60.0, duck),
+                        Item::Picker(idx("duck_key"), fmt("duck_key"), "Key", 76.0, duck),
+                        Item::ToggleW("duck_fb_only", "FB Only", 56.0),
+                    ],
+                    6.0,
+                ),
+            ]
+        };
+        self.win_card(d, def, b, rack, clusters);
+        rack.y + rack.h + 16.0
+    }
+
+    /// Echo's tape strip: the machine's name over the tape, the erase and record heads at its
+    /// start and each playback head at its distance (lit while it plays).
+    fn echo_tape_canvas(&self, d: &Device, def: &'static DeviceDef, w: f32, accent: Color) -> PanelCanvas {
+        use crate::device_canvas::{fill, stroke, text, white};
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let machine = (val("machine").round() as usize).min(2);
+        let spec = dstudio_core::builtin::echo::MACHINE_SPECS[machine];
+        let pic = self.echo_picture(d, def);
+        let (pw, ph) = (w * Z, 96.0 * Z);
+        let mut paths = Vec::new();
+        let mut texts = vec![text(16.0 * Z, 13.0 * Z, 200.0 * Z, dstudio_core::builtin::echo::MACHINES[machine], white(0.75), 12.0 * Z, 0)];
+        // The tape: a long capsule.
+        let (x0, x1, ty, th) = (20.0 * Z, pw - 16.0 * Z, 56.0 * Z, 28.0 * Z);
+        let r = th / 2.0;
+        paths.push(stroke(
+            format!(
+                "M{:.1} {ty:.1} H{:.1} A{r:.1} {r:.1} 0 0 1 {:.1} {:.1} H{:.1} A{r:.1} {r:.1} 0 0 1 {:.1} {ty:.1} Z",
+                x0 + r,
+                x1 - r,
+                x1 - r,
+                ty + th,
+                x0 + r,
+                x0 + r
+            ),
+            white(0.45),
+            1.0,
+        ));
+        let rec_x = 68.0 * Z;
+        let far = spec.heads_mm.iter().chain(pic.heads.iter().map(|h| &h.mm)).fold(1.0f32, |m, v| m.max(*v));
+        let x_of = |mm: f32| rec_x + mm / (far * 1.25) * (x1 - 40.0 * Z - rec_x);
+        let head = |x: f32, lit: bool, color: Color, paths: &mut Vec<_>| {
+            let rect = format!("M{:.1} {:.1} h{:.1} v{:.1} h{:.1} Z", x - 3.0 * Z, ty - 10.0 * Z, 6.0 * Z, 20.0 * Z, -6.0 * Z);
+            if lit {
+                paths.push(fill(rect, color));
+            } else {
+                paths.push(stroke(rect, white(0.5), 1.0));
+            }
+        };
+        let erase_x = rec_x - 30.0 * Z;
+        head(erase_x, false, white(0.9), &mut paths);
+        head(rec_x, true, white(0.9), &mut paths);
+        texts.push(text(erase_x - 20.0 * Z, ty - 18.0 * Z, 40.0 * Z, "Erase", white(0.4), 9.0 * Z, 1));
+        texts.push(text(rec_x - 20.0 * Z, ty - 18.0 * Z, 40.0 * Z, "Rec", white(0.4), 9.0 * Z, 1));
+        for (i, h) in pic.heads.iter().enumerate() {
+            let x = x_of(h.mm);
+            head(x, h.on, accent, &mut paths);
+            texts.push(text(
+                x - 20.0 * Z,
+                ty - 18.0 * Z,
+                40.0 * Z,
+                format!("{}", i + 1),
+                if h.on { accent } else { white(0.4) },
+                9.0 * Z,
+                1,
+            ));
+        }
+        PanelCanvas { visible: true, w: pw, h: ph, paths: model(paths), texts: model(texts), label: "Tape".into(), ..Default::default() }
     }
 
     /// Delay band picker menu rows (panel-menu code MENU_DELAY_BAND).
@@ -2700,6 +2891,32 @@ mod tests {
         assert!(view(&c, did, def).square.zones.iter().next().unwrap().x > x0);
     }
 
+    /// Echo: the tape strip marks every playback head, Throw is a momentary pill, and the
+    /// Character latch swaps the rack between the tail filters and ducking and the character.
+    #[test]
+    fn echo_window_shows_the_tape_and_swaps_the_rack() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("echo");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - WIN_W).abs() < 0.5 && (v.h / Z - 760.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        let d = c.project().device(did).unwrap().clone();
+        let heads = c.echo_picture(&d, def).heads.len();
+        assert!(v.square.texts.iter().filter(|t| t.text.parse::<usize>().is_ok()).count() == heads && heads > 0);
+        let idx = |id: &str| def.index_of(id).unwrap() as i32;
+        assert!(v.pills.iter().any(|p| p.kind == PILL_MOMENTARY && p.param == idx("throw")));
+        assert!(v.knobs.iter().any(|k| k.param == idx("tail_hp_l")) && !v.knobs.iter().any(|k| k.param == idx("art_hiss")));
+        c.win_action(did, ACT_SECTION, 1);
+        let v = view(&c, did, def);
+        assert!(v.knobs.iter().any(|k| k.param == idx("art_hiss")) && !v.knobs.iter().any(|k| k.param == idx("tail_hp_l")));
+        assert!(v.pills.iter().any(|p| p.param == ACT_SECTION && p.active && p.index == 0));
+        // Throw is on only while held.
+        c.panel_latch(did, idx("throw"), 1);
+        assert!(view(&c, did, def).pills.iter().any(|p| p.kind == PILL_MOMENTARY && p.active));
+        c.panel_latch(did, idx("throw"), 2);
+        assert!(!view(&c, did, def).pills.iter().any(|p| p.kind == PILL_MOMENTARY && p.active));
+    }
+
     /// A full ten-second history draws as one line per series, however many samples it holds.
     #[test]
     fn dynamics_history_draws_once_per_series() {
@@ -2730,6 +2947,7 @@ mod tests {
             "multiband-compressor",
             "delay",
             "reverb",
+            "echo",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =

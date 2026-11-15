@@ -52,3 +52,6 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
   Mode controls in the header, and a card whose band column edits the repeat-EQ band picked in its Band menu) and Reverb
   (a 1200 pt window with the tail picture across the display, a Filter range whose two handles set Low Cut and High Cut,
   and the shimmer controls lit in Shimmer mode).
+- An expanded window for Echo: the machine's tape strip with its erase, record and playback heads (lit while they
+  play), the tail across the display, a main card with the spacing, transport, width, mix and a Throw pill that sends
+  while held, and a rack that shows the tail filters and ducking, or the machine's character behind the Character latch.

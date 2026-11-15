@@ -129,7 +129,7 @@ pub struct PanelState {
     pub(crate) scopes: HashMap<DeviceId, crate::gain_scope::ScopeHistory>,
     scope_clock: Option<std::time::Instant>,
     /// Momentary latch held down: (device, param index).
-    held: Option<(DeviceId, usize)>,
+    pub(crate) held: Option<(DeviceId, usize)>,
     pub fields: crate::panel_fields::FieldState,
     /// Card view state of devices with a custom view (selected band, meters).
     pub(crate) views: HashMap<DeviceId, crate::panel_multiband::ViewState>,
