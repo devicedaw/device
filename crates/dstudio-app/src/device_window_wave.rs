@@ -137,14 +137,14 @@ impl Controller {
         paths.push(stroke(grid, white(0.05), 1.0));
         paths.push(stroke(zero, white(0.14), 1.0));
         for db in [DB_HI, 0.0, -12.0, -24.0, DB_LO] {
-            texts.push(text(-48.0 * Z, y_of(db), 40.0 * Z, tick_label(db), dim, 11.0 * Z, 2));
+            texts.push(text(-8.0 * Z, y_of(db), 40.0 * Z, tick_label(db), dim, 11.0 * Z, 2));
         }
         let axis_y = side + 12.0 * Z;
         for db in TICKS.iter().take(3) {
-            texts.push(text(x_of(*db) - 20.0 * Z, axis_y, 40.0 * Z, tick_label(*db), dim, 10.0 * Z, 1));
+            texts.push(text(x_of(*db), axis_y, 40.0 * Z, tick_label(*db), dim, 10.0 * Z, 1));
         }
-        texts.push(text(-48.0 * Z, axis_y, 44.0 * Z, "dBFS", dim, 10.0 * Z, 2));
-        texts.push(text(side - 60.0 * Z, axis_y, 60.0 * Z, "dBFS in", dim, 10.0 * Z, 2));
+        texts.push(text(-8.0 * Z, axis_y, 44.0 * Z, "dBFS", dim, 10.0 * Z, 2));
+        texts.push(text(side, axis_y, 60.0 * Z, "dBFS in", dim, 10.0 * Z, 2));
 
         // Transfer, unity and the band between them (gain, or what the clipper takes off).
         let n = 48;
@@ -179,7 +179,7 @@ impl Controller {
         wave.push_str(&format!(" L{wx1:.1} {mid:.1} L{wx0:.1} {mid:.1} Z"));
         paths.push(fill(wave, rgba(accent, FILL)));
         paths.push(stroke(crate::device_canvas::path(&shaped), accent, 1.5 * Z));
-        texts.push(text(wx1 - 80.0 * Z, -14.0 * Z, 80.0 * Z, "Wave", dim, 10.0 * Z, 2));
+        texts.push(text(wx1, 6.0 * Z, 80.0 * Z, "Wave", dim, 10.0 * Z, 2));
 
         // Legend under the axis.
         let ly = side + 31.0 * Z;
