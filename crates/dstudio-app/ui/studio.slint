@@ -1038,6 +1038,7 @@ export global Studio {
     in property <bool> shortcut-recording;          // a row is waiting for keys
     in property <bool> shortcut-reset-enabled;      // some shortcut differs from the defaults
     in property <bool> shortcut-empty;              // the search matches nothing
+    in property <string> shortcut-preset: "Device Studio"; // Preset menu: the other DAW's keys in use
     in-out property <string> shortcut-search;        // the search field's text
     callback shortcut-record(int);                  // click a row's keys: record new ones
     callback shortcut-clear(int);                   // ×: unmapped

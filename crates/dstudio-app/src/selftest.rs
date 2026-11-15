@@ -12618,6 +12618,58 @@ fn shortcut_page_steps() -> Vec<Step> {
                 .ok_or(format!("saved {:?}", c.settings.prefs.shortcuts))
             }),
         ),
+        Do("shortcuts: open the Preset menu", Box::new(|a| a.global::<Studio>().invoke_settings_dropdown(4))),
+        Check(
+            "shortcuts: the menu lists the nine presets, Device Studio checked",
+            Box::new(|_, a| {
+                let s = a.global::<Studio>();
+                let items = s.get_settings_menu_items();
+                let labels: Vec<String> = (0..slint::Model::row_count(&items))
+                    .filter_map(|i| slint::Model::row_data(&items, i))
+                    .map(|it| format!("{}{}", it.label, if it.checked { " ✓" } else { "" }))
+                    .collect();
+                (s.get_settings_menu_open() && labels.len() == 9 && labels[0] == "Device Studio ✓" && labels[2] == "Logic Pro")
+                    .then_some(())
+                    .ok_or(format!("{labels:?}"))
+            }),
+        ),
+        Do("shortcuts: pick Logic Pro", Box::new(|a| a.global::<Studio>().invoke_settings_menu_pick(2))),
+        Check(
+            "shortcuts: Logic Pro's keys are in use (Loop on / off on C), saved, nothing to reset",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let r = rows(a);
+                let lp = r.iter().find(|r| r.label == "Loop on / off");
+                let keys = lp.and_then(|p| slint::Model::row_data(&p.chords, 0)).map(|k| {
+                    (0..slint::Model::row_count(&k.parts)).filter_map(|i| slint::Model::row_data(&k.parts, i)).collect::<Vec<_>>()
+                });
+                (c.settings.prefs.shortcut_preset == "Logic Pro"
+                    && s.get_shortcut_preset() == "Logic Pro"
+                    && !s.get_settings_menu_open()
+                    && keys == Some(vec!["C".into()])
+                    && !s.get_shortcut_reset_enabled())
+                .then_some(())
+                .ok_or(format!("preset {:?} keys {keys:?}", c.settings.prefs.shortcut_preset))
+            }),
+        ),
+        Do(
+            "shortcuts: back to the Device Studio preset",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_settings_dropdown(4);
+                s.invoke_settings_menu_pick(0);
+            }),
+        ),
+        Check(
+            "shortcuts: the default keys are back",
+            Box::new(|c, a| {
+                (c.settings.keys.map == crate::app_keymap()
+                    && c.settings.prefs.shortcut_preset.is_empty()
+                    && a.global::<Studio>().get_shortcut_preset() == "Device Studio")
+                    .then_some(())
+                    .ok_or(format!("preset {:?}", c.settings.prefs.shortcut_preset))
+            }),
+        ),
         DoC("shortcuts: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
     ]
 }

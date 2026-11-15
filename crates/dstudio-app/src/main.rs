@@ -90,6 +90,7 @@ mod selftest;
 mod send_to_sampler;
 mod settings;
 mod shape_rack;
+mod shortcut_presets;
 mod shortcuts;
 mod showcase;
 mod snap;
@@ -711,7 +712,9 @@ fn parse_args() -> Result<Args, String> {
                 | "review-shortcuts-strip"
                 | "review-shortcuts-zoom"
                 | "review-shortcuts-move"
-                | "review-shortcuts-mouse") => {
+                | "review-shortcuts-mouse"
+                | "review-shortcuts-preset-menu"
+                | "review-shortcuts-logic") => {
                     a.reference_default = true;
                     a.shortcuts_review = match st {
                         "review-shortcuts-recording" => 2,
@@ -723,12 +726,14 @@ fn parse_args() -> Result<Args, String> {
                         "review-shortcuts-zoom" => 8,
                         "review-shortcuts-move" => 9,
                         "review-shortcuts-mouse" => 10,
+                        "review-shortcuts-preset-menu" => 11,
+                        "review-shortcuts-logic" => 12,
                         _ => 1,
                     };
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -941,6 +946,11 @@ fn key_name(text: &str) -> Option<String> {
         "\u{F703}" => "Right",
         "," => "Comma",
         "." => "Period",
+        "\u{14}" => "CapsLock",
+        // F1..F12 (Slint sends them as private-use characters).
+        t if t.chars().count() == 1 && ('\u{F704}'..='\u{F70F}').contains(&t.chars().next().unwrap_or(' ')) => {
+            return Some(format!("F{}", t.chars().next().unwrap_or(' ') as u32 - 0xF704 + 1));
+        }
         t if t.chars().count() == 1 && t.chars().all(|c| c.is_ascii_graphic()) => return Some(t.to_ascii_uppercase()),
         _ => return None,
     };
@@ -2614,12 +2624,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             8 => c.shortcuts_search("zoom"),
             9 => c.shortcuts_search("move"),
             10 => c.shortcuts_search("mouse"),
+            // The Preset menu open; Logic Pro's keys in use (prefs are never saved in --state runs).
+            11 => c.settings_dropdown(4),
+            12 => c.shortcuts_set_preset("Logic Pro"),
             _ => {}
         }
         if args.shortcuts_review == 3 {
             // SCREENSHOT-ONLY: a changed keymap (prefs are never saved in --state runs).
             c.settings.keys.map.set_chords("transport.tap_tempo", Vec::new());
-            c.settings.prefs.shortcuts = shortcuts::changes(&c.settings.keys.map);
+            c.settings.prefs.shortcuts = shortcuts::changes(&c.settings.keys.map, &c.settings.prefs.shortcut_preset);
         }
     }
     if args.settings_midi_review {
