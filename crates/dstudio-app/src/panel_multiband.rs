@@ -54,6 +54,11 @@ impl Default for ViewState {
 }
 
 impl ViewState {
+    /// The smoothed band meters: levels and gain changes (dB).
+    pub(crate) fn meters(&self) -> ([f32; 3], [f32; 3]) {
+        (self.level, self.gain)
+    }
+
     /// Fold in engine readouts (in, out, 3 band levels, 3 band gains): rising
     /// values follow in 30 ms, falling ones in 300 ms. True when the meters moved.
     pub fn poll(&mut self, r: &[f32]) -> bool {

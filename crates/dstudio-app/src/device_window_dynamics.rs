@@ -494,7 +494,11 @@ impl Controller {
         let out_y = |db: f32| m + (db / -RANGE).clamp(0.0, 1.0) * s;
         let num = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
         let face = def.layout.faces.first().map(|f| f.1);
-        let Some((law, at, knee)) = face.and_then(|f| crate::device_panel::face_law(f, num)).or_else(|| behavior_law(def, d)) else {
+        let Some((law, at, knee)) = face.and_then(|f| crate::device_panel::face_law(f, num)).or_else(|| {
+            let t = self.device_transfer(d, def)?;
+            let at = def.param("threshold").map_or(0.5 * (t.bend.0 + t.bend.1), |p| self.panel_value(d, def, p));
+            transfer_law(t, at)
+        }) else {
             return PanelCanvas::default();
         };
         let mut paths = Vec::new();
@@ -528,16 +532,14 @@ impl Controller {
     }
 }
 
-/// The static curve a device's behaviour computes (Character Compressor's models), as a law
-/// over all input levels: unity below the computed span, its last slope above it.
+/// A computed static curve (Character Compressor's models, the Multiband's selected band)
+/// as a law over all input levels: unity below the computed span, its last slope above it.
 #[allow(clippy::type_complexity)]
-fn behavior_law(def: &DeviceDef, d: &Device) -> Option<(Box<dyn Fn(f32) -> f32>, f32, (f32, f32))> {
-    let t = dstudio_core::builtin::behavior(def).and_then(|b| (b.transfer)(def, d))?;
+fn transfer_law(t: dstudio_core::builtin::Transfer, at: f32) -> Option<(Box<dyn Fn(f32) -> f32>, f32, (f32, f32))> {
     let pts = t.points;
     if pts.len() < 2 {
         return None;
     }
-    let at = def.param("threshold").map_or(t.bend.0, |p| def.value(d, p));
     let law = move |x: f32| {
         let (first, last) = (pts[0], pts[pts.len() - 1]);
         if x <= first.0 {
