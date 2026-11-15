@@ -1576,6 +1576,7 @@ impl Controller {
         match self.devices.dnd.clone().filter(|d| d.active) {
             Some(d) => {
                 s.set_dnd_active(true);
+                s.set_dnd_clip_visible(false);
                 s.set_dnd_x(d.pos.0);
                 s.set_dnd_y(d.pos.1);
                 let target = self.drop_target(d.pos.0, d.pos.1, &d.item);
@@ -1609,6 +1610,7 @@ impl Controller {
             None => {
                 s.set_dnd_active(false);
                 s.set_dnd_target_visible(false);
+                s.set_dnd_clip_visible(false);
                 s.set_chain_marker_visible(false);
             }
         }

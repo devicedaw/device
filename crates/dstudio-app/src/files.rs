@@ -9,7 +9,7 @@
 
 use crate::controller::{Controller, ImportTarget, JobResult, gain_from_slider, header_meter, slider_from_gain, sync_model};
 use crate::{FileGuide, FileRow, Studio};
-use dstudio_core::{ClipId, Command, MidiClip, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, persist};
+use dstudio_core::{ClipId, ColorIndex, Command, MidiClip, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, persist};
 use dstudio_engine::AssetInfo;
 use slint::Model;
 use std::collections::{HashMap, HashSet};
@@ -170,6 +170,8 @@ pub struct FilesUi {
     pub items: Vec<Option<FileItem>>,
     pub content_h: f32,
     pub drag: Option<FileDrag>,
+    /// Lengths of dragged audio files (engine frames), measured for the drop preview.
+    pub lengths: HashMap<PathBuf, i64>,
     pub audition: Audition,
     listings: HashMap<PathBuf, Result<Vec<(String, bool)>, String>>,
     project_cache: HashMap<PathBuf, Result<Project, String>>,
@@ -195,6 +197,7 @@ impl Default for FilesUi {
             items: Vec::new(),
             content_h: 0.0,
             drag: None,
+            lengths: HashMap::new(),
             audition: Audition::default(),
             listings: HashMap::new(),
             project_cache: HashMap::new(),
@@ -665,14 +668,21 @@ impl Controller {
                 });
             }
             1 => {
+                let mut started = None;
                 if let Some(d) = self.files.drag.as_mut() {
                     d.pos = (x, y);
                     if !d.active && ((x - d.start.0).abs() > 4.0 || (y - d.start.1).abs() > 4.0) {
                         d.active = true;
+                        if let FileItem::Audio(path) = &d.item {
+                            started = Some(path.clone());
+                        }
                     }
                     if d.active {
                         self.ui_dirty = true;
                     }
+                }
+                if let Some(path) = started {
+                    self.measure(path);
                 }
             }
             _ => {
@@ -708,6 +718,85 @@ impl Controller {
         }
     }
 
+    /// Learn the length of a dragged audio file for the drop preview: from the preview voice when
+    /// it holds this file, else decoded on a worker thread (the preview shows a bar until then).
+    fn measure(&mut self, path: PathBuf) {
+        if self.files.lengths.contains_key(&path) {
+            return;
+        }
+        let a = &self.files.audition;
+        if a.path.as_ref() == Some(&path)
+            && let Some((_, frames)) = a.asset
+        {
+            self.files.lengths.insert(path, frames);
+            return;
+        }
+        self.files.lengths.insert(path.clone(), -1);
+        let engine = self.engine.clone();
+        let tx = self.jobs_tx.clone();
+        self.pending_jobs += 1;
+        std::thread::spawn(move || {
+            let result = engine.load_file(&path).map_err(|e| e.to_string());
+            let _ = tx.send(JobResult::Measured { path, result });
+        });
+    }
+
+    pub(crate) fn finish_measure(&mut self, path: PathBuf, result: Result<AssetInfo, String>) {
+        match result {
+            Ok(info) => {
+                let _ = self.engine.release_asset(info.asset_id);
+                self.files.lengths.insert(path, info.frames as i64);
+            }
+            Err(_) => {
+                self.files.lengths.remove(&path);
+            }
+        }
+        self.ui_dirty = true;
+    }
+
+    /// The drop preview of a file dragged over the lanes: a clip outline (window x, y, w, h) where
+    /// the clip will land, in the colour of the track that gets it.
+    pub(crate) fn file_ghost(&self, item: &FileItem, drop: FileDrop) -> Option<(f32, f32, f32, f32, ColorIndex)> {
+        let FileDrop::Lane(track, at) = drop else { return None };
+        let p = self.project();
+        let len = match item {
+            FileItem::Audio(path) => match self.files.lengths.get(path) {
+                Some(&f) if f > 0 => p.frames_to_ticks(f, self.rate),
+                _ => p.ticks_per_bar(),
+            },
+            FileItem::Midi { project, clip } => match self.files.project_cache.get(project) {
+                Some(Ok(src)) => {
+                    src.tracks.iter().flat_map(|t| t.midi_clips.iter()).find(|c| c.id == *clip).map_or(p.ticks_per_bar(), |c| c.length)
+                }
+                _ => p.ticks_per_bar(),
+            },
+            _ => return None,
+        };
+        // The track that gets the clip: an audio file on a non-audio track goes to a new one.
+        let fits = |t: &dstudio_core::Track| match item {
+            FileItem::Audio(_) => t.kind == TrackKind::Audio,
+            _ => t.kind == TrackKind::Instrument,
+        };
+        let on = track.and_then(|t| p.track(t)).filter(|t| fits(t));
+        let (y, h, color) = match on {
+            Some(t) => {
+                let (_, y, _, h) = self.track_rect(t.id)?;
+                (y, h, t.color)
+            }
+            None => {
+                let (_, y, _, h) = self.new_track_rect()?;
+                (y, h.min(crate::timeline::TRACK_PITCH - 0.5), crate::controller::next_track_color(p))
+            }
+        };
+        let l = self.layout();
+        let ppb = self.view.px_per_beat as f32;
+        let x0 = l.lanes_x() + self.view.x_of(at as f64 / dstudio_core::PPQ as f64);
+        let x1 = x0 + (len as f32 / dstudio_core::PPQ as f32) * ppb;
+        let (lo, hi) = (l.lanes_x(), l.timeline_x() + l.timeline_w());
+        let (x0c, x1c) = (x0.max(lo), x1.min(hi));
+        (x1c - x0c > 1.0).then_some((x0c, y + 1.0, x1c - x0c, (h - 2.0).max(4.0), color))
+    }
+
     /// Where a browser file dropped at window (x, y) goes: over the lanes, the track under the
     /// pointer (None below the last track) and the beat there; over the Devices panel of a
     /// track whose instrument is a sampler, that sampler (audio files only).
@@ -724,9 +813,13 @@ impl Controller {
         if x < tx || x >= tx + tw || y < top || y >= bottom {
             return None;
         }
+        // Over the track headers the clip starts at the left edge of the lanes.
+        let x = x.max(l.lanes_x());
         let track = self.view.track_at(y - top + crate::timeline::RULER_H).and_then(|i| self.project().tracks.get(i)).map(|t| t.id);
-        let beat = self.view.beat_at(x - tx).max(0.0).round();
-        Some(FileDrop::Lane(track, (beat * dstudio_core::PPQ as f64) as Ticks))
+        // The clip starts under the pointer, on the arrangement's grid when snap is on.
+        let beat = self.view.beat_at(x - l.lanes_x()).max(0.0);
+        let beat = if self.snap_active() { self.ruler_steps().snap(beat) } else { beat };
+        Some(FileDrop::Lane(track, (beat * dstudio_core::PPQ as f64).round() as Ticks))
     }
 
     fn preview_gain(&self) -> f32 {
@@ -946,11 +1039,20 @@ impl Controller {
             s.set_dnd_y(d.pos.1);
             s.set_dnd_label(d.label.clone().into());
             s.set_dnd_ok(drop.is_some());
+            let ghost = drop.and_then(|drop| self.file_ghost(&d.item, drop));
+            s.set_dnd_clip_visible(ghost.is_some());
+            if let Some((x, y, w, h, color)) = ghost {
+                s.set_dnd_clip_x(x);
+                s.set_dnd_clip_y(y);
+                s.set_dnd_clip_w(w);
+                s.set_dnd_clip_h(h);
+                s.set_dnd_clip_color(crate::controller::slint_color(crate::controller::track_color(color)));
+            }
+            // Over the lanes the clip preview shows where it lands; the sampler gets an outline.
             let rect = match drop {
-                Some(FileDrop::Lane(Some(t), _)) => self.track_rect(t),
-                Some(FileDrop::Lane(None, _)) => self.new_track_rect(),
+                Some(FileDrop::Lane(Some(t), _)) if ghost.is_none() => self.track_rect(t),
                 Some(FileDrop::Sampler(_)) => self.sampler_drop_rect(),
-                None => None,
+                _ => None,
             };
             s.set_dnd_target_visible(rect.is_some());
             if let Some((x, y, w, h)) = rect {

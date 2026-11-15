@@ -239,6 +239,8 @@ pub enum JobResult {
     Onsets { engine_asset: u64, result: Result<Vec<dstudio_engine::Onset>, String>, tempo: Option<f64> },
     /// A file clicked in Browser › Files, decoded for the preview voice (src/files.rs).
     Auditioned { path: PathBuf, result: Result<AssetInfo, String> },
+    /// A file dragged from Browser › Files, decoded to measure its length (src/files.rs).
+    Measured { path: PathBuf, result: Result<AssetInfo, String> },
     /// A Consolidate, Bounce or Export render written and loaded (src/clip_render.rs).
     ClipRendered(Box<crate::clip_render::ClipRendered>),
     /// File › Import Ableton Live Set… read and its samples decoded (src/live_import.rs).
@@ -1468,6 +1470,7 @@ impl Controller {
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
                 JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
                 JobResult::Auditioned { path, result } => self.finish_audition(path, result),
+                JobResult::Measured { path, result } => self.finish_measure(path, result),
                 JobResult::ClipRendered(r) => self.finish_clip_render(*r),
                 JobResult::LiveSet(job) => self.finish_live_set(*job),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
@@ -1690,7 +1693,7 @@ impl Controller {
         self.project().ticks_per_bar() as f64 / PPQ as f64
     }
 
-    fn ruler_steps(&self) -> timeline::RulerSteps {
+    pub(crate) fn ruler_steps(&self) -> timeline::RulerSteps {
         let beat_len = 4.0 / self.project().transport.time_signature.denominator as f64;
         timeline::RulerSteps::new(self.view.px_per_beat, self.beats_per_bar(), beat_len, self.snap.grid)
     }

@@ -15580,6 +15580,8 @@ fn browser_drop_steps() -> Vec<Step> {
     let count = Rc::new(Cell::new(0usize));
     let (n0, n1, n2, n3, n4, n5, n6) =
         (count.clone(), count.clone(), count.clone(), count.clone(), count.clone(), count.clone(), count.clone());
+    let ghost_x = Rc::new(Cell::new(0f32));
+    let (g0, g1, g2) = (ghost_x.clone(), ghost_x.clone(), ghost_x);
     // Drag browser row (x, y) to the centre of a window rectangle the controller computes.
     fn drag_to(a: &AppWindow, from: Option<(f32, f32)>, to: Option<(f32, f32, f32, f32)>) {
         let (Some((x0, y0)), Some((x, y, w, h))) = (from, to) else { return };
@@ -15625,22 +15627,59 @@ fn browser_drop_steps() -> Vec<Step> {
             }),
         ),
         DoC(
-            "drop: drag kick.wav onto the audio track's lane",
-            Box::new(|a, ctl| {
+            "drop: press kick.wav and move it over the audio track's lane at beat 8 (held)",
+            Box::new(move |a, ctl| {
                 let to = {
                     let c = ctl.borrow();
-                    track_of(&c, TrackKind::Audio).and_then(|i| c.track_rect(c.project().tracks[i].id))
+                    let y = track_of(&c, TrackKind::Audio).and_then(|i| c.track_rect(c.project().tracks[i].id)).map(|r| r.1 + r.3 / 2.0);
+                    y.map(|y| (c.layout().lanes_x() + c.view.x_of(8.0) + 1.0, y))
                 };
-                drag_to(a, kick_row(a), to);
+                let (Some((x0, y0)), Some((x, y))) = (kick_row(a), to) else { return };
+                g0.set(x - 1.0);
+                press(a, x0, y0);
+                for i in 1..=12 {
+                    let t = i as f32 / 12.0;
+                    dispatch(
+                        a.window(),
+                        WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + (x - x0) * t, y0 + (y - y0) * t) },
+                    );
+                }
+                ctl.borrow_mut().update_ui(a);
             }),
         ),
         Check(
-            "drop: the sample lands on that track as a clip (no new track)",
-            Box::new(move |c, _| {
+            "drop: a clip preview in the track's colour starts at beat 8, under the pointer",
+            Box::new(move |c, a| {
+                let s = a.global::<Studio>();
+                let t = track_of(c, TrackKind::Audio).map(|i| c.project().tracks[i].color);
+                let want = t.map(|t| crate::controller::slint_color(crate::controller::track_color(t)));
+                let ok = s.get_dnd_active()
+                    && s.get_dnd_clip_visible()
+                    && approx(s.get_dnd_clip_x(), g1.get(), 0.5)
+                    && want == Some(s.get_dnd_clip_color());
+                ok.then_some(()).ok_or(format!("visible {} x {} (want {})", s.get_dnd_clip_visible(), s.get_dnd_clip_x(), g1.get()))
+            }),
+        ),
+        DoC(
+            "drop: let go",
+            Box::new(move |a, ctl| {
+                let y = {
+                    let c = ctl.borrow();
+                    track_of(&c, TrackKind::Audio).and_then(|i| c.track_rect(c.project().tracks[i].id)).map(|r| r.1 + r.3 / 2.0)
+                };
+                if let Some(y) = y {
+                    release(a, g2.get() + 1.0, y);
+                }
+            }),
+        ),
+        Check(
+            "drop: the sample lands on that track at beat 8, where the preview was (no new track)",
+            Box::new(move |c, a| {
                 let p = c.project();
                 let t = track_of(c, TrackKind::Audio).map(|i| &p.tracks[i]);
-                let ok = p.tracks.len() == n1.get() && t.is_some_and(|t| t.clips.iter().any(|k| k.name == "kick"));
-                ok.then_some(()).ok_or(format!("{} tracks (was {}), undo {:?}", p.tracks.len(), n1.get(), c.doc.undo_label()))
+                let start = t.and_then(|t| t.clips.iter().find(|k| k.name == "kick")).map(|k| k.start);
+                let ok = p.tracks.len() == n1.get() && start == Some(8 * PPQ) && !a.global::<Studio>().get_dnd_active();
+                ok.then_some(()).ok_or(format!("{} tracks (was {}), start {start:?} (want {})", p.tracks.len(), n1.get(), 8 * PPQ))
             }),
         ),
         DoC(

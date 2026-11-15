@@ -1484,12 +1484,24 @@ export component AppWindow inherits Window {
                 picked(i) => { Studio.devmenu-pick(i); }
             }
         }
+        // Browser file drag over the lanes: the clip it will make, where it will land.
+        if Studio.dnd-active && Studio.dnd-clip-visible: Rectangle {
+            x: Studio.dnd-clip-x; y: Studio.dnd-clip-y; width: Studio.dnd-clip-w; height: Studio.dnd-clip-h;
+            border-radius: 3px; clip: true;
+            background: Studio.dnd-clip-color.with-alpha(0.32);
+            border-width: 1px; border-color: Studio.dnd-clip-color;
+            Rectangle { x: 0; y: 0; width: parent.width; height: min(13.6px, parent.height); background: Studio.dnd-clip-color.with-alpha(0.75); }
+            Text {
+                x: 5px; y: 0; width: parent.width - 10px; height: min(13.6px, parent.height);
+                text: Studio.dnd-label; color: #ffffff; font-size: 8.5px; font-weight: 600; vertical-alignment: center; overflow: elide;
+            }
+        }
         // Browser device drag: drop target outline + ghost label at the pointer.
         if Studio.dnd-active && Studio.dnd-target-visible: Rectangle {
             x: Studio.dnd-tx; y: Studio.dnd-ty; width: Studio.dnd-tw; height: Studio.dnd-th; border-radius: 4px;
             background: #2752f522; border-width: 1.5px; border-color: Tokens.accent;
         }
-        if Studio.dnd-active: Rectangle {
+        if Studio.dnd-active && !Studio.dnd-clip-visible: Rectangle {
             x: Studio.dnd-x + 10px; y: Studio.dnd-y + 6px; height: 20px; width: ghost.preferred-width + 18px; border-radius: 10px;
             background: Studio.dnd-ok ? Tokens.accent : #3a3b40;
             ghost := Text { text: Studio.dnd-label; color: #ffffff; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
