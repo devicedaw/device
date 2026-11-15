@@ -40,3 +40,7 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
 - Expanded windows for Compressor, Limiter, Gate and Glue Compressor: the last 1, 4 or 10 seconds of input, output and
   gain reduction (Hold view freezes it) under a threshold or ceiling line you can drag, a transfer curve with the live
   operating point beside the main controls, In and Out meters and every control laid out in rows.
+- Expanded windows for Character Compressor (the model pills in the header, a main card that follows the model, and a
+  rack card with Detector, Sidechain and Level sections) and Mastering Limiter (its style pills, a short-term loudness
+  lane against a Streaming, Broadcast or Hot target with Loudness Reset, and ceiling and threshold lines you can drag).
+  Mastering Limiter's ceiling reads in dBTP while True Peak is on.
