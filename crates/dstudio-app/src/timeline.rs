@@ -534,6 +534,9 @@ pub enum Hit {
     Empty,
 }
 
+/// Height of the top-right corner of a clip that loops it when dragged (layout px).
+pub const LOOP_CORNER: f32 = 8.0;
+
 pub fn hit_test(v: &View, size: (f32, f32), tracks: usize, clips: &[ClipVis], x: f32, y: f32) -> Hit {
     if y < RULER_H {
         return Hit::Ruler;

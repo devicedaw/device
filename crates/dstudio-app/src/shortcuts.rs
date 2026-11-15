@@ -193,6 +193,28 @@ pub fn changes(map: &Keymap) -> std::collections::BTreeMap<String, Vec<String>> 
         .collect()
 }
 
+/// Mouse gestures with modifiers (label, gesture), shown under "Mouse & modifiers". They are
+/// fixed: the timeline, piano roll and knobs handle them directly.
+pub const GESTURES: &[(&str, &str)] = &[
+    ("Move off the grid (ignore snap)", "⌘ + drag"),
+    ("Duplicate clip in place", "⌥ + drag clip"),
+    ("Delete a piano roll note", "Double-click note"),
+    ("Time-stretch clip", "⇧ + drag trim edge"),
+    ("Zoom timeline", "⌘ + scroll"),
+    ("Zoom track height", "⌥ + scroll"),
+    ("Loop / extend clip", "Drag top-right corner"),
+    ("Scrub playhead", "Drag in the ruler"),
+    ("Fine-tune any knob", "⇧ + drag"),
+    ("Reset a knob to default", "⌥ + click"),
+    ("Add clip to selection", "⇧ + click"),
+];
+
+fn gesture_matches(query: &str, label: &str, gesture: &str) -> bool {
+    let q = query.trim().to_lowercase();
+    // The section's name finds them all ("mouse", "modifiers").
+    q.is_empty() || label.to_lowercase().contains(&q) || gesture.to_lowercase().contains(&q) || "mouse & modifiers".contains(&q)
+}
+
 /// Whether a row matches the search text (its label, context or keys).
 fn matches(query: &str, label: &str, context: &str, chords: &[&Chord]) -> bool {
     let q = query.trim().to_lowercase();
@@ -354,6 +376,7 @@ impl Controller {
                         recording: keys.recording == Some(*action),
                         y: 0.0,
                         h: ROW_H,
+                        gesture: SharedString::new(),
                     },
                 ));
             }
@@ -368,6 +391,7 @@ impl Controller {
                 recording: false,
                 y,
                 h: HEADER_H,
+                gesture: SharedString::new(),
             });
             shown.push(None);
             y += HEADER_H;
@@ -376,6 +400,19 @@ impl Controller {
                 y += ROW_H;
                 rows.push(row);
                 shown.push(Some(action));
+            }
+        }
+        // Mouse & modifiers: fixed gestures, listed after the keys.
+        let gestures: Vec<&(&str, &str)> =
+            GESTURES.iter().filter(|(label, gesture)| gesture_matches(&keys.search, label, gesture)).collect();
+        if !gestures.is_empty() {
+            rows.push(ShortcutRow { header: true, label: "Mouse & modifiers".into(), y, h: HEADER_H, ..Default::default() });
+            shown.push(None);
+            y += HEADER_H;
+            for (label, gesture) in gestures {
+                rows.push(ShortcutRow { label: (*label).into(), gesture: (*gesture).into(), y, h: ROW_H, ..Default::default() });
+                shown.push(None);
+                y += ROW_H;
             }
         }
         let empty = shown.is_empty();
@@ -403,6 +440,16 @@ mod tests {
                 assert!(map.condition_of(action).is_some(), "{section} › {label}: {action} has no binding");
             }
         }
+    }
+
+    #[test]
+    fn gestures_are_listed_and_searchable() {
+        assert_eq!(GESTURES.len(), 11);
+        assert!(gesture_matches("", "Zoom track height", "⌥ + scroll"));
+        assert!(gesture_matches("SCROLL", "Zoom track height", "⌥ + scroll"));
+        assert!(gesture_matches("height", "Zoom track height", "⌥ + scroll"));
+        assert!(gesture_matches("mouse", "Zoom track height", "⌥ + scroll"));
+        assert!(!gesture_matches("transpose", "Zoom track height", "⌥ + scroll"));
     }
 
     #[test]
