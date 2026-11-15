@@ -64,7 +64,7 @@ flowchart LR
   expanded window (`device_window.rs`, `ui/device_window.slint`) when the
   device has one (`device_window::has_window`; Auto Filter, Channel EQ,
   Character EQ and the plotted-field family: Tremolo, Auto-Panner, Chorus,
-  Flanger, Phaser and Ring Mod), otherwise the card itself in a window. A
+  Flanger, Phaser, Ring Mod and Character Mod), otherwise the card itself in a window. A
   window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same
@@ -72,7 +72,10 @@ flowchart LR
   window's display (`device_window_fields.rs`) asks the card's curve model in
   `device_fields.rs` for its window form (`Input::win`): a taller ladder, a
   time or frequency axis with units under the plot, and a legend naming each
-  series; dragging the plot moves the card field's two parameters. The
+  series; dragging the plot moves the card field's two parameters. Character
+  Mod's picture reads in its circuit's own unit (ms delay, Hz sweep, dB gain or
+  pan) with the band its series travel, and its rack card drops the artifacts
+  a circuit lacks; its Seed pill plays the next take (`ACT_SEED`). The
   meters read `se_builtin_set_metering` / `se_builtin_levels`
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app

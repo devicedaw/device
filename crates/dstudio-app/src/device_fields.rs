@@ -13,9 +13,9 @@
 //! gain or position over 3.35 LFO cycles (the span at the default 0.51 Hz).
 
 use dstudio_core::builtin::character_mod::{
-    CIRCUITS, CROSSED, ENSEMBLE, FLANGER, MODE_PARAMS, PANNER, PHASER, PHOTOCELL, ROTARY, SINGLE, TAPE, TREMOLO, TWIN,
+    CHARACTER_MOD, CIRCUITS, CROSSED, ENSEMBLE, FLANGER, MODE_PARAMS, PANNER, PHASER, PHOTOCELL, ROTARY, SINGLE, TAPE, TREMOLO, TWIN,
 };
-use dstudio_core::builtin::{DIVISION_QUARTERS, synced_hz};
+use dstudio_core::builtin::{DIVISION_QUARTERS, MOD_NOTE_QUARTERS, synced_hz};
 use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 
@@ -81,6 +81,8 @@ pub struct Axis {
     pub end: String,
     /// The legend sits at the right end of the caption row instead of under the axis.
     pub legend_in_caption: bool,
+    /// The window caption's label when the picture names it (Character Mod's circuit).
+    pub caption: String,
 }
 
 /// Legend glyph of a series.
@@ -872,6 +874,17 @@ fn character_mod(i: &Input) -> Plot {
     let n = i.n.max(2);
     let values: Vec<Vec<f32>> = series.iter().map(|(f, _)| (0..n).map(|k| f(k as f32 / (n - 1) as f32 * SPAN)).collect()).collect();
     let (lo, hi) = values.iter().flatten().fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+    if i.win {
+        let hz = i.lfo_hz("rate", "note", MOD_NOTE_QUARTERS);
+        let label = match MODE_PARAMS[circuit as usize] {
+            Some(mp) => {
+                let modes = CHARACTER_MOD.param(mp).map_or(&[][..], |p| p.choices);
+                format!("{} \u{00b7} {}", CIRCUITS[circuit as usize], modes.get(mode).copied().unwrap_or(""))
+            }
+            None => CIRCUITS[circuit as usize].to_string(),
+        };
+        return character_mod_window(unit, &values, (lo, hi), charmod_names(circuit, mode, values.len()), SPAN, hz, label);
+    }
     // Axis, ticks, rest line and caption per unit; y_of maps a value to 0..1.
     let (y_of, ticks, rest, readout, band): (Box<dyn Fn(f32) -> f32>, Vec<(f32, String)>, Option<f32>, String, bool) = match unit {
         Unit::Ms => {
@@ -935,6 +948,108 @@ fn character_mod(i: &Input) -> Plot {
     }
 }
 
+/// Names of Character Mod's series in the window legend.
+fn charmod_names(circuit: u32, mode: usize, n: usize) -> Vec<&'static str> {
+    let names: &[&'static str] = match circuit {
+        ENSEMBLE => &["Voice 1", "Voice 2", "Voice 3"],
+        PHASER if mode == 4 => &["Voice 1", "Voice 2", "Voice 3"],
+        TAPE if mode > 0 => &["Left", "Right", "Dry"],
+        TREMOLO if mode == 2 => &["Low", "High"],
+        ROTARY => &["Horn", "Drum"],
+        PANNER => &["Pan"],
+        _ => &["Left", "Right"],
+    };
+    names.iter().copied().take(n).collect()
+}
+
+/// Character Mod's window picture: the circuit's ruler (delay in ms, a log sweep in Hz,
+/// gain in dB or pan), one rule per LFO cycle along the time axis, the band its series
+/// travel, and a legend naming each series.
+fn character_mod_window(
+    unit: Unit,
+    values: &[Vec<f32>],
+    (lo, hi): (f32, f32),
+    names: Vec<&'static str>,
+    span: f32,
+    hz: f32,
+    caption: String,
+) -> Plot {
+    let (y_of, ticks, rest, readout, foot, band): (Box<dyn Fn(f32) -> f32>, Vec<(f32, String)>, Option<f32>, String, &str, bool) =
+        match unit {
+            Unit::Ms => {
+                let top = axis_top(hi);
+                let step = [0.5f32, 1.0, 2.0, 2.5, 5.0, 10.0, 20.0].into_iter().find(|s| top / s <= 6.0).unwrap_or(10.0);
+                let ticks = (0..=((top / (step / 2.0)) + 1e-4).floor() as usize)
+                    .map(|k| {
+                        let v = k as f32 * step / 2.0;
+                        let label = if k % 2 == 0 { num(v) } else { String::new() };
+                        (1.0 - v / top, label)
+                    })
+                    .collect();
+                (Box::new(move |v| lin(v, top, 0.0)), ticks, Some(1.0), format!("{lo:.1} \u{2013} {hi:.1} ms"), "ms delay", true)
+            }
+            Unit::Hz => {
+                let (a, b) = (WIN_HZ.0.ln(), WIN_HZ.1.ln());
+                let ticks =
+                    [50.0f32, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0].iter().map(|f| ((b - f.ln()) / (b - a), hz_tick(*f))).collect();
+                let rest = (b - 1000f32.ln()) / (b - a);
+                (
+                    Box::new(move |v| lin(v.max(1.0).ln(), b, a)),
+                    ticks,
+                    Some(rest),
+                    format!("{} \u{2013} {}", khz_text(lo), khz_text(hi)),
+                    "Hz sweep",
+                    true,
+                )
+            }
+            Unit::Db => {
+                let ticks = (0..=8)
+                    .map(|k| {
+                        let db = -3.0 * k as f32;
+                        (db / -24.0, if k % 2 == 0 { rung(db) } else { String::new() })
+                    })
+                    .collect();
+                let readout = if lo <= -90.0 { "\u{221e} dB".into() } else { format!("{:.1} dB", -lo) };
+                (Box::new(|v| lin(v, 0.0, -24.0)), ticks, Some(0.0), readout, "dB gain", true)
+            }
+            Unit::Pos => {
+                let ticks = [(0.0, "L"), (0.25, ""), (0.5, "C"), (0.75, ""), (1.0, "R")].iter().map(|(y, l)| (*y, l.to_string())).collect();
+                let readout = format!("\u{00b1}{}%", (lo.abs().max(hi.abs()) * 100.0).round());
+                (Box::new(|v| lin(v, -1.0, 1.0)), ticks, Some(0.5), readout, "pan", true)
+            }
+        };
+    let traces: Vec<Trace> = values
+        .iter()
+        .enumerate()
+        .map(|(k, v)| Trace { ys: v.iter().map(|x| y_of(*x)).collect(), style: WIN_SERIES[k.min(WIN_SERIES.len() - 1)] })
+        .collect();
+    let mut legend: Vec<(Mark, String)> =
+        names.iter().enumerate().map(|(k, n)| (Mark::Line(WIN_SERIES[k.min(WIN_SERIES.len() - 1)]), n.to_string())).collect();
+    if band && !values.is_empty() {
+        legend.push((Mark::Band, "Sweep".into()));
+    }
+    let mut axis = motion_axis(span, hz, foot);
+    axis.caption = caption;
+    Plot { readout, ticks, rest, traces, fill: if band { Fill::Band } else { Fill::None }, widths: (1.75, 2.5), live: None, axis, legend }
+}
+
+/// Character Mod's window sweep ruler (Hz).
+const WIN_HZ: (f32, f32) = (40.0, 8000.0);
+
+/// Character Mod's window series: the first voice solid, then dashed and dotted.
+const WIN_SERIES: [Style; 3] = [Style::Solid, Style::Dash { on: 5.0, off: 4.0, alpha: 0.6 }, Style::Dash { on: 1.5, off: 3.0, alpha: 0.6 }];
+
+/// A sweep's frequency with its unit: 144 Hz, 2.00 kHz, 12.0 kHz.
+fn khz_text(f: f32) -> String {
+    if f >= 10_000.0 {
+        format!("{:.1} kHz", f / 1000.0)
+    } else if f >= 1000.0 {
+        format!("{:.2} kHz", f / 1000.0)
+    } else {
+        format!("{f:.0} Hz")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -985,6 +1100,22 @@ mod tests {
         assert_eq!(r.axis.end, "ms");
         // The card form stays as it was: no axis, no legend.
         assert!(plot_of("flanger", &[], None).axis.ticks.is_empty());
+    }
+
+    /// Character Mod's window names its circuit, reads the sweep in its own unit and
+    /// lists every series plus the band.
+    #[test]
+    fn character_mod_window_names_circuit_and_series() {
+        let p = window_plot_of("character-mod");
+        assert_eq!(p.axis.caption, "Twin BBD \u{00b7} I");
+        assert_eq!(p.axis.foot, "ms delay");
+        assert!(p.readout.ends_with(" ms"), "{}", p.readout);
+        let names: Vec<&str> = p.legend.iter().map(|l| l.1.as_str()).collect();
+        assert_eq!(names, ["Left", "Right", "Sweep"]);
+        assert_eq!(p.fill, Fill::Band);
+        assert_eq!(charmod_names(ENSEMBLE, 0, 3), ["Voice 1", "Voice 2", "Voice 3"]);
+        assert_eq!(khz_text(1265.0), "1.26 kHz");
+        assert_eq!(khz_text(144.0), "144 Hz");
     }
 
     #[test]

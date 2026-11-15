@@ -75,7 +75,11 @@ const DRIVE_STEPS: [f32; 4] = [0.0, 25.0, 50.0, 75.0];
 pub(crate) const ACT_ANALYZER: i32 = 7;
 /// The analyser's Hold view latch.
 pub(crate) const ACT_HOLD: i32 = 8;
+/// Character Mod: play the next take (seed).
+pub(crate) const ACT_SEED: i32 = 9;
 const PILL_GHOST: i32 = 6;
+/// Character Mod's Mode parameter of each circuit (Ensemble has none).
+const CM_MODES: [Option<&str>; 11] = dstudio_core::builtin::character_mod::MODE_PARAMS;
 const PILL_GHOST_LATCH: i32 = 7;
 /// panel-menu code of the band picker (a menu of the EQ's bands).
 pub(crate) const MENU_BANDS: i32 = -3;
@@ -89,7 +93,7 @@ pub(crate) fn has_window(def: &DeviceDef) -> bool {
 
 /// Windows of the plotted-field family (motion and response pictures).
 fn is_field_window(def: &DeviceDef) -> bool {
-    matches!(def.id, "tremolo" | "autopanner" | "chorus" | "flanger" | "phaser" | "ring-mod")
+    matches!(def.id, "tremolo" | "autopanner" | "chorus" | "flanger" | "phaser" | "ring-mod" | "character-mod")
 }
 
 /// The frame of a device's window: content width, display box (x, y, w, h), the
@@ -122,6 +126,7 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         "chorus" | "flanger" => field_kit(WIN_W, 354.0, 56.0, 44.0),
         "phaser" => field_kit(WIN_W, 374.0, 56.0, 44.0),
         "ring-mod" => field_kit(860.0, 254.0, 40.0, 29.0),
+        "character-mod" => field_kit(WIN_W, 222.0, 60.0, 44.0),
         _ => eq(56.0, 394.0),
     }
 }
@@ -381,6 +386,8 @@ fn pill_w(label: &str) -> f32 {
         "Tame" => 55.0,
         "Off" | "On" => 41.5,
         "2x" => 37.8,
+        "Lo" => 37.8,
+        "Hi" => 35.7,
         "4x" => 38.3,
         _ => (crate::text_measure::value_width(label) * 1.2 + 24.0).ceil(),
     }
@@ -491,6 +498,10 @@ enum Item {
     Knob(&'static str, &'static str, i32, f32, bool),
     /// On / off toggle column (56 wide): parameter, name, inert.
     Toggle(&'static str, &'static str, bool),
+    /// On / off toggle column of a given width: parameter, name, width.
+    ToggleW(&'static str, &'static str, f32),
+    /// One lit pill that runs a window action: action, label, name, width.
+    Action(i32, String, &'static str, f32),
     /// Picker column: parameter (or a menu code), label, name, width, inert.
     Picker(i32, String, &'static str, f32, bool),
     /// Pill row column: parameter, labels with their values, name, width.
@@ -506,6 +517,8 @@ impl Item {
         match self {
             Item::Knob(_, _, _, w, _) => *w,
             Item::Toggle(..) => 56.0,
+            Item::ToggleW(.., w) => *w,
+            Item::Action(.., w) => *w,
             Item::Picker(_, _, _, w, _) => *w,
             Item::Pills(.., w) => *w,
             Item::ActionPills(_, _, _, _, w, _) => *w,
@@ -753,6 +766,19 @@ impl Controller {
                         p.inert = inert;
                         b.name(x, 56.0, row.name_y(), name, inert);
                     }
+                    Item::ToggleW(id, name, w) => {
+                        let on = val(id) >= 0.5;
+                        let label = if on { "On" } else { "Off" };
+                        let pw = pill_w(label);
+                        b.rect(BOX_TRACK, x + (w - pw - 4.0) / 2.0, top + row.pill - 2.0, pw + 4.0, 28.0);
+                        b.pill(PILL_TOGGLE, idx(id), 0, x + (w - pw) / 2.0, top + row.pill, pw, label, on);
+                        b.name(x, w, row.name_y(), name, false);
+                    }
+                    Item::Action(action, label, name, w) => {
+                        let pw = pill_w(&label);
+                        b.pill(PILL_ACTION, action, 1, x + (w - pw) / 2.0, top + row.pill, pw, &label, true);
+                        b.name(x, w, row.name_y(), name, false);
+                    }
                     Item::Picker(param, label, name, w, inert) => {
                         let p = b.pill(PILL_PICKER, param, 0, x + w / 2.0, top + row.pill, 0.0, &label, false);
                         p.inert = inert;
@@ -893,6 +919,9 @@ impl Controller {
     /// (Ring Mod: its modulator), the device's own selector, then its secondary knobs.
     /// Returns the window's content height.
     fn field_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        if def.id == "character-mod" {
+            return self.character_mod_window(d, def, b, y);
+        }
         let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
         let rate = if val("sync") >= 0.5 { "rate_sync" } else { "rate" };
         let lfo = || {
@@ -947,6 +976,65 @@ impl Controller {
         let row = Row::main(y);
         self.win_card(d, def, b, row, clusters.into_iter().map(|c| (c, 14.0)).collect());
         y + row.h + 16.0
+    }
+
+    /// Character Mod's two cards: the circuit and its motion, then its rack (Input, the
+    /// circuit's artifacts, the mid / side depths, Seed and Mono, Output). A control the
+    /// circuit lacks leaves the row, and the gutters close up around it.
+    fn character_mod_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let label = |id: &str| def.param(id).map(|p| p.format(val(id))).unwrap_or_default();
+        let circuit = (val("model").round().max(0.0) as usize).min(CM_MODES.len() - 1);
+        let mut character = vec![Item::Picker(idx("model"), label("model"), "Character", 112.0, false)];
+        if let Some(mode) = CM_MODES[circuit] {
+            character.push(Item::Picker(idx(mode), label(mode), "Mode", 104.0, false));
+        }
+        let rate = if val("sync") >= 0.5 { "note" } else { "rate" };
+        let main = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            main,
+            vec![
+                (character, 10.0),
+                (
+                    vec![
+                        Item::Pills("sync", vec![("Free", 0.0), ("Sync", 1.0)], "Timebase", 108.0),
+                        Item::Knob(rate, "Rate", 2, 70.0, false),
+                        Item::Knob("depth", "Depth", 2, 70.0, false),
+                        Item::Knob("mix", "Mix", 1, 56.0, false),
+                    ],
+                    10.0,
+                ),
+                (
+                    vec![
+                        Item::Knob("width", "Width", 1, 56.0, false),
+                        Item::Knob("drift", "Drift", 1, 56.0, false),
+                        Item::Knob("voice", "Voice", 1, 56.0, false),
+                    ],
+                    10.0,
+                ),
+            ],
+        );
+        let shown = |id: &str| def.is_shown(d, id);
+        let artifacts: Vec<Item> = [("art_hiss", "Hiss"), ("art_drive", "Drive"), ("art_darken", "Darken"), ("art_wow", "Wow")]
+            .into_iter()
+            .filter(|(id, _)| shown(id))
+            .map(|(id, name)| Item::Knob(id, name, 1, 56.0, false))
+            .collect();
+        let mut clusters = vec![(vec![Item::Pills("input", vec![("Off", 0.0), ("Lo", 1.0), ("Hi", 2.0)], "Input", 120.0)], 10.0)];
+        if !artifacts.is_empty() {
+            clusters.push((artifacts, 10.0));
+        }
+        clusters.push((vec![Item::Knob("depth_m", "Depth-M", 1, 60.0, false), Item::Knob("depth_s", "Depth-S", 1, 60.0, false)], 10.0));
+        let take = format!("Take {}", val("seed").round() as i32);
+        clusters.push((vec![Item::Action(ACT_SEED, take, "Seed", 96.0), Item::ToggleW("mono_audition", "Mono", 64.0)], 10.0));
+        clusters.push((vec![Item::Knob("trim", "Output", 1, 56.0, false)], 10.0));
+        let rack = Row::rack(y + main.h + 12.0);
+        self.win_card(d, def, b, rack, clusters);
+        rack.y + rack.h + 16.0
     }
 
     // ------------------------------------------------------------ EQs
@@ -1265,6 +1353,14 @@ impl Controller {
                 self.devices.wins.analyzer.insert(device, view);
                 let _ = self.engine.builtin_set_spectrum(device.0, view.engine_mode());
             }
+            (ACT_SEED, _) => {
+                let Some(p) = def.param("seed") else { return };
+                let span = (p.max - p.min + 1.0).round() as i32;
+                let cur = def.value(d, p).round() as i32 - p.min as i32;
+                let step = if value < 0 { -1 } else { 1 };
+                let next = p.min + (cur + step).rem_euclid(span) as f32;
+                self.panel_commit(Command::SetDeviceParam { device, param: p.id.into(), value: next });
+            }
             (ACT_HOLD, _) => {
                 if !self.devices.wins.held.remove(&device) {
                     self.devices.wins.held.insert(device);
@@ -1416,7 +1512,7 @@ mod tests {
     #[test]
     fn field_windows_show_the_plot_and_every_control() {
         use slint::Model;
-        for id in ["tremolo", "autopanner", "chorus", "flanger", "phaser", "ring-mod"] {
+        for id in ["tremolo", "autopanner", "chorus", "flanger", "phaser", "ring-mod", "character-mod"] {
             let (c, did, def) = controller_with(id);
             assert!(has_window(def), "{id}");
             let v = view(&c, did, def);
@@ -1440,7 +1536,7 @@ mod tests {
     #[ignore]
     fn bench_field_windows() {
         let n = 500;
-        for id in ["tremolo", "autopanner", "chorus", "flanger", "phaser", "ring-mod"] {
+        for id in ["tremolo", "autopanner", "chorus", "flanger", "phaser", "ring-mod", "character-mod"] {
             let (c, did, def) = controller_with(id);
             let d = c.project().device(did).unwrap().clone();
             let t0 = std::time::Instant::now();
@@ -1455,6 +1551,35 @@ mod tests {
             let win = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
             println!("{id:<11} card {card:7.1} us   window {win:7.1} us");
         }
+    }
+
+    /// Character Mod: two cards; the rack drops the artifacts a circuit lacks, and the
+    /// Seed pill plays the next take, wrapping at the end.
+    #[test]
+    fn character_mod_window_rows_follow_the_circuit() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("character-mod");
+        let v = view(&c, did, def);
+        assert!((v.h / Z - 520.0).abs() < 0.5, "{}", v.h / Z);
+        assert_eq!(
+            knob_names(&v),
+            ["Rate", "Depth", "Mix", "Width", "Drift", "Voice", "Hiss", "Drive", "Darken", "Depth-M", "Depth-S", "Output"]
+        );
+        let take = |c: &Controller| view(c, did, def).pills.iter().find(|p| p.param == ACT_SEED).map(|p| p.label.to_string());
+        assert_eq!(take(&c).as_deref(), Some("Take 1"));
+        c.win_action(did, ACT_SEED, 1);
+        assert_eq!(take(&c).as_deref(), Some("Take 2"));
+        c.win_action(did, ACT_SEED, -1);
+        c.win_action(did, ACT_SEED, -1);
+        assert_eq!(take(&c).as_deref(), Some("Take 9999"));
+        // Panner has no artifacts but Wow-free circuits keep the rest; Ensemble has no Mode.
+        let model = def.index_of("model").unwrap() as i32;
+        c.win_choice(did, model, 10);
+        let names = knob_names(&view(&c, did, def));
+        assert!(!names.iter().any(|n| n == "Hiss" || n == "Drive" || n == "Darken"), "{names:?}");
+        c.win_choice(did, model, 3);
+        let modes = view(&c, did, def).texts.iter().filter(|t| t.text == "Mode").count();
+        assert_eq!(modes, 0, "Ensemble has no Mode picker");
     }
 
     /// Character EQ's lower card shows one section at a time.
