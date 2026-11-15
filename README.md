@@ -59,6 +59,9 @@ wgpu.
   selected notes' velocity and ←/→ (⇧ for a bar) move them. 0 or M mutes the selected clips (or the track), ←/→ step
   through the mixer's strips, ⇧Tab switches between the clip editor and the devices, and ⌘=/⌘-/⌘0 zoom the interface.
   Moving clips to the track above or below and gluing notes have no key until you record one.
+  The mouse works with modifiers too: ⌥-drag copies clips, ⇧-drag on a clip's right edge time-stretches it, the
+  top-right corner loops it, ⌥ + scroll sizes the track rows, a double-click deletes a note, and on knobs ⇧-drag
+  fine-tunes and ⌥-click resets. Settings › Shortcuts lists them under Mouse & modifiers.
 - **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Printing clips.** Consolidate joins clips into one, Bounce to new track (⌘B, or Resample in the clip menu and the

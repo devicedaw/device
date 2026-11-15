@@ -335,7 +335,7 @@ pub struct PrState {
     pub scroll: f32,
     pub drag: Option<PrDrag>,
     pub value_drag: Option<ValueDrag>,
-    last_down: Option<(Instant, f32, f32)>,
+    pub(crate) last_down: Option<(Instant, f32, f32)>,
     pub size: (f32, f32),
     humanize_count: u64,
     /// Step sequencer view of a pattern clip (src/stepseq.rs).
@@ -1275,6 +1275,14 @@ impl Controller {
                 }
                 let notes = clip.notes.clone();
                 if let Some((n, edge)) = self.hit_note(&notes, &v, x, y) {
+                    // Double-click a note: delete it.
+                    if double && !shift && !alt {
+                        let rest: Vec<Note> = notes.iter().filter(|m| m.id != n.id).copied().collect();
+                        self.pr.selected.remove(&n.id);
+                        self.pr.last_down = None;
+                        self.commit_notes(clip.id, rest, Some("Delete Note"));
+                        return;
+                    }
                     if shift {
                         if !self.pr.selected.remove(&n.id) {
                             self.pr.selected.insert(n.id);

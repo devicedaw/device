@@ -285,6 +285,13 @@ enum Drag {
         orig: Ticks,
         cur: Ticks,
     },
+    /// ⇧-drag on an audio clip's right edge: time-stretch it to a new length (ticks).
+    Stretch {
+        clip: ClipId,
+        start: Ticks,
+        orig: Ticks,
+        cur: Ticks,
+    },
     /// MIDI clip edges: (start, length) in ticks.
     MidiLeft {
         clip: ClipId,
@@ -423,6 +430,8 @@ pub struct Controller {
     pub(crate) hover_clip: Option<ClipId>,
     /// Folded group tracks: their tracks' rows hide (src/groups.rs).
     pub(crate) collapsed: std::collections::HashSet<TrackId>,
+    /// The clip drag started with ⌥: its release copies the clips instead of moving them.
+    pub(crate) drag_dup: bool,
     /// Timeline / bottom-panel splitter drag (src/splitters.rs).
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
     /// Saved height (None = default) each bottom panel kind had before its collapse button shut
@@ -619,6 +628,7 @@ impl Controller {
             fade_drag: None,
             hover_clip: None,
             collapsed: Default::default(),
+            drag_dup: false,
             bottom_drag: None,
             bottom_restore: Default::default(),
             chat_drag: None,
@@ -1712,6 +1722,47 @@ impl Controller {
         }
     }
 
+    /// The clip's loop when it is on, else a new one around the whole clip (the top-right
+    /// corner drag turns looping on).
+    pub(crate) fn loop_or_whole(&self, c: &dstudio_core::Clip) -> dstudio_core::model::AudioLoop {
+        c.clip_loop.filter(|l| l.on).unwrap_or_else(|| {
+            let content = self.project().content_length_ticks(c);
+            dstudio_core::model::AudioLoop { on: true, start: 0, end: content, length: content }
+        })
+    }
+
+    /// A ⇧-drag time-stretch can start on this audio clip: its length (ticks) and start. Not
+    /// while it loops (its edge sets the loop length then) or with warp off but warp markers
+    /// kept (turning warp on would move them).
+    fn stretch_start(&self, id: ClipId) -> Option<(Ticks, Ticks)> {
+        let p = self.project();
+        let c = p.clip(id)?;
+        if c.clip_loop.is_some_and(|l| l.on) || (!c.warp.enabled && !c.warp.markers.is_empty()) {
+            return None;
+        }
+        Some((p.content_length_ticks(c), c.start))
+    }
+
+    /// The clip's warp stretched from `orig` to `cur` ticks: the speed scales by orig / cur.
+    /// With warp off it is turned on first at the tempo that keeps the clip's length.
+    pub(crate) fn stretched_warp(&self, c: &dstudio_core::Clip, orig: Ticks, cur: Ticks) -> Option<dstudio_core::warp::ClipWarp> {
+        use dstudio_core::warp::{MAX_ORIGINAL_BPM, MAX_SPEED, MIN_ORIGINAL_BPM, MIN_SPEED};
+        if cur <= 0 || orig <= 0 {
+            return None;
+        }
+        let mut w = c.warp.clone();
+        if !w.enabled {
+            if !w.markers.is_empty() {
+                return None;
+            }
+            w.original_bpm = (self.project().transport.bpm / w.varispeed()).clamp(MIN_ORIGINAL_BPM, MAX_ORIGINAL_BPM);
+            w.speed = 1.0;
+            w.enabled = true;
+        }
+        w.speed = (w.speed * orig as f64 / cur as f64).clamp(MIN_SPEED, MAX_SPEED);
+        Some(w)
+    }
+
     fn clip_region(&self, id: ClipId) -> Option<(TrackId, Ticks, u64, u64, f64, u64)> {
         let p = self.project();
         let (ti, ci) = p.find_clip(id)?;
@@ -1750,7 +1801,16 @@ impl Controller {
                     Hit::Clip { index, zone } => {
                         let id = self.clip_ids[index];
                         self.pr.focused = false;
+                        // ⌥-drag copies the clips instead of moving them.
+                        self.drag_dup = alt && zone == Zone::Body;
                         if shift {
+                            // ⇧-drag an audio clip's right edge: time-stretch. ⇧-click: add to the selection.
+                            if let Some((orig, start)) = self.stretch_start(id).filter(|_| zone == Zone::Right) {
+                                self.focus_clip(id);
+                                self.drag = Some(Drag::Stretch { clip: id, start, orig, cur: orig });
+                                self.ui_dirty = true;
+                                return;
+                            }
                             self.toggle_clip_selection(id);
                             return;
                         }
@@ -1789,6 +1849,11 @@ impl Controller {
                             Zone::Left => Drag::TrimLeft { clip: id, orig: (start, off, len), cur: (start, off, len) },
                             Zone::Right => match self.project().clip(id).and_then(|c| c.clip_loop).filter(|l| l.on) {
                                 Some(l) => Drag::LoopRight { clip: id, start, orig: l.length, cur: l.length },
+                                // The top-right corner loops the clip and extends it.
+                                None if y < self.clip_vis[index].rect(&self.view).1 + timeline::LOOP_CORNER => {
+                                    let content = self.project().clip(id).map_or(0, |c| self.project().content_length_ticks(c));
+                                    Drag::LoopRight { clip: id, start, orig: content, cur: content }
+                                }
                                 None => Drag::TrimRight { clip: id, orig: (start, off, len), cur: (start, off, len) },
                             },
                         });
@@ -1878,6 +1943,12 @@ impl Controller {
                         let cur = snap(beat).max(start + PPQ / 4) - start;
                         self.drag = Some(Drag::LoopRight { clip, start, orig, cur });
                     }
+                    Drag::Stretch { clip, start, orig, .. } => {
+                        // The speed range bounds how far a clip stretches.
+                        let (lo, hi) = (orig as f64 / dstudio_core::warp::MAX_SPEED, orig as f64 / dstudio_core::warp::MIN_SPEED);
+                        let cur = ((snap(beat) - start) as f64).clamp(lo.max((PPQ / 4) as f64), hi).round() as Ticks;
+                        self.drag = Some(Drag::Stretch { clip, start, orig, cur });
+                    }
                     Drag::TrimRight { clip, orig, .. } => {
                         let Some((_, _, _, _, _, frames)) = self.clip_region(clip) else { return };
                         let (s0, off0, len0) = orig;
@@ -1913,6 +1984,11 @@ impl Controller {
                             self.set_clip_selection(vec![c]);
                         }
                     }
+                    Some(Drag::Move { clip, orig_track, orig_start, track, start, .. })
+                        if self.drag_dup && (track, start) != (orig_track, orig_start) =>
+                    {
+                        self.copy_clips_to(&[(clip, track, start)]);
+                    }
                     Some(Drag::Move { clip, orig_track, orig_start, track, start, .. }) if (track, start) != (orig_track, orig_start) => {
                         let midi = self.project().find_midi_clip(clip).is_some();
                         self.execute(if midi {
@@ -1933,8 +2009,13 @@ impl Controller {
                     Some(Drag::TrimLeft { clip, orig, cur } | Drag::TrimRight { clip, orig, cur }) if orig != cur => {
                         self.execute(Command::TrimClip { clip, start: cur.0, source_offset: cur.1, source_length: cur.2 });
                     }
+                    Some(Drag::Stretch { clip, orig, cur, .. }) if orig != cur => {
+                        if let Some(warp) = self.project().clip(clip).and_then(|c| self.stretched_warp(c, orig, cur)) {
+                            self.execute(Command::SetClipWarp { clip, warp, label: "Stretch Clip".into() });
+                        }
+                    }
                     Some(Drag::LoopRight { clip, orig, cur, .. }) if orig != cur => {
-                        if let Some(l) = self.project().clip(clip).and_then(|c| c.clip_loop) {
+                        if let Some(l) = self.project().clip(clip).map(|c| self.loop_or_whole(c)) {
                             self.execute(Command::SetClipLoop {
                                 clip,
                                 clip_loop: Some(dstudio_core::model::AudioLoop { length: cur, ..l }),
@@ -2021,11 +2102,17 @@ impl Controller {
                         (start, off, len) = *cur;
                     }
                     Some(Drag::LoopRight { clip, cur, .. }) if *clip == c.id => {
-                        clip_loop = clip_loop.map(|l| dstudio_core::model::AudioLoop { length: *cur, ..l });
+                        clip_loop = Some(dstudio_core::model::AudioLoop { length: *cur, ..self.loop_or_whole(c) });
                     }
                     _ => {}
                 }
-                let shown = dstudio_core::Clip { source_offset: off, source_length: len, clip_loop, ..c.clone() };
+                let mut shown = dstudio_core::Clip { source_offset: off, source_length: len, clip_loop, ..c.clone() };
+                if let Some(Drag::Stretch { clip, orig, cur, .. }) = &self.drag
+                    && *clip == c.id
+                    && let Some(w) = self.stretched_warp(c, *orig, *cur)
+                {
+                    shown.warp = w;
+                }
                 let len_beats = p.clip_length_ticks(&shown) as f64 / PPQ as f64;
                 let wave = self.clip_wave(&shown);
                 let fades = self.shown_fades(c.id, c.fades, p.clip_length_ticks(&shown));

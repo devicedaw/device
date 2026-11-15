@@ -697,7 +697,8 @@ component Timeline inherits Panel {
             changed mouse-x => { if (!self.pressed) { Studio.lane-hover(self.mouse-x, self.mouse-y); } }
             changed mouse-y => { if (!self.pressed) { Studio.lane-hover(self.mouse-x, self.mouse-y); } }
             scroll-event(e) => {
-                Studio.lane-scroll(e.delta-x / 1px, e.delta-y / 1px, self.mouse-x, e.modifiers.control || e.modifiers.alt);
+                // ⌘ (Ctrl) + scroll zooms the timeline, ⌥ + scroll the track heights.
+                Studio.lane-scroll(e.delta-x / 1px, e.delta-y / 1px, self.mouse-x, e.modifiers.control ? 1 : e.modifiers.alt ? 2 : 0);
                 accept
             }
         }
@@ -710,7 +711,7 @@ component Timeline inherits Panel {
         x: 0; y: 66.5px; width: Tokens.lane-x - 0.5px; height: root.height - 66.5px - Studio.master-h - 0.5px - Studio.pinned-h;
         clip: true;
         TouchArea {
-            scroll-event(e) => { Studio.lane-scroll(0, e.delta-y / 1px, 0, false); accept }
+            scroll-event(e) => { Studio.lane-scroll(0, e.delta-y / 1px, 0, 0); accept }
         }
         for t[i] in Studio.tracks: TrackRowItem {
             // Rows of a folded group's tracks have no height and don't show.

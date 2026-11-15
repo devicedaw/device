@@ -702,7 +702,8 @@ fn parse_args() -> Result<Args, String> {
                 | "review-shortcuts-transpose"
                 | "review-shortcuts-strip"
                 | "review-shortcuts-zoom"
-                | "review-shortcuts-move") => {
+                | "review-shortcuts-move"
+                | "review-shortcuts-mouse") => {
                     a.reference_default = true;
                     a.shortcuts_review = match st {
                         "review-shortcuts-recording" => 2,
@@ -713,12 +714,13 @@ fn parse_args() -> Result<Args, String> {
                         "review-shortcuts-strip" => 7,
                         "review-shortcuts-zoom" => 8,
                         "review-shortcuts-move" => 9,
+                        "review-shortcuts-mouse" => 10,
                         _ => 1,
                     };
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -2582,6 +2584,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             7 => c.shortcuts_search("strip"),
             8 => c.shortcuts_search("zoom"),
             9 => c.shortcuts_search("move"),
+            10 => c.shortcuts_search("mouse"),
             _ => {}
         }
         if args.shortcuts_review == 3 {
@@ -2947,7 +2950,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_devmm_scroll, |c, dx: f32, dy: f32| c.devmm_wheel(dx, dy));
     on!(on_minimap_double, |c| c.minimap_fit());
     on!(on_minimap_scroll, |c, dx: f32, dy: f32, x: f32, w: f32, zoom: bool| c.minimap_scroll(dx, dy, x, w, zoom));
-    on!(on_lane_scroll, |c, dx: f32, dy: f32, x: f32, zoom: bool| c.scroll(dx, dy, x, zoom));
+    on!(on_lane_scroll, |c, dx: f32, dy: f32, x: f32, mode: i32| if mode == 2 {
+        c.zoom_track_heights(dy)
+    } else {
+        c.scroll(dx, dy, x, mode == 1)
+    });
     on!(on_set_bottom_tab, |c, t: i32| c.set_bottom_tab(if t == 1 { BottomTab::Clip } else { BottomTab::Devices }));
     on!(on_synth_page_select, |c, i: i32| c.synth_page(i.max(0) as usize));
     on!(on_synth_param, |c, id: i32, norm: f32| c.synth_param(id.max(0) as usize, norm));

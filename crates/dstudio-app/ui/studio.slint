@@ -403,7 +403,8 @@ export struct UndoHistoryRow { number: int, label: string, date: string, time: s
 // Settings › Shortcuts (src/shortcuts.rs): one chord's badges ("⌘", "L"), and a list row
 // (a section header, or an action with its chords and context). y / h in list units.
 export struct ShortcutKey { parts: [string] }
-export struct ShortcutRow { header: bool, label: string, context: string, chords: [ShortcutKey], recording: bool, y: float, h: float }
+// gesture: a "Mouse & modifiers" row (fixed, not recordable): the gesture text in one pill.
+export struct ShortcutRow { header: bool, label: string, context: string, chords: [ShortcutKey], recording: bool, y: float, h: float, gesture: string }
 
 // swatch: a colour chip before the label (track colour menu); transparent for none.
 export struct MenuItem { label: string, shortcut: string, enabled: bool, separator: bool, submenu: bool, y: length, swatch: color }
@@ -624,7 +625,7 @@ export global Studio {
     in property <length> marquee-w;
     in property <length> marquee-h;
     callback lane-hover(length, length);
-    callback lane-scroll(float, float, length, bool);      // dx, dy, x, zoom
+    callback lane-scroll(float, float, length, int);       // dx, dy, x, mode (0 scroll, 1 zoom, 2 track heights)
     callback key(string, bool, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl, auto-repeat
     // ---- app menu bar (AppWindow MenuBar) ----
     // Items with a shortcut replay that key (text, primary, shift) into the window, so they act

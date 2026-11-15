@@ -119,6 +119,7 @@ export component TrackPan inherits Rectangle {
     // Right press: the control menu (window coordinates).
     callback context(length, length);
     property <bool> reset-held;
+    property <bool> fine;
     property <float> start-value;
     property <float> angle: root.value * 135;
     property <float> c: self.width / 1px / 2;
@@ -169,12 +170,14 @@ export component TrackPan inherits Rectangle {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                 root.reset-held = e.modifiers.alt;
+                root.fine = e.modifiers.shift;
                 if (e.modifiers.alt) { root.reset(); } else { root.start-value = root.value; }
             }
             if (e.kind == PointerEventKind.up) { root.released(); }
         }
         moved => {
-            if (!root.reset-held) { root.value-changed(max(-1, min(1, root.start-value + (self.pressed-y - self.mouse-y) / 1px / 150 * 2))); }
+            // ⇧-drag: a tenth of the speed.
+            if (!root.reset-held) { root.value-changed(max(-1, min(1, root.start-value + (self.pressed-y - self.mouse-y) / 1px / 150 * 2 * (root.fine ? 0.1 : 1)))); }
         }
         double-clicked => { root.edit(); }
     }

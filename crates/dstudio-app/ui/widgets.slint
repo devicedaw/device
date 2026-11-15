@@ -243,6 +243,7 @@ export component HSlider inherits Rectangle {
     callback released();
     callback reset();
     property <length> travel: self.width - self.handle-size;
+    property <bool> alt-reset;
     groove := Inset {
         height: root.height;
         border-radius: self.height / 2;
@@ -259,12 +260,16 @@ export component HSlider inherits Rectangle {
     }
     TouchArea {
         pointer-event(e) => {
-            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+            // ⌥-click: back to the default.
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left && e.modifiers.alt) {
+                root.alt-reset = true;
+                root.reset();
+            } else if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                 root.moved(max(0, min(1, (self.mouse-x - root.handle-size / 2) / root.travel)));
             }
-            if (e.kind == PointerEventKind.up) { root.released(); }
+            if (e.kind == PointerEventKind.up) { root.alt-reset = false; root.released(); }
         }
-        moved => { root.moved(max(0, min(1, (self.mouse-x - root.handle-size / 2) / root.travel))); }
+        moved => { if (!root.alt-reset) { root.moved(max(0, min(1, (self.mouse-x - root.handle-size / 2) / root.travel))); } }
         double-clicked => { root.reset(); }
     }
 }
@@ -299,6 +304,8 @@ export component Knob inherits Rectangle {
     // Right press: the control menu (absolute window position; callers subtract the menu bar).
     callback context(length, length);
     property <float> start-value;
+    property <bool> fine;
+    property <bool> alt-reset;
     property <float> cx: self.width / 1px / 2;
     property <float> cy: self.height / 1px / 2;
     property <float> r: self.body / 1px / 2;
@@ -370,13 +377,18 @@ export component Knob inherits Rectangle {
         mouse-cursor: ns-resize;
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
-            if (e.kind == PointerEventKind.down) { root.start-value = root.value; }
+            // ⌥-click: back to the default.
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left && e.modifiers.alt) { root.alt-reset = true; root.reset(); }
+            if (e.kind == PointerEventKind.down) { root.start-value = root.value; root.fine = e.modifiers.shift; }
             // A cancelled drag ends its gesture too.
-            if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) { root.released(); }
+            if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) { root.alt-reset = false; root.released(); }
         }
         moved => {
-            root.value-changed(max(root.min-value, min(root.max-value,
-                root.start-value + (self.pressed-y - self.mouse-y) / 1px / root.sensitivity * (root.max-value - root.min-value))));
+            // ⇧-drag: a tenth of the speed, for fine changes.
+            if (!root.alt-reset) {
+                root.value-changed(max(root.min-value, min(root.max-value,
+                    root.start-value + (self.pressed-y - self.mouse-y) / 1px / root.sensitivity * (root.fine ? 0.1 : 1) * (root.max-value - root.min-value))));
+            }
         }
         double-clicked => { root.reset(); }
     }

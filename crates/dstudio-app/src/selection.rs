@@ -155,6 +155,14 @@ impl Controller {
             return;
         }
         let p = self.project();
+        if self.drag_dup {
+            let places: Vec<(ClipId, TrackId, Ticks)> = self
+                .selection_places()
+                .into_iter()
+                .map(|(clip, t, s, _)| (clip, p.tracks[(t as isize + dtrack) as usize].id, s + dt))
+                .collect();
+            return self.copy_clips_to(&places);
+        }
         let cmds: Vec<Command> = self
             .selection_places()
             .into_iter()
@@ -233,6 +241,31 @@ impl Controller {
         }
         let n = cmds.len();
         if self.execute(Command::Batch { label: format!("Duplicate {n} Clips"), commands: cmds }) {
+            self.set_clip_selection(new_ids);
+        }
+    }
+
+    /// ⌥-drag release: copies of the clips at their new places (`(clip, track, start)`), the
+    /// originals untouched. One undo step; the copies become the selection.
+    pub(crate) fn copy_clips_to(&mut self, places: &[(ClipId, TrackId, Ticks)]) {
+        let p = self.project();
+        let mut next = p.next_id;
+        let mut cmds = Vec::new();
+        let mut new_ids = Vec::new();
+        for &(id, track, start) in places {
+            let new = ClipId(next);
+            if let Some(c) = p.midi_clip(id) {
+                cmds.push(Command::AddMidiClip { track, clip: dstudio_core::MidiClip { id: new, start, ..c.clone() } });
+            } else if let Some(c) = p.clip(id) {
+                cmds.push(Command::AddClip { track, clip: dstudio_core::Clip { id: new, start, ..c.clone() } });
+            } else {
+                continue;
+            }
+            next += 1;
+            new_ids.push(new);
+        }
+        let label = if cmds.len() == 1 { "Duplicate Clip".to_string() } else { format!("Duplicate {} Clips", cmds.len()) };
+        if !cmds.is_empty() && self.execute(Command::Batch { label, commands: cmds }) {
             self.set_clip_selection(new_ids);
         }
     }
