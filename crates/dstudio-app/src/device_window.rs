@@ -105,6 +105,9 @@ pub(crate) const MENU_TARGET: i32 = -5;
 pub(crate) const MENU_MB_BAND: i32 = -6;
 /// The Multiband Compressor's bands, as its band picker names them.
 const MB_BANDS: [&str; 3] = ["Low", "Mid", "High"];
+/// Height (units at twice the card's scale) of the Tuner window's picture: it puts the bar
+/// across the middle of the display.
+const TUNER_WIN_H: f32 = 194.0;
 /// Width of the waveshaper and Bit Crusher windows.
 const WAVE_W: f32 = 960.0;
 /// Panel-menu code of the Delay's repeat-EQ band picker.
@@ -123,7 +126,7 @@ pub(crate) fn has_window(def: &DeviceDef) -> bool {
         def.id,
         "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb" | "echo"
     ) || is_wave_window(def)
-        || matches!(def.id, "utility" | "widener")
+        || matches!(def.id, "utility" | "widener" | "tuner")
         || def.id == "bitcrusher"
         || is_field_window(def)
         || is_dynamics_window(def)
@@ -187,6 +190,8 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         // Utility: three cards and no display; the meters run the window's height.
         "utility" => Kit { w: 1200.0, display: (INSET, 52.0, 1042.0, 630.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: true, meters_h: 0.0 },
         // Stereo Widener: the field over the correlation lane.
+        // Tuner: the bar across a tall display, one In meter beside it.
+        "tuner" => Kit { w: 1200.0, display: (INSET, 52.0, 1108.0, 550.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: true, meters_h: 0.0 },
         // Its meters run down past the card, as the Bit Crusher's.
         "widener" => Kit { w: 1200.0, display: (INSET, 52.0, 1042.0, 514.0), plot: (36.0, 25.0, 12.0, 8.0), narrow: true, meters_h: 630.0 },
         // Bit Crusher: one crushed cycle fills the display.
@@ -653,6 +658,8 @@ impl Controller {
             _ if is_wave_window(def) => self.wave_window_canvas(d, def, &k, accent),
             _ if def.id == "bitcrusher" => self.crush_window_canvas(d, def, &k, accent),
             _ if def.id == "widener" => self.widener_window_canvas(d, def, &k, accent),
+            // The card's tuner at twice its scale, its bar across the middle of the display.
+            _ if def.id == "tuner" => self.tuner_canvas_at(d, def, k.display.2 / 2.0, TUNER_WIN_H, 2.0 * Z, accent),
             Some(View::Custom(_)) if crate::panel_fields::field_name(def).is_some() => self.field_window_display(d, def, &k),
             _ => PanelCanvas::default(),
         };
@@ -671,9 +678,15 @@ impl Controller {
             _ if is_wave_window(def) || def.id == "bitcrusher" => self.wave_window(d, def, &mut b, dy + dh + 12.0),
             "utility" => self.utility_window(d, def, &mut b),
             "widener" => self.widener_window(d, def, &mut b, dy + dh + 12.0),
+            "tuner" => self.tuner_window(d, def, &mut b, dy + dh + 14.0),
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
-        let (meters, ticks, ticks_x) = self.window_meters(d.id, &k);
+        let (mut meters, ticks, mut ticks_x) = self.window_meters(d.id, &k);
+        // The Tuner meters its input only.
+        if def.id == "tuner" {
+            meters.truncate(1);
+            ticks_x = meters[0].x / Z + 38.0;
+        }
         Some(WinView {
             visible: true,
             w: k.w * Z,
@@ -1633,6 +1646,30 @@ impl Controller {
         }
         b.w = full;
         700.0
+    }
+
+    /// Tuner: a short card: Tuning and Reference, then Mute Output.
+    fn tuner_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let label = |id: &str| def.param(id).map_or_else(String::new, |p| p.format(self.panel_value(d, def, p)));
+        let row = Row { y, h: 68.0, dial: 20.0, value: 17.0, pill: 4.0, picker: 4.0 };
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (
+                    vec![
+                        Item::Picker(idx("tuning"), label("tuning"), "Tuning", 124.0, false),
+                        Item::Picker(idx("reference"), label("reference"), "Reference", 124.0, false),
+                    ],
+                    0.0,
+                ),
+                (vec![Item::ToggleW("mute_output", "Mute Output", 96.0)], 0.0),
+            ],
+        );
+        row.y + row.h + 16.0
     }
 
     /// Stereo Widener: one card under the display: Width and Low Cut, Mid and Side Gain, Mix.
@@ -3206,6 +3243,23 @@ mod tests {
         assert!(v.display.zones.iter().any(|z| z.param_y == idx("width2")));
     }
 
+    /// Tuner: the bar across the display, one In meter, a short card with every control.
+    #[test]
+    fn tuner_window_shows_the_bar_and_one_meter() {
+        use slint::Model;
+        let (c, did, def) = controller_with("tuner");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 700.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert_eq!(v.meters.row_count(), 1);
+        assert_eq!(v.meters.row_data(0).unwrap().label, "In");
+        assert!(v.display.visible && v.display.paths.row_count() > 0);
+        let idx = |p: &str| def.index_of(p).unwrap() as i32;
+        for p in ["tuning", "reference", "mute_output"] {
+            assert!(v.pills.iter().any(|q| q.param == idx(p)), "{p}");
+        }
+    }
+
     /// A full ten-second history draws as one line per series, however many samples it holds.
     #[test]
     fn dynamics_history_draws_once_per_series() {
@@ -3243,6 +3297,7 @@ mod tests {
             "bitcrusher",
             "utility",
             "widener",
+            "tuner",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =

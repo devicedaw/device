@@ -67,7 +67,7 @@ flowchart LR
   Flanger, Phaser, Ring Mod and Character Mod; and the dynamics family:
   Compressor, Limiter, Gate, Glue Compressor, Character Compressor and Mastering
   Limiter; Transient Shaper; Multiband Compressor; Delay, Echo and Reverb; Distortion, Tape Saturation,
-  Soft Clipper and Bit Crusher), otherwise the card itself in a window. A
+  Soft Clipper and Bit Crusher; Utility, Stereo Widener and Tuner), otherwise the card itself in a window. A
   window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same
@@ -123,7 +123,12 @@ flowchart LR
   (src/device_window_wave.rs) draw the static transfer from the core's
   `distortion_transfer`, `tape_transfer` and `clipper_transfer` as the sine
   peak out against the sine peak in on a 48 dB square, and the Bit Crusher
-  draws `crush_picture` across its display. The
+  draws `crush_picture` across its display. Utility's window has no display,
+  only three cards. The Stereo Widener's correlation lane reads
+  `se_builtin_correlation` (`Engine::builtin_correlation`): while metering is
+  on the audio thread sums L·R, L² and R² of the input and the output of each
+  block, and each poll takes them as a correlation per side (2 where a side
+  was silent). The
   meters read `se_builtin_set_metering` / `se_builtin_levels`
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app

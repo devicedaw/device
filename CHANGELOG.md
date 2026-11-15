@@ -58,3 +58,7 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
 - Expanded windows for Distortion, Tape Saturation and Soft Clipper (the static transfer on a 48 dB square with the
   gain or clipping it applies lit against unity, two cycles of a full-scale sine through the device, and every control
   in one card) and Bit Crusher (one crushed cycle across the display under its held rate and number of levels).
+- Expanded windows for Utility (its controls on three cards, the meters down the face) and Stereo Widener (the stereo
+  field over frequency above a correlation lane that plots the input and output correlation of the last six seconds).
+  The engine measures a built-in device's stereo correlation while its window is open (`se_builtin_correlation`).
+- An expanded window for Tuner: the card's tuner at twice its size across the display, with its input meter.
