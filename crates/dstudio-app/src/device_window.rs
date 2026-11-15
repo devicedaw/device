@@ -84,23 +84,55 @@ pub(crate) const MENU_ANALYZER: i32 = -4;
 
 /// Devices with an expanded window.
 pub(crate) fn has_window(def: &DeviceDef) -> bool {
-    matches!(def.id, "auto-filter" | "channeleq" | "character-eq")
+    matches!(def.id, "auto-filter" | "channeleq" | "character-eq") || is_field_window(def)
+}
+
+/// Windows of the plotted-field family (motion and response pictures).
+fn is_field_window(def: &DeviceDef) -> bool {
+    matches!(def.id, "tremolo" | "autopanner" | "chorus" | "flanger" | "phaser" | "ring-mod")
+}
+
+/// The frame of a device's window: content width, display box (x, y, w, h), the
+/// display's plot insets (left, top, right, bottom) and its meter strip.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Kit {
+    pub w: f32,
+    pub display: (f32, f32, f32, f32),
+    pub plot: (f32, f32, f32, f32),
+    /// The narrow strip (114 wide, columns of 54) of the field windows; else the EQs' 136.
+    narrow: bool,
+}
+
+/// Field windows: a display 152 narrower than the window, a 12 pt gap to the control card.
+fn field_kit(w: f32, display_h: f32, left: f32, bottom: f32) -> Kit {
+    Kit { w, display: (INSET, 52.0, w - 152.0, display_h), plot: (left, 25.0, 8.0, bottom), narrow: true }
+}
+
+pub(crate) fn kit(def: &DeviceDef) -> Kit {
+    let eq = |y: f32, h: f32| Kit {
+        w: WIN_W,
+        display: (INSET, y, WIN_W - 2.0 * INSET - METERS_W - METERS_GAP, h),
+        plot: (PLOT_L, PLOT_T, PLOT_R, PLOT_B),
+        narrow: false,
+    };
+    match def.id {
+        "character-eq" => eq(52.0, 346.0),
+        "tremolo" => field_kit(WIN_W, 234.0, 60.0, 44.0),
+        "autopanner" => field_kit(WIN_W, 234.0, 40.0, 44.0),
+        "chorus" | "flanger" => field_kit(WIN_W, 354.0, 56.0, 44.0),
+        "phaser" => field_kit(WIN_W, 374.0, 56.0, 44.0),
+        "ring-mod" => field_kit(860.0, 254.0, 40.0, 29.0),
+        _ => eq(56.0, 394.0),
+    }
 }
 
 /// Size of the display plot of a device's window (px at the panel zoom).
 pub(crate) fn plot_size(def: &DeviceDef) -> Option<(f32, f32)> {
     has_window(def).then(|| {
-        let (_, _, w, h) = display_rect(def);
-        ((w - PLOT_L - PLOT_R) * Z, (h - PLOT_T - PLOT_B) * Z)
+        let k = kit(def);
+        let (_, _, w, h) = k.display;
+        ((w - k.plot.0 - k.plot.2) * Z, (h - k.plot.1 - k.plot.3) * Z)
     })
-}
-
-/// Display box in content points: x, y, w, h.
-fn display_rect(def: &DeviceDef) -> (f32, f32, f32, f32) {
-    match def.id {
-        "character-eq" => (INSET, 52.0, WIN_W - 2.0 * INSET - METERS_W - METERS_GAP, 346.0),
-        _ => (INSET, 56.0, WIN_W - 2.0 * INSET - METERS_W - METERS_GAP, 394.0),
-    }
 }
 
 /// Window UI state that is not part of the device (not saved).
@@ -357,6 +389,8 @@ fn pill_w(label: &str) -> f32 {
 /// A window being built: everything in content points until `finish` scales it.
 struct Builder {
     accent: Color,
+    /// Window content width.
+    w: f32,
     boxes: Vec<WinBox>,
     pills: Vec<WinPill>,
     knobs: Vec<PanelKnob>,
@@ -369,8 +403,8 @@ fn accent_of(b: &Builder) -> Color {
 }
 
 impl Builder {
-    fn new(accent: Color) -> Self {
-        Builder { accent, boxes: Vec::new(), pills: Vec::new(), knobs: Vec::new(), texts: Vec::new(), square: PanelCanvas::default() }
+    fn new(accent: Color, w: f32) -> Self {
+        Builder { accent, w, boxes: Vec::new(), pills: Vec::new(), knobs: Vec::new(), texts: Vec::new(), square: PanelCanvas::default() }
     }
 
     fn rect(&mut self, kind: i32, x: f32, y: f32, w: f32, h: f32) {
@@ -486,25 +520,28 @@ impl Controller {
         if !has_window(def) {
             return None;
         }
-        let mut b = Builder::new(accent);
-        let (dx, dy, dw, dh) = display_rect(def);
+        let k = kit(def);
+        let mut b = Builder::new(accent, k.w);
+        let (dx, dy, dw, dh) = k.display;
         b.rect(BOX_DISPLAY, dx, dy, dw, dh);
         let mut display = match def.layout.view {
             Some(View::Eq(v)) => self.eq_window_field(d, def, v, accent),
             Some(View::Custom("auto-filter")) => self.auto_filter_window_field(d, def, accent),
+            Some(View::Field(f)) => self.field_window_canvas(d, def, f, &k, accent),
             _ => PanelCanvas::default(),
         };
-        display.x = (dx + PLOT_L) * Z;
-        display.y = (dy + PLOT_T) * Z;
+        display.x = (dx + k.plot.0) * Z;
+        display.y = (dy + k.plot.1) * Z;
         let height = match def.id {
             "auto-filter" => self.auto_filter_window(d, def, &mut b),
             "channeleq" => self.channel_eq_window(d, def, &mut b),
-            _ => self.character_eq_window(d, def, &mut b),
+            "character-eq" => self.character_eq_window(d, def, &mut b),
+            _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
-        let (meters, ticks) = self.window_meters(d.id, dx + dw + METERS_GAP, dy, dh);
+        let (meters, ticks, ticks_x) = self.window_meters(d.id, &k);
         Some(WinView {
             visible: true,
-            w: WIN_W * Z,
+            w: k.w * Z,
             h: height * Z,
             title: s(d.display_name()),
             display,
@@ -515,19 +552,27 @@ impl Controller {
             texts: model(b.texts),
             meters: model(meters),
             ticks: model(ticks),
-            ticks_x: (dx + dw + METERS_GAP + 126.0) * Z,
+            ticks_x: ticks_x * Z,
         })
     }
 
-    /// In / Out meter columns in the strip at x (content points).
-    fn window_meters(&self, id: DeviceId, x: f32, y: f32, h: f32) -> (Vec<WinMeter>, Vec<PanelTick>) {
+    /// In / Out meter columns in the strip right of the display, and the x of the ruler's
+    /// numerals (content points). The EQs' strip is 136 wide with each bar under its label;
+    /// the field windows' is 114, two 54 pt columns with the bar at the left of each.
+    fn window_meters(&self, id: DeviceId, k: &Kit) -> (Vec<WinMeter>, Vec<PanelTick>, f32) {
         let m = self.devices.wins.meters.get(&id).cloned().unwrap_or_else(Meters::new);
-        let (top, bar_h) = (y + 22.0, h - 44.0);
+        let (dx, y, dw, h) = k.display;
+        let (top, bar_h) = if k.narrow { (y + 26.2, h - 48.2) } else { (y + 22.0, h - 44.0) };
+        let x = dx + dw + if k.narrow { 6.0 } else { METERS_GAP };
+        // (bar x, label centre) of each column.
+        let cols = if k.narrow { [(x + 8.0, x + 27.0), (x + 68.0, x + 87.0)] } else { [(x + 19.0, x + 27.0), (x + 85.0, x + 93.0)] };
+        let ticks_x = if k.narrow { x + 93.0 } else { x + 126.0 };
         let span = METER_TOP_DB - METER_MIN_DB;
         let zero_h = bar_h * METER_TOP_DB / span;
-        let meters = [("In", 0usize, x + 19.0), ("Out", 1, x + 85.0)]
+        let meters = [("In", 0usize, cols[0]), ("Out", 1, cols[1])]
             .into_iter()
-            .map(|(label, k, mx)| WinMeter {
+            .map(|(label, k, (mx, lx))| WinMeter {
+                label_x: lx * Z,
                 x: mx * Z,
                 y: top * Z,
                 w: 16.0 * Z,
@@ -556,7 +601,7 @@ impl Controller {
                 rule: true,
             })
             .collect();
-        (meters, ticks)
+        (meters, ticks, ticks_x)
     }
 
     /// Engine peaks -> meter ballistics of every open window (each poll tick).
@@ -680,12 +725,12 @@ impl Controller {
 
     /// A row of clusters in a card: places every item, the card and its rules.
     fn win_card(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, row: Row, clusters: Vec<(Vec<Item>, f32)>) {
-        b.rect(BOX_CARD, INSET, row.y, WIN_W - 2.0 * INSET, row.h);
+        b.rect(BOX_CARD, INSET, row.y, b.w - 2.0 * INSET, row.h);
         let widths: Vec<f32> = clusters
             .iter()
             .map(|(items, gap)| items.iter().map(Item::width).sum::<f32>() + gap * (items.len().saturating_sub(1)) as f32)
             .collect();
-        let (xs, rules) = gutter(INSET, WIN_W - 2.0 * INSET, &widths);
+        let (xs, rules) = gutter(INSET, b.w - 2.0 * INSET, &widths);
         let rule_h = row.h - 24.0;
         for rx in rules {
             b.rect(BOX_RULE, rx, row.y + 12.0, 1.0, rule_h);
@@ -748,7 +793,7 @@ impl Controller {
             .map(|(_, _, items, gap, _)| Builder::row_w(&items.iter().map(|(l, _, _)| l.as_str()).collect::<Vec<_>>(), *gap))
             .collect();
         let total: f32 = widths.iter().sum::<f32>() + 34.0 * (groups.len().saturating_sub(1)) as f32;
-        let mut x = WIN_W - INSET - total;
+        let mut x = b.w - INSET - total;
         for (i, ((kind, param, items, gap, track), w)) in groups.into_iter().zip(widths).enumerate() {
             if i > 0 {
                 b.rect(BOX_HEADER_RULE, x - 17.0, 11.5, 1.0, 20.0);
@@ -840,6 +885,68 @@ impl Controller {
             }
         }
         584.0
+    }
+
+    // ------------------------------------------------------------ Field family
+
+    /// Control card of a field window (one row at y): the LFO's Timebase, Rate and Depth
+    /// (Ring Mod: its modulator), the device's own selector, then its secondary knobs.
+    /// Returns the window's content height.
+    fn field_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let rate = if val("sync") >= 0.5 { "rate_sync" } else { "rate" };
+        let lfo = || {
+            vec![
+                Item::Pills("sync", vec![("Free", 0.0), ("Sync", 1.0)], "Timebase", 108.0),
+                Item::Knob(rate, "Rate", 2, 70.0, false),
+                Item::Knob("depth", "Depth", 2, 70.0, false),
+            ]
+        };
+        let tail = || {
+            vec![
+                Item::Knob("feedback", "Feedback", 1, 66.0, false),
+                Item::Knob("width", "Width", 1, 52.0, false),
+                Item::Knob("mix", "Mix", 1, 52.0, false),
+                Item::Knob("output_gain", "Output", 1, 52.0, false),
+            ]
+        };
+        let clusters = match def.id {
+            "tremolo" => vec![
+                lfo(),
+                vec![Item::Pills("shape", vec![("Sine", 0.0), ("Triangle", 1.0), ("Square", 2.0), ("Saw Down", 3.0)], "Shape", 278.0)],
+                vec![Item::Knob("stereo_phase", "Stereo Phase", 1, 84.0, false), Item::Knob("mix", "Mix", 1, 52.0, false)],
+            ],
+            "autopanner" => vec![
+                lfo(),
+                vec![Item::Pills("shape", vec![("Sine", 0.0), ("Triangle", 1.0), ("Square", 2.0), ("Random", 3.0)], "Shape", 250.0)],
+                vec![Item::Knob("phase", "Phase", 1, 52.0, false), Item::Knob("mix", "Mix", 1, 52.0, false)],
+            ],
+            "chorus" => {
+                vec![lfo(), vec![Item::Pills("voices", vec![("1", 0.0), ("2", 1.0), ("3", 2.0), ("4", 3.0)], "Voices", 186.0)], tail()]
+            }
+            "flanger" => {
+                vec![lfo(), vec![Item::Pills("mode", vec![("Classic", 0.0), ("Jet", 1.0), ("Thru-Zero", 2.0)], "Mode", 238.0)], tail()]
+            }
+            "phaser" => {
+                vec![lfo(), vec![Item::Pills("stages", vec![("2", 0.0), ("4", 1.0), ("6", 2.0), ("12", 3.0)], "Stages", 186.0)], tail()]
+            }
+            _ => {
+                let idx = def.index_of("modulator").map_or(-1, |i| i as i32);
+                let shape = def.param("modulator").map(|p| p.format(val("modulator"))).unwrap_or_default();
+                vec![
+                    vec![
+                        Item::Picker(idx, shape, "Modulator", 118.0, false),
+                        Item::Knob("frequency", "Frequency", 2, 70.0, false),
+                        Item::Knob("spread", "Spread", 1, 60.0, false),
+                    ],
+                    vec![Item::Knob("bias", "Bias", 1, 60.0, false), Item::Knob("rectify", "Rectify", 1, 60.0, false)],
+                    vec![Item::Knob("mix", "Mix", 1, 60.0, false), Item::Knob("output", "Output", 1, 60.0, false)],
+                ]
+            }
+        };
+        let row = Row::main(y);
+        self.win_card(d, def, b, row, clusters.into_iter().map(|c| (c, 14.0)).collect());
+        y + row.h + 16.0
     }
 
     // ------------------------------------------------------------ EQs
@@ -1302,6 +1409,52 @@ mod tests {
         let (c, did, def) = controller_with("auto-filter");
         let names = knob_names(&view(&c, did, def));
         assert_eq!(names, ["Freq", "Reso", "Drive", "Env", "Attack", "Release", "LFO", "Rate", "Stereo", "Mix"]);
+    }
+
+    /// The modulation family: a plotted display with a drag zone, both meters, and one
+    /// control per parameter on a single card row.
+    #[test]
+    fn field_windows_show_the_plot_and_every_control() {
+        use slint::Model;
+        for id in ["tremolo", "autopanner", "chorus", "flanger", "phaser", "ring-mod"] {
+            let (c, did, def) = controller_with(id);
+            assert!(has_window(def), "{id}");
+            let v = view(&c, did, def);
+            assert!(v.visible && v.w > 0.0 && v.h > 0.0, "{id}");
+            assert_eq!(v.meters.row_count(), 2, "{id}: In and Out");
+            let mut params = std::collections::HashSet::new();
+            for k in v.knobs.iter() {
+                assert!(k.x >= 0.0 && k.x <= v.w && k.y > 0.0 && k.y < v.h, "{id}: {} outside", k.label);
+                assert!(params.insert(k.param), "{id}: {} shown twice", k.label);
+            }
+        }
+        let (c, did, def) = controller_with("flanger");
+        assert_eq!(knob_names(&view(&c, did, def)), ["Rate", "Depth", "Feedback", "Width", "Mix", "Output"]);
+        let (c, did, def) = controller_with("ring-mod");
+        assert_eq!(knob_names(&view(&c, did, def)), ["Frequency", "Spread", "Bias", "Rectify", "Mix", "Output"]);
+    }
+
+    /// Cost of rebuilding a field window against its card, per device
+    /// (`cargo test -p dstudio-app --release bench_field_windows -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn bench_field_windows() {
+        let n = 500;
+        for id in ["tremolo", "autopanner", "chorus", "flanger", "phaser", "ring-mod"] {
+            let (c, did, def) = controller_with(id);
+            let d = c.project().device(did).unwrap().clone();
+            let t0 = std::time::Instant::now();
+            for _ in 0..n {
+                std::hint::black_box(c.builtin_card(&d, def));
+            }
+            let card = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
+            let t0 = std::time::Instant::now();
+            for _ in 0..n {
+                std::hint::black_box(view(&c, did, def));
+            }
+            let win = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
+            println!("{id:<11} card {card:7.1} us   window {win:7.1} us");
+        }
     }
 
     /// Character EQ's lower card shows one section at a time.

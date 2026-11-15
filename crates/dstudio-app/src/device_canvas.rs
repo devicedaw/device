@@ -51,11 +51,11 @@ fn model<T: Clone + 'static>(v: Vec<T>) -> ModelRc<T> {
     ModelRc::from(Rc::new(VecModel::from(v)))
 }
 
-fn rgba(c: Color, a: f32) -> Color {
+pub(crate) fn rgba(c: Color, a: f32) -> Color {
     Color::from_argb_u8((a.clamp(0.0, 1.0) * 255.0).round() as u8, c.red(), c.green(), c.blue())
 }
 
-fn white(a: f32) -> Color {
+pub(crate) fn white(a: f32) -> Color {
     rgba(Color::from_rgb_u8(255, 255, 255), a)
 }
 
@@ -152,7 +152,7 @@ impl Plot {
     }
 }
 
-fn path(pts: &[(f32, f32)]) -> String {
+pub(crate) fn path(pts: &[(f32, f32)]) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(pts.len() * 16);
     for (i, (x, y)) in pts.iter().enumerate() {
@@ -171,7 +171,7 @@ fn area(pts: &[(f32, f32)], base: f32) -> String {
 }
 
 /// A polyline as dashes of `on` px with `off` px gaps along its length.
-fn dashed(pts: &[(f32, f32)], on: f32, off: f32) -> String {
+pub(crate) fn dashed(pts: &[(f32, f32)], on: f32, off: f32) -> String {
     use std::fmt::Write;
     let mut out = String::new();
     let mut phase = 0.0f32; // distance into the current on + off period
@@ -211,16 +211,16 @@ fn hline(y: f32, x0: f32, x1: f32) -> String {
     format!("M{x0:.1} {y:.1} L{x1:.1} {y:.1}")
 }
 
-fn stroke(commands: String, color: Color, width: f32) -> PanelPath {
+pub(crate) fn stroke(commands: String, color: Color, width: f32) -> PanelPath {
     PanelPath { commands: s(commands), stroke: color, width, fill: Color::from_argb_u8(0, 0, 0, 0), fill2: Color::from_argb_u8(0, 0, 0, 0) }
 }
 
-fn fill(commands: String, color: Color) -> PanelPath {
+pub(crate) fn fill(commands: String, color: Color) -> PanelPath {
     PanelPath { commands: s(commands), stroke: Color::from_argb_u8(0, 0, 0, 0), width: 0.0, fill: color, fill2: color }
 }
 
 /// Text whose x is its left (align 0), centre (1) or right (2) edge and y its centre line.
-fn text(x: f32, y: f32, w: f32, t: impl Into<SharedString>, color: Color, size: f32, align: i32) -> PanelText {
+pub(crate) fn text(x: f32, y: f32, w: f32, t: impl Into<SharedString>, color: Color, size: f32, align: i32) -> PanelText {
     let left = match align {
         0 => x,
         1 => x - w / 2.0,
@@ -404,7 +404,7 @@ fn win_legend(p: &Plot, entries: &[(Legend, &str)], accent: Color, paths: &mut V
     }
 }
 
-const MUTE_TEXT: Color = Color::from_rgb_u8(0xa6, 0xa8, 0xad);
+pub(crate) const MUTE_TEXT: Color = Color::from_rgb_u8(0xa6, 0xa8, 0xad);
 
 // ---------------------------------------------------------------- EQ
 

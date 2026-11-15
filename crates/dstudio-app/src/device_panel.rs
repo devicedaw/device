@@ -1068,7 +1068,7 @@ impl Controller {
     }
 
     /// The first of a field axis' parameters that is shown (Rate or Rate Sync).
-    fn field_axis(d: &Device, def: &DeviceDef, ids: &[&'static str]) -> Option<usize> {
+    pub(crate) fn field_axis(d: &Device, def: &DeviceDef, ids: &[&'static str]) -> Option<usize> {
         ids.iter().find(|id| def.is_shown(d, id)).and_then(|id| def.index_of(id))
     }
 
@@ -1084,6 +1084,7 @@ impl Controller {
             bpm: self.project().transport.bpm as f32,
             n: (pw.round() as usize).max(64),
             cycles: self.devices.panel.lfo.get(&d.id).map(|l| l.1),
+            win: false,
         };
         let Some(plot) = device_fields::plot(f.plot, &input) else { return PanelField::default() };
         let at = |x: f32, y: f32| (px + x * pw, py + y * ph);

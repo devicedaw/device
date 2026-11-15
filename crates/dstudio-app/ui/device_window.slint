@@ -223,7 +223,7 @@ component WinMeterView inherits Rectangle {
     property <length> bar-w: (root.m.w - 1px) / 2;
     property <length> main-h: root.m.h - root.m.zero-h;
     Text {
-        x: root.m.x - 19px * zm; y: root.m.y - 22px * zm; width: root.m.w + 38px * zm; height: 16px * zm;
+        x: root.m.label-x - 27px * zm; y: root.m.y - 22px * zm; width: 54px * zm; height: 16px * zm;
         text: root.m.label; color: WinStyle.mute; font-size: 12px * zm; font-weight: 700; letter-spacing: -0.04 * 12px * zm;
         horizontal-alignment: center; vertical-alignment: center;
     }
@@ -251,7 +251,7 @@ component WinMeterView inherits Rectangle {
         x: root.m.x + root.m.w - 3px * zm; y: root.m.y + t.y - 0.5px; width: 6px * zm; height: 1px; background: #ffffff24;
     }
     Text {
-        x: root.m.x - 19px * zm; y: root.m.y + root.m.h + 6px * zm; width: root.m.w + 38px * zm; height: 16px * zm;
+        x: root.m.label-x - 27px * zm; y: root.m.y + root.m.h + 6px * zm; width: 54px * zm; height: 16px * zm;
         text: root.m.value; color: WinStyle.text; font-size: 12px * zm; font-weight: 600; letter-spacing: -0.04 * 12px * zm;
         horizontal-alignment: center; vertical-alignment: center;
     }
