@@ -129,7 +129,8 @@ or 10 seconds of input, output and gain reduction under a draggable threshold, b
 Limiter adds a short-term loudness lane against a target), Transient Shaper, whose window scopes the output with the
 gain it applied, and Multiband Compressor, whose window draws each band's level, gain and thresholds on a frequency
 axis with draggable crossovers, and Delay, Echo and Reverb, whose window draws the card's echo train, tail picture or repeat
-EQ at full size with every control in a row below; the other devices open their card in a window for now.
+EQ at full size with every control in a row below, Distortion, Tape Saturation and Soft Clipper, whose window draws
+the transfer curve beside a sine through the device, and Bit Crusher, whose window draws one crushed cycle; the other devices open their card in a window for now.
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |
