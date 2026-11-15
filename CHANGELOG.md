@@ -55,3 +55,6 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
 - An expanded window for Echo: the machine's tape strip with its erase, record and playback heads (lit while they
   play), the tail across the display, a main card with the spacing, transport, width, mix and a Throw pill that sends
   while held, and a rack that shows the tail filters and ducking, or the machine's character behind the Character latch.
+- Expanded windows for Distortion, Tape Saturation and Soft Clipper (the static transfer on a 48 dB square with the
+  gain or clipping it applies lit against unity, two cycles of a full-scale sine through the device, and every control
+  in one card) and Bit Crusher (one crushed cycle across the display under its held rate and number of levels).

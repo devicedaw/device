@@ -66,7 +66,8 @@ flowchart LR
   Character EQ and the plotted-field family: Tremolo, Auto-Panner, Chorus,
   Flanger, Phaser, Ring Mod and Character Mod; and the dynamics family:
   Compressor, Limiter, Gate, Glue Compressor, Character Compressor and Mastering
-  Limiter; Transient Shaper; Multiband Compressor; Delay, Echo and Reverb), otherwise the card itself in a window. A
+  Limiter; Transient Shaper; Multiband Compressor; Delay, Echo and Reverb; Distortion, Tape Saturation,
+  Soft Clipper and Bit Crusher), otherwise the card itself in a window. A
   window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same
@@ -118,7 +119,11 @@ flowchart LR
   erase and record heads and each playback head at its distance, lit while
   it plays. Its Throw pill is momentary (`PILL_MOMENTARY`, `panel_latch`),
   and its Character latch (`ACT_SECTION`) swaps the rack between the tail
-  filters and ducking and the machine's character. The
+  filters and ducking and the machine's character. The waveshapers
+  (src/device_window_wave.rs) draw the static transfer from the core's
+  `distortion_transfer`, `tape_transfer` and `clipper_transfer` as the sine
+  peak out against the sine peak in on a 48 dB square, and the Bit Crusher
+  draws `crush_picture` across its display. The
   meters read `se_builtin_set_metering` / `se_builtin_levels`
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app

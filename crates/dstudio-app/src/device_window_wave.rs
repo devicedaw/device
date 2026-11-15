@@ -65,11 +65,13 @@ pub(crate) fn law(def: &DeviceDef, v: &dyn Fn(&str) -> f32) -> Law {
     }
 }
 
-/// Peak (dBFS) of f over one cycle of a sine at `level` dBFS.
+/// Peak (dBFS) of f over one cycle of a sine at `level` dBFS: the two crests exactly, and
+/// a coarse pass between them for shapers that fold back before the crest.
 pub(crate) fn peak_db(f: &dyn Fn(f32) -> f32, level: f32) -> f32 {
     let a = 10f32.powf(level / 20.0);
-    let n = 96;
-    let peak = (0..n).map(|i| f(a * (TAU * (i as f32 + 0.25) / n as f32).sin()).abs()).fold(0.0f32, f32::max);
+    let n = 8;
+    let crest = f(a).abs().max(f(-a).abs());
+    let peak = (0..n).map(|i| f(a * (TAU * (i as f32 + 0.5) / n as f32).sin()).abs()).fold(crest, f32::max);
     20.0 * peak.max(1e-6).log10()
 }
 
@@ -145,7 +147,7 @@ impl Controller {
         texts.push(text(side - 60.0 * Z, axis_y, 60.0 * Z, "dBFS in", dim, 10.0 * Z, 2));
 
         // Transfer, unity and the band between them (gain, or what the clipper takes off).
-        let n = 96;
+        let n = 48;
         let ins: Vec<f32> = (0..=n).map(|i| DB_LO + (DB_HI - DB_LO) * i as f32 / n as f32).collect();
         let out: Vec<(f32, f32)> = ins.iter().map(|&x| (x_of(x), y_of(peak_db(&*l.curve, x)))).collect();
         let open: Vec<(f32, f32)> = ins.iter().map(|&x| (x_of(x), y_of(if l.clipper { peak_db(&*l.open, x) } else { x }))).collect();
@@ -167,7 +169,7 @@ impl Controller {
         let wy = |s: f32| mid - s.clamp(-1.25, 1.25) * amp;
         paths.push(stroke(format!("M{wx0:.1} {a:.1} H{wx1:.1} M{wx0:.1} {b:.1} H{wx1:.1}", a = wy(1.0), b = wy(-1.0)), white(0.08), 1.0));
         paths.push(stroke(format!("M{wx0:.1} {mid:.1} H{wx1:.1}"), white(0.14), 1.0));
-        let m = ((wx1 - wx0) / Z).round().max(64.0) as usize;
+        let m = ((wx1 - wx0) / (2.0 * Z)).round().max(64.0) as usize;
         let ph_of = |i: usize| TAU * 2.0 * i as f32 / m as f32;
         let xs = |i: usize| wx0 + (wx1 - wx0) * i as f32 / m as f32;
         let input: Vec<(f32, f32)> = (0..=m).map(|i| (xs(i), wy(ph_of(i).sin()))).collect();
@@ -259,7 +261,7 @@ impl Controller {
         let (rate, levels) = crush_caption(bits, v("downsample"));
         let cy = -(pt - 12.0) * Z;
         let at = (crate::text_measure::value_width("Rate") + 12.0) * Z;
-        let at2 = at + (crate::text_measure::value_width(&rate) * 1.08 + 12.0) * Z;
+        let at2 = at + (crate::text_measure::value_width(&rate) * 1.15 + 16.0) * Z;
         let texts = vec![
             text(0.0, cy, 60.0 * Z, "Rate", white(0.55), 12.0 * Z, 0),
             text(at, cy, 120.0 * Z, rate, white(0.92), 13.0 * Z, 0),
