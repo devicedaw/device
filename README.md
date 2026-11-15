@@ -85,7 +85,8 @@ wgpu.
 - **Automation.** Right-click any device control, the channel's volume, pan, mute, trim, width or mono, or a device's
   power switch and choose Automate. Draw lanes with points, curves or freehand, or record your moves with
   touch-write. Lanes read in the parameter's own units (Hz, dB, ms, choice names, On/Off), and mute, mono and device
-  on/off lanes switch exactly on their points.
+  on/off lanes switch exactly on their points. Expand a track to show more lanes under it: + adds one for the next
+  parameter, × closes one (its automation stays), and right-clicking a lane deletes its automation.
 - **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV or 192 or 320 kbps
   MP3 at 44.1 or 48 kHz (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
   seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.

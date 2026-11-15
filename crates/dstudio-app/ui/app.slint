@@ -724,15 +724,36 @@ component Timeline inherits Panel {
             background: Tokens.accent;
         }
         // Expanded automation rows (src/automation.rs, EXTRA_H + separator): well fill, a 1 px
-        // white 5 % top rule, and the pill 48 px in.
+        // white 5 % top rule, and the pill 48 px in. Hovering a row shows × (close the lane, its
+        // automation stays) at its top and + (a lane for the next parameter below it) at its
+        // bottom, both under the track's expand chevron; the pill opens the parameter picker
+        // for that row and right-click opens its menu.
         for e in Studio.auto-extras: Rectangle {
             x: 0; y: e.y - Studio.scroll-y; width: parent.width; height: 40.5px;
             background: #17181b;
             Rectangle { height: 0.85px; background: #ffffff0d; }
+            row-ta := TouchArea { }
             AutoPill {
-                x: 40.8px; y: (40px - self.height) / 2; width: parent.width - 47.6px; cat: e.cat; param: e.param; state: e.state; accent: e.accent; chevron: false;
+                x: 40.8px; y: (40px - self.height) / 2; width: parent.width - 47.6px; cat: e.cat; param: e.param; state: e.state; accent: e.accent;
+                open-state: Studio.picker-open && Studio.auto-picker-extra == e.index && Studio.auto-picker-track == e.track-id;
                 power => { Studio.auto-power(e.track-id, e.index); }
-                open(x, y) => { Studio.auto-show-extra(e.track-id, e.index); }
+                open(x, y) => { Studio.auto-open-extra-picker(e.track-id, e.index, x, y); }
+                context(x, y) => { Studio.auto-lane-menu(e.track-id, e.index, x, y); }
+            }
+            property <bool> hot: row-ta.has-hover || close-ta.has-hover || add-ta.has-hover || Studio.auto-extra-shown-hot == e.index;
+            close-ta := TouchArea {
+                x: 22.1px; y: 0; width: 17px; height: 14px;
+                accessible-role: button; accessible-label: "Close lane (the automation stays)";
+                accessible-action-default => { Studio.auto-close-extra(e.track-id, e.index); }
+                clicked => { Studio.auto-close-extra(e.track-id, e.index); }
+                if parent.hot: Icon { x: (17px - 8.5px) / 2; y: 1.7px; width: 8.5px; height: 8.5px; d: Icons.close; stroke-width: 1.4px; ink: close-ta.has-hover ? #ffffffe6 : #ffffff99; }
+            }
+            add-ta := TouchArea {
+                x: 22.1px; y: 26.5px; width: 17px; height: 14px;
+                accessible-role: button; accessible-label: "Add lane";
+                accessible-action-default => { Studio.auto-add-extra(e.track-id, e.index); }
+                clicked => { Studio.auto-add-extra(e.track-id, e.index); }
+                if parent.hot: Icon { x: (17px - 8.5px) / 2; y: 3.4px; width: 8.5px; height: 8.5px; d: Icons.plus; stroke-width: 1.4px; ink: add-ta.has-hover ? #ffffffe6 : #ffffff99; }
             }
             Rectangle { y: 40px; height: 0.5px; background: Tokens.line-separator; }
         }
