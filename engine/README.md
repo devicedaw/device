@@ -36,9 +36,9 @@ looping in [Clip looping](#clip-looping), clip fades in [Clip fades](#clip-fades
 
 Requirements: CMake ≥ 3.25, Ninja, a C++23 compiler (Apple clang 21, MSVC
 19.4x from Visual Studio 2022 and GCC 13 have built it with warnings as
-errors; see [Platforms](#platforms)). Linux also needs `pkg-config` and the PipeWire
-development files (`libpipewire-0.3-dev`), or `-DDSTUDIO_ENGINE_PIPEWIRE=OFF`
-for an engine without device I/O. Windows: run CMake from a developer
+errors; see [Platforms](#platforms)). Linux also needs `pkg-config` and the
+PipeWire and ALSA development headers (`libpipewire-0.3-dev`, `libasound2-dev`);
+`-DDSTUDIO_ENGINE_PIPEWIRE=OFF` builds an engine with ALSA audio only. Windows: run CMake from a developer
 command prompt (x64 MSVC environment) with the Ninja generator.
 
 ```sh
@@ -98,8 +98,8 @@ println!("cargo:rustc-link-lib=framework=CoreFoundation");
 
 The library is built with `-fPIC`, so it can go into a cdylib as well.
 On Windows build.rs also links `ole32 shell32 avrt user32`, on Linux
-`pipewire-0.3 stdc++ dl` (set `DSTUDIO_ENGINE_PIPEWIRE=OFF` in the environment
-to build without PipeWire).
+`stdc++ dl` (libpipewire and libasound are loaded at run time; set
+`DSTUDIO_ENGINE_PIPEWIRE=OFF` in the environment to build without PipeWire).
 
 ## Platforms
 
@@ -112,8 +112,8 @@ POSIX signal or Windows NTSTATUS exception code).
 
 | | macOS (arm64) | Windows (x64, MSVC) | Linux (x64, GCC) |
 |---|---|---|---|
-| Audio backend | Core Audio (AUHAL; private aggregate for duplex) | WASAPI shared mode, event-driven, float32 (`wasapi_device.cpp`) | PipeWire streams (`pipewire_device.cpp`) |
-| Duplex input | aggregate device, HAL drift compensation | separate capture client → `FrameRing` | capture stream → `FrameRing` |
+| Audio backend | Core Audio (AUHAL; private aggregate for duplex) | WASAPI shared mode, event-driven, float32 (`wasapi_device.cpp`) | PipeWire streams (`pipewire_device.cpp`) or ALSA PCMs (`alsa_device.cpp`), picked by `linux_audio_device.cpp` |
+| Duplex input | aggregate device, HAL drift compensation | separate capture client → `FrameRing` | PipeWire: capture stream → `FrameRing`; ALSA: linked capture PCM read in the same cycle |
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
 | Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | X11 top-level window hosting the plugin window (VST3 `kPlatformTypeX11EmbedWindowID`, CLAP `x11`), XWayland on Wayland; see [Plugins on Windows and Linux](#plugins-on-windows-and-linux) |
 | Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
@@ -201,7 +201,44 @@ elsewhere that test checks determinism and the on/off identities.
   SDK has its own licence and is deliberately not added; a backend would sit
   beside WASAPI behind the same `AudioDevice` interface.
 
-### Linux audio: PipeWire
+### Linux audio: PipeWire and ALSA
+
+Two backends behind one `AudioDevice` (`linux_audio_device.cpp`). The system
+default output uses PipeWire when its server answers and ALSA otherwise (and
+falls back to ALSA if PipeWire answers but cannot play); a chosen device
+decides by its id (`alsa:...` ids are ALSA, the rest PipeWire node names); input
+and output must share a backend. The choice is a pure function in
+`linux_audio_select.hpp`, tested on every OS. `DSTUDIO_AUDIO_BACKEND=alsa|pipewire`
+forces the default. Both libraries are loaded with dlopen, so the engine runs
+on a system that lacks either.
+
+#### ALSA
+
+ALSA is part of the kernel, so it is there on every Linux system, and a
+hardware PCM opened directly has the lowest latency possible.
+
+* **Devices.** `alsa:default` (the default PCM) and one entry per hardware PCM
+  of every card, `alsa:hw:CARD=<id>,DEV=<n>` (card ids survive reboots, card
+  numbers do not), named "Card: PCM (ALSA)". Listing opens each hardware PCM
+  briefly, unconfigured, for its channel count (2 when it is busy). Any other
+  PCM name works as `alsa:<name>`.
+* **Opening.** A hardware PCM is opened as `hw:` when it runs the engine rate
+  with a float32, S32, S24, S24_3 or S16 format (`pcm_convert.hpp` converts),
+  else through ALSA's plug plugin (`plughw:`). Playback asks for 2 channels
+  (more device channels get silence), capture for all of the device's (up to
+  64). Period = `buffer_size`, else the preferred block (at least 256); playback
+  has 2 periods, capture 4.
+* **Cycle.** One thread (SCHED_FIFO when allowed): output only, wait for a free
+  period, render, write; duplex, read one captured period, render with it,
+  write. Playback is primed with silence, so the duplex cycle never waits on
+  it; input and output are linked (`snd_pcm_link`) when the driver allows, so
+  they start on one sample. Xruns and suspends restart both streams from a
+  primed buffer; a vanished device stops the stream (`is_running()` false).
+  Reported latencies: output = playback buffer, input = one period.
+* **Rates.** ALSA devices run at the engine rate (no `sample_rates` are
+  listed for them); a different `sample_rate` request is refused.
+
+#### PipeWire
 
 PipeWire rather than JACK first: it is the default sound server of current
 mainstream distributions, runs JACK clients itself (pipewire-jack), resamples
@@ -647,7 +684,7 @@ for recording.
   repeats), the ALSA sequencer on Linux (one reader thread; ids are
   "client:port" names; libasound is loaded with dlopen on first use, so
   programs that never use MIDI don't load it; CMake option
-  `DSTUDIO_ENGINE_ALSA_MIDI`, default ON),
+  `DSTUDIO_ENGINE_ALSA`, default ON, which also builds ALSA audio),
   and a stub with no ports elsewhere. The MIDI system is first touched by
   `se_midi_inputs_list` / `se_midi_inputs_open`, so engines that never use MIDI
   never start it. Only channel messages are passed on.
@@ -1731,9 +1768,10 @@ the timeline, so looped and warped clips fade where they play.
 
 ## Placeholders and known gaps
 
-* **Windows / Linux audio** (`wasapi_device.cpp`, `pipewire_device.cpp`):
-  implemented but never run against real audio hardware (CI runners have no
-  devices); no ASIO, no WASAPI exclusive mode or `IAudioClient3` low-latency
+* **Windows / Linux audio** (`wasapi_device.cpp`, `pipewire_device.cpp`,
+  `alsa_device.cpp`): implemented but never run against real audio hardware
+  (CI runners have no devices; ALSA runs there against its null PCM and
+  pipewire-alsa); no ASIO, no WASAPI exclusive mode or `IAudioClient3` low-latency
   periods, no native JACK; device-change notifications are not handled on
   any platform.
 * **Plugin editors:** Windows editors ignore per-monitor DPI. Linux editors

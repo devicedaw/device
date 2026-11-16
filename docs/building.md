@@ -89,44 +89,72 @@ CMake must be 3.25 or newer. Ubuntu 24.04 and Debian 13 ship one; on Ubuntu 22.0
 first, for example `pip install --user cmake` or Kitware's APT repository (apt.kitware.com), and check `cmake --version`.
 
 The Wayland, xkbcommon, fontconfig and udev packages are for the app;
-the engine itself needs only `pkg-config`, `libpipewire-0.3-dev`, the `libasound2-dev` headers
-(for MIDI input; leave them out with `-DDSTUDIO_ENGINE_ALSA_MIDI=OFF`) and the `libx11-dev`
-headers (for plugin windows; leave them out with `-DDSTUDIO_ENGINE_X11=OFF`).
+the engine itself needs only `pkg-config`, the `libpipewire-0.3-dev` headers (leave them out with
+`-DDSTUDIO_ENGINE_PIPEWIRE=OFF`), the `libasound2-dev` headers (for ALSA audio and MIDI input; leave
+them out with `-DDSTUDIO_ENGINE_ALSA=OFF`) and the `libx11-dev` headers (for plugin windows; leave them
+out with `-DDSTUDIO_ENGINE_X11=OFF`). None of these libraries is linked: the engine loads them when it
+first uses them, so the app starts on a system that lacks any of them.
 
-#### PipeWire notes
+#### Linux audio notes
 
-* Audio I/O on Linux goes through PipeWire streams, not JACK or ALSA directly.
-  PipeWire is the default sound server on current mainstream distributions and
-  also serves JACK clients; a native JACK backend is possible future work.
-* Without a running PipeWire server the engine lists no devices and starting
-  audio fails; device tests skip. Run the app with `--no-audio` in that case.
+* There are two audio backends, PipeWire and ALSA. The system default output
+  uses PipeWire when its server is running and ALSA otherwise, so audio works
+  on any Linux system: ALSA is part of the kernel, PipeWire is a user-space
+  service that not every distribution ships or runs. If PipeWire is running
+  but its stream does not start, the default falls back to ALSA too.
+* Settings › Audio lists the PipeWire devices and the ALSA ones side by side.
+  ALSA entries end in "(ALSA)": "ALSA default" (the ALSA default PCM) and every
+  hardware PCM of every card, opened directly for the lowest latency. A
+  hardware PCM that PipeWire (or another program) holds open is busy; ALSA then
+  says so when you pick it.
+* ALSA ids are `alsa:default`, `alsa:hw:CARD=<id>,DEV=<n>` or `alsa:<any PCM
+  name>` (for example an `~/.asoundrc` device). A hardware PCM is opened as
+  `hw:` when it runs the project rate with a float, 32-, 24- or 16-bit format,
+  and through ALSA's conversion plugin (`plughw:`) otherwise. ALSA devices run
+  at the project rate; the buffer size sets the ALSA period (two periods of
+  playback buffer).
+* Input and output must come from the same backend. With ALSA, input and output
+  on one card are linked so they start on the same sample; on two cards they run
+  on two clocks, and the drift ends in a short restart (an xrun) from time to time.
+* `DSTUDIO_AUDIO_BACKEND=alsa` (or `pipewire`) forces the backend of the system
+  default.
 * No sound card (a container, a headless box)? Install the server, then start
   it from the repository root with a null sink and a loopback source, as CI
   does. The loopback test then runs against the preset's build (`engine/build`),
   and the app runs with audio:
 
   ```sh
-  sudo apt-get install -y pipewire pipewire-bin wireplumber dbus
+  sudo apt-get install -y pipewire pipewire-bin pipewire-alsa wireplumber dbus
   eval "$(tools/ci/headless-pipewire.sh)"
   DSTUDIO_TEST_LOOPBACK_INPUT=dstudio-loop-source ctest --test-dir engine/build
   ```
-* Input and output streams share one `node.group`, so PipeWire drives them from
-  one clock (resampling the other device when they are different hardware), and
-  recordings stay sample-aligned. After a glitch that shifts the input by a
-  cycle, the input ring re-syncs within about 64 cycles.
-* A requested sample rate must be in the server's `clock.allowed-rates`, and
-  the buffer size is a request for a quantum (`node.latency`); PipeWire may not
-  honour either, and the device status reports what it actually chose.
+
+  The ALSA backend runs the same loopback through pipewire-alsa (CI does both):
+
+  ```sh
+  printf 'pcm.dstudio_loop_in {\n type pipewire\n capture_node "dstudio-loop-source"\n}\n' > ~/.asoundrc
+  DSTUDIO_AUDIO_BACKEND=alsa DSTUDIO_TEST_LOOPBACK_OUTPUT=alsa:default \
+    DSTUDIO_TEST_LOOPBACK_INPUT=alsa:dstudio_loop_in ctest --test-dir engine/build -R "^(alsa_|device_)"
+  ```
+
+  The `alsa_*` tests need no server at all: they use ALSA's `null` PCM.
+* PipeWire: input and output streams share one `node.group`, so PipeWire drives
+  them from one clock (resampling the other device when they are different
+  hardware), and recordings stay sample-aligned. After a glitch that shifts the
+  input by a cycle, the input ring re-syncs within about 64 cycles.
+* PipeWire: a requested sample rate must be in the server's `clock.allowed-rates`,
+  and the buffer size is a request for a quantum (`node.latency`); PipeWire may
+  not honour either, and the device status reports what it actually chose.
 * For a real-time audio thread, RTKit or PipeWire's RT module must be allowed
-  on the system.
-* To build without PipeWire (an engine with no device I/O): configure CMake
-  with `-DDSTUDIO_ENGINE_PIPEWIRE=OFF`, or set `DSTUDIO_ENGINE_PIPEWIRE=OFF` in the
+  (PipeWire), or your user needs an rtprio limit (ALSA: the audio thread asks for
+  SCHED_FIFO and keeps the normal priority when that is refused).
+* To build without PipeWire (ALSA audio only): configure CMake with
+  `-DDSTUDIO_ENGINE_PIPEWIRE=OFF`, or set `DSTUDIO_ENGINE_PIPEWIRE=OFF` in the
   environment for a cargo build.
-* MIDI input uses the ALSA sequencer (`libasound2-dev`, already in the package
-  list above, for the headers; the library is loaded at run time, so a system
-  without libasound runs with no MIDI inputs). Without a sequencer (no `/dev/snd/seq`, as in most containers)
-  the MIDI input list is empty. To build without ALSA: `-DDSTUDIO_ENGINE_ALSA_MIDI=OFF`,
-  or `DSTUDIO_ENGINE_ALSA_MIDI=OFF` in the environment for a cargo build.
+* MIDI input uses the ALSA sequencer. Without a sequencer (no `/dev/snd/seq`, as
+  in most containers) the MIDI input list is empty. To build without ALSA (no ALSA
+  audio and no MIDI inputs): `-DDSTUDIO_ENGINE_ALSA=OFF`, or `DSTUDIO_ENGINE_ALSA=OFF`
+  in the environment for a cargo build.
 
 Plugin editor windows on Linux use X11, which Wayland desktops provide
 through XWayland. The build needs the libX11 headers (`libx11-dev`); the

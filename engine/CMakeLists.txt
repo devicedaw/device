@@ -250,7 +250,9 @@ add_library(dstudio_engine STATIC
   # Platform backends: each file is compile-guarded so exactly one is active.
   src/platform/audio_device.cpp
   src/platform/coreaudio_device.cpp
+  src/platform/linux_audio_device.cpp
   src/platform/pipewire_device.cpp
+  src/platform/alsa_device.cpp
   src/platform/wasapi_device.cpp
   src/platform/midi_backend_stub.cpp
   src/platform/alsa_midi_input.cpp
@@ -307,13 +309,20 @@ elseif(NOT APPLE)
   target_link_libraries(dstudio_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  # Audio backend (src/platform/pipewire_device.cpp). OFF builds an engine
-  # without device I/O (offline rendering only).
+  # Audio backends (src/platform/linux_audio_device.cpp picks one): PipeWire
+  # (pipewire_device.cpp) and ALSA (alsa_device.cpp, below). Only the
+  # PipeWire headers are needed: libpipewire is loaded with dlopen, so the
+  # engine runs (through ALSA) on systems without PipeWire. OFF builds an
+  # engine with ALSA audio only.
   option(DSTUDIO_ENGINE_PIPEWIRE "Build the PipeWire audio backend (needs libpipewire-0.3 development files)" ON)
   if(DSTUDIO_ENGINE_PIPEWIRE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
-    target_link_libraries(dstudio_engine PUBLIC PkgConfig::PIPEWIRE)
+    target_include_directories(dstudio_engine SYSTEM PRIVATE
+      $<TARGET_PROPERTY:PkgConfig::PIPEWIRE,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_options(dstudio_engine PRIVATE
+      $<TARGET_PROPERTY:PkgConfig::PIPEWIRE,INTERFACE_COMPILE_OPTIONS>)
+    target_link_libraries(dstudio_engine PUBLIC ${CMAKE_DL_LIBS})
     target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_PIPEWIRE=1)
   endif()
   # Plugin editor windows (src/platform/plugin_editor_x11.cpp). Every Linux
@@ -328,11 +337,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
       $<TARGET_PROPERTY:PkgConfig::X11,INTERFACE_INCLUDE_DIRECTORIES>)
     target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_X11=1)
   endif()
-  # MIDI input (src/platform/alsa_midi_input.cpp). OFF builds an engine
-  # without MIDI ports (se_midi_inject still works). Only the headers are
-  # needed: libasound is loaded with dlopen when MIDI is first used.
-  option(DSTUDIO_ENGINE_ALSA_MIDI "Build ALSA sequencer MIDI input (needs libasound2 development files)" ON)
-  if(DSTUDIO_ENGINE_ALSA_MIDI)
+  # ALSA audio (src/platform/alsa_device.cpp) and MIDI input
+  # (src/platform/alsa_midi_input.cpp). OFF builds an engine without ALSA
+  # devices and MIDI ports (se_midi_inject still works). Only the headers are
+  # needed: libasound is loaded with dlopen when ALSA is first used.
+  option(DSTUDIO_ENGINE_ALSA "Build ALSA audio and MIDI input (needs libasound2 development files)" ON)
+  if(DSTUDIO_ENGINE_ALSA)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(ALSA REQUIRED alsa)
     target_include_directories(dstudio_engine SYSTEM PRIVATE ${ALSA_INCLUDE_DIRS})
@@ -497,6 +507,7 @@ if(DSTUDIO_ENGINE_BUILD_TESTS)
     tests/test_strip.cpp
     tests/test_automation.cpp
     tests/test_frame_ring.cpp
+    tests/test_linux_audio.cpp
     tests/test_warp.cpp
     tests/test_clip_loop.cpp
     tests/test_clip_fade.cpp
@@ -548,6 +559,10 @@ if(DSTUDIO_ENGINE_BUILD_TESTS)
     target_link_libraries(dstudio_engine_tests PRIVATE PkgConfig::X11)
     target_compile_definitions(dstudio_engine_tests PRIVATE DSTUDIO_TEST_X11_EDITOR=1)
   endif()
+  if(DSTUDIO_ENGINE_ALSA AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # test_linux_audio.cpp: the ALSA backend against ALSA's null PCM.
+    target_compile_definitions(dstudio_engine_tests PRIVATE DSTUDIO_HAVE_ALSA=1)
+  endif()
 
   # Each TEST_CASE becomes its own CTest test. The list is produced by the
   # test binary itself after every build (cf. gtest_discover_tests).
@@ -575,6 +590,9 @@ if(DSTUDIO_ENGINE_BUILD_BENCH)
   add_executable(dstudio_frame_ring_bench bench/bench_frame_ring.cpp)
   target_include_directories(dstudio_frame_ring_bench PRIVATE src)
   target_link_libraries(dstudio_frame_ring_bench PRIVATE dstudio_engine_warnings)
+  add_executable(dstudio_pcm_convert_bench bench/bench_pcm_convert.cpp)
+  target_include_directories(dstudio_pcm_convert_bench PRIVATE src)
+  target_link_libraries(dstudio_pcm_convert_bench PRIVATE dstudio_engine_warnings)
 
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(dstudio_run_loop_bench bench/bench_run_loop.cpp src/platform/run_loop.cpp)

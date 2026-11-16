@@ -154,7 +154,7 @@ jobs:
             libpipewire-0.3-dev libasound2-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev \
             libxcursor-dev libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev libudev-dev \
-            pipewire pipewire-bin wireplumber dbus
+            pipewire pipewire-bin pipewire-alsa wireplumber dbus
       - name: Install Ninja and ccache (macOS)
         if: runner.os == 'macOS' && steps.changes.outputs.run == 'true'
         run: brew install ninja ccache
@@ -261,6 +261,20 @@ jobs:
       - name: Engine — PipeWire device tests, verbose (Linux)
         if: runner.os == 'Linux' && steps.changes.outputs.engine == 'true' && !cancelled()
         run: ctest --test-dir engine/build-ci -V -R "^(device_|transport_commands_across_device)"
+      # The same device tests through the ALSA backend: ALSA's null PCM
+      # (alsa_* tests) and, for the duplex loopback, ALSA PCMs routed into the
+      # headless graph by pipewire-alsa ("default" plays to the null sink, an
+      # asoundrc PCM records the loopback source). DSTUDIO_AUDIO_BACKEND=alsa
+      # makes ALSA serve the system default too.
+      - name: Engine — ALSA device tests, verbose (Linux)
+        if: runner.os == 'Linux' && steps.changes.outputs.engine == 'true' && !cancelled()
+        env:
+          DSTUDIO_AUDIO_BACKEND: alsa
+          DSTUDIO_TEST_LOOPBACK_OUTPUT: alsa:default
+          DSTUDIO_TEST_LOOPBACK_INPUT: alsa:dstudio_loop_in
+        run: |
+          printf 'pcm.dstudio_loop_in {\n    type pipewire\n    capture_node "dstudio-loop-source"\n}\n' > ~/.asoundrc
+          ctest --test-dir engine/build-ci -V -R "^(alsa_|device_|transport_commands_across_device)"
       # Plugin editor windows (X11): the main test run has no display, so the
       # editor test skips there; here it opens the GUI test plugin's window on
       # Xvfb and checks its size, its timer and fd callbacks, and closing.
