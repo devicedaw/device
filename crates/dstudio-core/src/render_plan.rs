@@ -6,7 +6,7 @@
 
 use crate::builtin;
 use crate::midi::{self, MidiClip};
-use crate::{ClipId, Project, Ticks, TrackId, TrackKind};
+use crate::{ClipId, Project, Ticks, Track, TrackId, TrackKind};
 
 /// Track gain that makes the engine's constant-power pan law transparent at the centre: the law
 /// scales both channels by cos(45°), so a render that must come out at the source level (and be
@@ -84,9 +84,9 @@ pub fn consolidate_group(p: &Project, id: ClipId) -> Option<ClipSpan> {
 }
 
 /// A copy of `p` for one render: `span.track` unmuted with only the span's clips, every
-/// other track muted (and without plugin devices: they are silent, so instantiating them would
-/// only cost start-up time; the track's own plugins stay and are rendered, see
-/// dstudio_engine::offline), and the track and master settings `mode` asks for.
+/// other track muted and emptied (no clips, samples, lanes or plugin devices: it is silent, so
+/// loading or instantiating them would only cost start-up time; the rendered track's own plugins
+/// stay, see dstudio_engine::offline), and the track and master settings `mode` asks for.
 pub fn render_project(p: &Project, span: &ClipSpan, mode: RenderMode) -> Project {
     let mut r = p.clone();
     for t in &mut r.tracks {
@@ -97,9 +97,15 @@ pub fn render_project(p: &Project, span: &ClipSpan, mode: RenderMode) -> Project
             if t.instrument_plugin.as_ref().is_some_and(|d| builtin::def_of(d).is_none()) {
                 t.instrument_plugin = None;
             }
-            if mode == RenderMode::Material {
-                t.clips.clear();
-                t.midi_clips.clear();
+            // A muted track plays nothing (not into a sidechain either), so the render needs none
+            // of its clips or samples: loading them would only cost time, and a missing file
+            // there would fail a render that never plays it. Its lanes go too, so a mute lane
+            // can't bring it back.
+            t.clips.clear();
+            t.midi_clips.clear();
+            t.automation.clear();
+            for d in t.devices.iter_mut().chain(t.instrument_plugin.iter_mut()) {
+                d.samples.clear();
             }
             continue;
         }
@@ -129,11 +135,25 @@ pub fn render_project(p: &Project, span: &ClipSpan, mode: RenderMode) -> Project
             RenderMode::Stem => {}
         }
     }
+    // A stem sounds as the stems export does (through a muted master too); the clip renders
+    // that become clips again are taken before the master, mute included.
     if mode != RenderMode::Stem {
         r.master_gain = 1.0;
+        r.master_mute = false;
         r.master_automation.clear();
     }
     r
+}
+
+/// The audio track a Bounce of a clip on `src` lands on (without the clip): the render is taken
+/// before the channel strip, so the new track takes over the fader, pan, trim, width, mono and
+/// their lanes, and it sends and is routed where `src` is, so it sounds as the source did.
+pub fn bounce_track(src: &Track, id: TrackId) -> Track {
+    let mut t = Track::new(id, TrackKind::Audio, &format!("{} (Bounce)", src.name.trim()), src.color);
+    (t.gain, t.pan, t.trim_db, t.width, t.mono) = (src.gain, src.pan, src.trim_db, src.width, src.mono);
+    t.automation = src.automation.iter().filter(|l| l.target.is_channel()).cloned().collect();
+    (t.sends, t.output) = (src.sends.clone(), src.output);
+    t
 }
 
 /// Whether the track's sound outlasts its clips: it has an enabled device or instrument plugin,

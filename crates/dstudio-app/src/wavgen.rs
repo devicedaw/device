@@ -35,7 +35,7 @@ pub fn encode_wav_pcm(file: std::fs::File, rate: u32, channels: u16, bits: u16, 
     f.write_all(&data_len.to_le_bytes())?;
     let full = ((1i32 << (bits - 1)) - 1) as f32;
     for s in samples {
-        let v = (s.clamp(-1.0, 1.0) * full) as i32;
+        let v = (s.clamp(-1.0, 1.0) * full).round() as i32;
         f.write_all(&v.to_le_bytes()[..bytes as usize])?;
     }
     f.flush()
@@ -90,9 +90,10 @@ pub fn read_wav(path: &Path) -> Result<(u32, u16, Vec<f32>), String> {
         let len = u32_at(i + 4) as usize;
         let body = i + 8;
         let end = (body + len).min(b.len());
-        if id == b"fmt " && len >= 16 {
+        // A chunk cut short by the end of the file is read only as far as the file goes.
+        if id == b"fmt " && len >= 16 && end >= body + 16 {
             let mut tag = u16_at(body);
-            if tag == 0xFFFE && len >= 26 {
+            if tag == 0xFFFE && len >= 26 && end >= body + 26 {
                 tag = u16_at(body + 24); // sub-format GUID starts with the format tag
             }
             fmt = Some((tag, u16_at(body + 2), u32_at(body + 4), u16_at(body + 14)));
@@ -123,6 +124,35 @@ mod tests {
         let (r, ch, back) = super::read_wav(&p).unwrap();
         assert_eq!((r, ch, back.len()), (48_000, 2, 100));
         assert!(back.iter().zip(&s).all(|(a, b)| (a - b).abs() < 1e-3));
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn pcm_rounds_to_the_nearest_step() {
+        let p = std::env::temp_dir().join(format!("dstudio-wav-round-{}.wav", std::process::id()));
+        // 0.9 and -0.9 of a 16-bit step round to ±1; truncation would write 0 for both.
+        let step = 1.0 / 32767.0;
+        super::write_wav(&p, 48_000, 1, &[0.9 * step, -0.9 * step, 0.4 * step, 1.5]).unwrap();
+        let b = std::fs::read(&p).unwrap();
+        let got: Vec<i16> = b[44..].chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+        assert_eq!(got, vec![1, -1, 0, 32767]);
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn a_truncated_fmt_chunk_is_an_error_not_a_panic() {
+        let p = std::env::temp_dir().join(format!("dstudio-wav-cut-{}.wav", std::process::id()));
+        let mut b = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes()); // 2 of the 16 bytes the chunk claims
+        std::fs::write(&p, &b).unwrap();
+        assert!(super::read_wav(&p).is_err());
+        b.truncate(20);
+        b.extend_from_slice(&[0xFE, 0xFF, 2, 0, 0x80, 0xBB, 0, 0, 0, 0, 0, 0, 4, 0, 16, 0]); // extensible, cut before its GUID
+        let mut fixed = b.clone();
+        fixed[16..20].copy_from_slice(&40u32.to_le_bytes());
+        std::fs::write(&p, &fixed).unwrap();
+        assert!(super::read_wav(&p).is_err());
         let _ = std::fs::remove_file(p);
     }
 }

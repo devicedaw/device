@@ -248,6 +248,49 @@ fn render_project_keeps_one_track_and_the_chosen_clips() {
 }
 
 #[test]
+fn render_project_takes_consolidate_and_bounce_before_a_muted_master() {
+    let (mut d, track) = overlap_doc();
+    d.execute(Command::SetMasterMute { mute: true }, Origin::User).unwrap();
+    let p = d.project();
+    let s = render_plan::consolidate_group(p, ClipId(101)).unwrap();
+    for mode in [render_plan::RenderMode::Material, render_plan::RenderMode::Bounce] {
+        let r = render_plan::render_project(p, &s, mode);
+        let (snap, _) = snapshot::build(&r, 48_000.0, &HashMap::new());
+        assert!(!r.master_mute && snap.master_gain == 1.0, "{mode:?}: a muted master would render (and replace the clips with) silence");
+    }
+    let stem = render_plan::render_project(p, &s, render_plan::RenderMode::Stem);
+    assert!(stem.master_mute, "an export sounds as the stems export does, through the muted master");
+    assert!(p.master_mute && p.track(track).is_some(), "the project is not touched");
+}
+
+#[test]
+fn render_project_keeps_no_clips_samples_or_lanes_on_the_other_tracks() {
+    let (mut d, track) = overlap_doc();
+    let inst = d.project().tracks[1].id;
+    let mut clip = MidiClip::empty(0, 4 * PPQ);
+    clip.notes = vec![Note { id: 1, pitch: 60, start: 0, length: PPQ, velocity: 100 }];
+    d.execute(Command::AddMidiClip { track: inst, clip }, Origin::User).unwrap();
+    let lane =
+        AutomationLane { target: AutomationTarget::Mute, enabled: true, points: vec![AutoPoint { time: 0, value: 0.0, curve: 0.0 }] };
+    d.execute(Command::SetAutomationLane { track: Some(inst), target: AutomationTarget::Mute, lane: Some(lane) }, Origin::User).unwrap();
+    d.execute(Command::SetInstrumentPlugin { track: inst, device: Some(builtin::find("drum-rack").unwrap().instantiate()) }, Origin::User)
+        .unwrap();
+    let dev = d.project().track(inst).unwrap().instrument_plugin.as_ref().unwrap().id;
+    let asset = d.project().assets[0].id;
+    let sample = DeviceSample { slot: 0, asset, name: "kick".into(), slices: vec![] };
+    d.execute(Command::SetDeviceSample { device: dev, slot: 0, sample: Some(sample) }, Origin::User).unwrap();
+    let s = render_plan::consolidate_group(d.project(), ClipId(101)).unwrap();
+    for mode in [render_plan::RenderMode::Material, render_plan::RenderMode::Bounce, render_plan::RenderMode::Stem] {
+        let r = render_plan::render_project(d.project(), &s, mode);
+        let o = r.track(inst).unwrap();
+        assert!(o.mute && o.clips.is_empty() && o.midi_clips.is_empty(), "{mode:?}: a muted track's clips are not loaded");
+        assert!(o.instrument_plugin.as_ref().is_some_and(|i| i.samples.is_empty()), "{mode:?}: nor its samples");
+        assert!(o.automation.is_empty(), "{mode:?}: no mute lane brings the muted track back");
+        assert_eq!(r.track(track).unwrap().clips.len(), 2, "{mode:?}: the span's clips stay");
+    }
+}
+
+#[test]
 fn render_project_clears_devices_only_for_material() {
     let mut d = Document::new(Project::default());
     let track = d.project().tracks[0].id;
@@ -336,6 +379,32 @@ fn merge_midi_plays_pattern_clips_repeated_and_without_muted_rows() {
     assert_eq!(got.len(), 2, "{got:?}");
     assert!(got.iter().all(|n| n.0 == 36), "the muted row is left out: {got:?}");
     assert_eq!((got[0].1, got[1].1), (0, period), "the pattern repeats over the clip");
+}
+
+#[test]
+fn a_bounce_track_sends_and_is_routed_where_its_source_is() {
+    let (mut d, track) = overlap_doc();
+    let group = Track::new(TrackId(0), TrackKind::Group, "Group", ColorIndex(3));
+    d.execute(Command::AddTrack { index: Some(0), track: group }, Origin::User).unwrap();
+    let ret = Track::new(TrackId(0), TrackKind::Return, "Return A", ColorIndex(9));
+    d.execute(Command::AddTrack { index: None, track: ret }, Origin::User).unwrap();
+    let (g, r) = (d.project().tracks[0].id, d.project().tracks.last().unwrap().id);
+    d.execute(Command::SetTrackOutput { track, output: Some(g) }, Origin::User).unwrap();
+    let sends = vec![TrackSend { level: 0.5, pre_fader: true, ..TrackSend::new(r) }];
+    d.execute(Command::SetSends { track, sends: sends.clone() }, Origin::User).unwrap();
+    d.execute(Command::SetTrackGain { track, gain: 0.5 }, Origin::User).unwrap();
+    let before = d.project().clone();
+    let src = d.project().track(track).unwrap();
+    let id = TrackId(d.project().next_id);
+    let t = render_plan::bounce_track(src, id);
+    assert_eq!((t.name.as_str(), t.kind, t.gain), ("Audio (Bounce)", TrackKind::Audio, 0.5));
+    assert_eq!((&t.sends, t.output), (&sends, Some(g)), "the bounce keeps the source's sends and group");
+    let index = d.project().track_index(track).unwrap() + 1;
+    d.execute(Command::AddTrack { index: Some(index), track: t }, Origin::User).unwrap();
+    let added = d.project().track(id).unwrap();
+    assert_eq!((&added.sends, added.output), (&sends, Some(g)));
+    d.undo().unwrap();
+    assert!(d.project().tracks == before.tracks, "one undo removes it");
 }
 
 #[test]
