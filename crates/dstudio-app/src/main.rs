@@ -3213,6 +3213,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_tree_scroll_by, |c, dy: f32| c.tree_scroll_by(dy));
     // ---- browser sections, Back / Forward, Files (src/files.rs) ----
     on!(on_browser_section_select, |c, i: i32| c.browser_section(i.max(0) as usize));
+    on!(on_browser_top_select, |c, i: i32| c.browser_top(i.max(0) as usize));
     on!(on_browser_back, |c| c.browser_back());
     on!(on_browser_forward, |c| c.browser_forward());
     on!(on_files_tab_select, |c, i: i32| c.files_tab(i.max(0) as usize));

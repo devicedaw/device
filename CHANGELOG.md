@@ -19,6 +19,11 @@ Fixed or Removed. Write it for people who use Device, not for developers.
   Mix & Master), each with its main controls on macros. Find them, and your saved chains, under Browser › Devices ›
   Chains and Add device › Chains.
 
+### Changed
+
+- Projects has its own tab at the top of the browser, next to Devices and Files, with its own search. The Files tab
+  now only shows your folders.
+
 ### Fixed
 
 - Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song
