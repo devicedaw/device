@@ -11,7 +11,22 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song
+  tempo in time signatures such as 6/8 and 2/2, and in exports and bounces, instead of the wrong speed.
+- Exports (mixdown, stems and Live sets) line up with the timeline when a device adds latency, such as the Limiter,
+  instead of starting late and cutting off the end.
+- Consolidate and Bounce work while the master is muted, instead of replacing the clips with silence.
+- Bounce keeps the source track's sends and group, and no longer fails because a file is missing on another track.
+- Splitting a looping audio or MIDI clip keeps what it plays; splitting a very short clip no longer crashes.
+- Undoing a track deletion brings the track back exactly as it was.
+- No more crashes when folding a group with automation shown, or when dragging the edges of very short clips.
+- Projects with damaged or hand-edited values (a time signature of 0, a missing number, an invalid note) open and play
+  instead of crashing, staying silent or refusing to load. Media paths survive moving a project saved through a
+  folder path with `..` or a symlink.
+- Very long recordings are kept: a take that reaches the file size limit is saved up to that point, and takes over
+  2 GB load again.
 
 ## [0.1.0] - 2026-11-16
 
