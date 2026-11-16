@@ -465,6 +465,18 @@ fn sections_tile_from_bar_one_and_undo() {
 }
 
 #[test]
+fn section_color_is_one_undo_step_and_validated() {
+    let mut d = Document::new(Project::default());
+    d.execute(Command::InsertSection { index: None, section: section("Marker 1", 8) }, Origin::User).unwrap();
+    let a = d.project().sections[0].id;
+    d.execute(Command::SetSectionColor { section: a, color: 0x30a098 }, Origin::User).unwrap();
+    assert_eq!((d.project().sections[0].color, d.undo_label()), (0x30a098, Some("Section Color")));
+    assert!(d.execute(Command::SetSectionColor { section: a, color: 0x100_0000 }, Origin::User).is_err());
+    d.undo().unwrap();
+    assert_eq!(d.project().sections[0].color, 0x68a8c0);
+}
+
+#[test]
 fn section_validation_and_clear_all_batch() {
     let mut d = Document::new(Project::default());
     assert!(d.execute(Command::InsertSection { index: None, section: section(" ", 8) }, Origin::User).is_err());
