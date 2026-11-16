@@ -1,4 +1,4 @@
-use dstudio_core::midi::Note;
+use dstudio_core::midi::{ClipLoop, Note};
 use dstudio_core::*;
 use std::collections::HashMap;
 
@@ -404,4 +404,136 @@ fn consolidate_and_bounce_batches_are_one_undo_step() {
         d.project().tracks == before.tracks && d.project().assets == before.assets,
         "one undo removes the track, the asset and the mute"
     );
+}
+
+#[test]
+fn split_refuses_a_one_frame_audio_clip() {
+    // At 1 Hz one frame lasts two beats, so a cut can fall inside a clip one frame long.
+    let mut d = Document::new(Project::default());
+    let track = d.project().tracks[0].id;
+    let asset = Asset {
+        id: AssetId(0),
+        relative_path: None,
+        absolute_path: "/nonexistent/s.wav".into(),
+        sample_rate: 1.0,
+        channels: 1,
+        frames: 10,
+    };
+    d.execute(Command::AddAsset { asset }, Origin::User).unwrap();
+    let a = d.project().assets[0].id;
+    let clip = Clip {
+        id: ClipId(0),
+        asset: a,
+        name: "s".into(),
+        start: 0,
+        source_offset: 0,
+        source_length: 1,
+        gain: 1.0,
+        warp: Default::default(),
+        disabled: false,
+        clip_loop: None,
+        fades: Default::default(),
+        takes: Vec::new(),
+    };
+    d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
+    let c = d.project().tracks[0].clips[0].id;
+    let before = d.project().clone();
+    assert!(d.execute(Command::SplitClip { clip: c, at: PPQ, new_id: ClipId(0) }, Origin::User).is_err());
+    assert_eq!(d.project(), &before);
+}
+
+/// The source frame an audio clip plays at timeline tick `at`, following its loop.
+fn frame_at(p: &Project, c: &Clip, at: Ticks) -> Option<i64> {
+    let rel = at - c.start;
+    if rel < 0 || rel >= p.clip_length_ticks(c) {
+        return None;
+    }
+    let pos = match c.clip_loop.filter(|l| l.on) {
+        Some(l) => {
+            let le = l.end.min(p.content_length_ticks(c));
+            if rel < le { rel } else { l.start + (rel - le) % (le - l.start) }
+        }
+        None => rel,
+    };
+    Some(p.clip_source_at(c, pos as f64).round() as i64)
+}
+
+#[test]
+fn split_looped_audio_clip_keeps_what_plays() {
+    // 4 beats of audio looping beats 1..3, 16 beats on the timeline: the cuts fall before the
+    // loop, in its first pass, in a later repeat and on a repeat boundary.
+    for cut in [PPQ / 2, 2 * PPQ, 9 * PPQ + PPQ / 3, 7 * PPQ] {
+        let (mut d, _, c) = audio_doc();
+        let l = AudioLoop { on: true, start: PPQ, end: 3 * PPQ, length: 16 * PPQ };
+        d.execute(Command::SetClipLoop { clip: c, clip_loop: Some(l) }, Origin::User).unwrap();
+        let fades = ClipFades { fade_in: PPQ / 4, fade_out: PPQ / 4 };
+        d.execute(Command::SetClipFades { clip: c, fades }, Origin::User).unwrap();
+        let before = d.project().clone();
+        let orig = before.tracks[0].clips[0].clone();
+        let at = orig.start + cut;
+        d.execute(Command::SplitClip { clip: c, at, new_id: ClipId(0) }, Origin::User).unwrap();
+        let p = d.project();
+        let parts = &p.tracks[0].clips;
+        assert!(parts.len() >= 2, "cut {cut}");
+        assert_eq!(parts[0].id, c);
+        assert_eq!(parts[0].start + p.clip_length_ticks(&parts[0]), at, "cut {cut}: left part ends at the cut");
+        assert_eq!(parts[1].start, at);
+        for w in parts.windows(2) {
+            assert_eq!(w[0].start + p.clip_length_ticks(&w[0]), w[1].start, "cut {cut}: parts follow each other");
+        }
+        let last = parts.last().unwrap();
+        assert_eq!(last.start + p.clip_length_ticks(last), orig.start + 16 * PPQ, "cut {cut}: ends where the clip ended");
+        assert_eq!((parts[0].fades.fade_in, last.fades.fade_out), (PPQ / 4, PPQ / 4));
+        for t in (orig.start..orig.start + 16 * PPQ).step_by(PPQ as usize / 8) {
+            let want = frame_at(&before, &orig, t).unwrap();
+            let got = parts.iter().find_map(|cl| frame_at(p, cl, t)).unwrap();
+            assert!((want - got).abs() <= 1, "cut {cut}: at tick {t} plays frame {got}, was {want}");
+        }
+        let n = parts.len();
+        d.undo().unwrap();
+        assert_eq!(d.project().tracks, before.tracks, "cut {cut}");
+        d.redo().unwrap();
+        assert_eq!(d.project().tracks[0].clips.len(), n);
+    }
+}
+
+#[test]
+fn split_looped_midi_clip_keeps_its_repeats() {
+    let mut d = Document::new(Project::default());
+    let inst = d.project().tracks[1].id;
+    let mut clip = MidiClip::empty(PPQ, 4 * PPQ);
+    clip.notes = vec![
+        Note { id: 1, pitch: 60, start: 0, length: PPQ / 2, velocity: 100 },
+        Note { id: 2, pitch: 62, start: PPQ / 2, length: PPQ, velocity: 90 },
+    ];
+    d.execute(Command::AddMidiClip { track: inst, clip }, Origin::User).unwrap();
+    let c = d.project().tracks[1].midi_clips[0].id;
+    // Loop the first beat over four beats: the notes repeat on every beat.
+    let l = ClipLoop { on: true, start: 0, end: PPQ, span: 0 };
+    d.execute(Command::SetMidiLoop { clip: c, clip_loop: Some(l), length: 4 * PPQ }, Origin::User).unwrap();
+    let before = d.project().clone();
+    let playing = |p: &Project| {
+        let mut v: Vec<_> = p.tracks[1]
+            .midi_clips
+            .iter()
+            .flat_map(|cl| cl.tiled_notes().into_iter().map(|n| (cl.start + n.start, n.length, n.pitch)))
+            .collect();
+        v.sort();
+        v
+    };
+    d.execute(Command::SplitClip { clip: c, at: PPQ + 2 * PPQ + PPQ / 4, new_id: ClipId(0) }, Origin::User).unwrap();
+    assert_eq!(d.project().tracks[1].midi_clips.len(), 2);
+    let mut want = playing(&before);
+    // The note that crosses the cut plays as two notes.
+    let crossing = want.iter().position(|&(s, _, pitch)| s == 3 * PPQ && pitch == 60).unwrap();
+    let (s, len, pitch) = want.remove(crossing);
+    let cut = PPQ + 2 * PPQ + PPQ / 4;
+    want.extend([(s, cut - s, pitch), (cut, s + len - cut, pitch)]);
+    want.sort();
+    assert_eq!(playing(d.project()), want);
+    for cl in &d.project().tracks[1].midi_clips {
+        midi::validate_notes(&cl.notes).unwrap();
+    }
+    d.undo().unwrap();
+    assert_eq!(d.project().tracks, before.tracks);
 }

@@ -516,6 +516,82 @@ fn rejected_add_track_leaves_next_id_alone() {
 }
 
 #[test]
+fn undo_of_delete_track_restores_it_exactly() {
+    // An instrument track whose instrument was removed comes back without one.
+    let mut d = Document::new(Project::default());
+    let inst = d.project().tracks[1].id;
+    let dev = d.project().tracks[1].instrument_plugin.as_ref().unwrap().id;
+    d.execute(Command::RemoveDevice { device: dev }, Origin::User).unwrap();
+    let before = d.project().clone();
+    d.execute(Command::RemoveTrack { track: inst }, Origin::User).unwrap();
+    d.undo().unwrap();
+    assert_eq!(d.project().tracks, before.tracks);
+    d.redo().unwrap();
+    assert!(d.project().track(inst).is_none());
+    d.undo().unwrap();
+    assert_eq!(d.project().tracks, before.tracks);
+}
+
+#[test]
+fn add_track_refuses_taken_clip_and_device_ids_and_bad_midi_clips() {
+    let (mut d, track, a) = doc_with_asset();
+    d.execute(Command::AddClip { track, clip: clip(a, 0, 48_000) }, Origin::User).unwrap();
+    let existing = d.project().tracks[0].clips[0].clone();
+    let inst_dev = d.project().tracks[1].instrument_plugin.clone().unwrap();
+    let before = d.project().clone();
+    let audio = |f: &dyn Fn(&mut Track)| {
+        let mut t = Track::new(TrackId(0), TrackKind::Audio, "New", ColorIndex::FIRST);
+        f(&mut t);
+        t
+    };
+    let instrument = |f: &dyn Fn(&mut Track)| {
+        let mut t = Track::new(TrackId(0), TrackKind::Instrument, "New", ColorIndex::FIRST);
+        f(&mut t);
+        t
+    };
+    let fresh = before.next_id + 10;
+    let bad = [
+        audio(&|t| t.clips.push(existing.clone())),
+        audio(&|t| t.clips.extend([Clip { id: ClipId(fresh), ..existing.clone() }, Clip { id: ClipId(fresh), ..existing.clone() }])),
+        instrument(&|t| t.midi_clips.push(MidiClip { id: existing.id, ..MidiClip::empty(0, PPQ) })),
+        instrument(&|t| t.midi_clips.push(MidiClip { id: ClipId(fresh), ..MidiClip::empty(0, 0) })),
+        instrument(&|t| {
+            let mut m = MidiClip { id: ClipId(fresh), ..MidiClip::empty(0, PPQ) };
+            m.notes = vec![midi::Note { id: 1, pitch: 200, start: 0, length: PPQ, velocity: 100 }];
+            t.midi_clips.push(m)
+        }),
+        instrument(&|t| t.instrument_plugin = Some(inst_dev.clone())),
+        audio(&|t| t.devices.push(inst_dev.clone())),
+    ];
+    for (i, t) in bad.into_iter().enumerate() {
+        assert!(d.execute(Command::AddTrack { index: None, track: t }, Origin::Assistant).is_err(), "case {i}");
+        assert_eq!(d.project(), &before, "case {i}");
+    }
+}
+
+#[test]
+fn clip_positions_and_lengths_are_capped() {
+    let (mut d, track, a) = doc_with_asset();
+    d.execute(Command::AddClip { track, clip: clip(a, 0, 48_000) }, Origin::User).unwrap();
+    let c = d.project().tracks[0].clips[0].id;
+    let inst = d.project().tracks[1].id;
+    d.execute(Command::AddMidiClip { track: inst, clip: MidiClip::empty(0, 4 * PPQ) }, Origin::User).unwrap();
+    let m = d.project().tracks[1].midi_clips[0].id;
+    let before = d.project().clone();
+    let huge = i64::MAX - 10;
+    for cmd in [
+        Command::ResizeMidiClip { clip: m, start: huge, length: huge },
+        Command::ResizeMidiClip { clip: m, start: 0, length: huge },
+        Command::MoveClip { clip: c, track, start: huge },
+        Command::MoveMidiClip { clip: m, track: inst, start: huge },
+        Command::SetMidiLoop { clip: m, clip_loop: None, length: huge },
+    ] {
+        assert!(d.execute(cmd.clone(), Origin::Assistant).is_err(), "{cmd:?}");
+    }
+    assert_eq!(d.project(), &before);
+}
+
+#[test]
 fn a_failed_undo_keeps_its_history_entry() {
     let mut p = Project::default();
     p.tracks[0].gain = -1.0;
