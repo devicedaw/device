@@ -13,6 +13,11 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ### Added
 
+- Device chains can be saved and reused. The chain's name menu has Save, Save as…, Rename…, Unpack chain (keeps the
+  effects, drops the chain) and Delete saved chain, and Chains › swaps the chain for another one.
+- 27 ready-made chains in eight folders (Vocals, Drums, Bass, Guitar, Keys & Synths, Pads & Textures, FX and
+  Mix & Master), each with its main controls on macros. Find them, and your saved chains, under Browser › Devices ›
+  Chains and Add device › Chains.
 - Markers (the labelled ranges on the ruler) have a full right-click menu: Cut, Copy, Paste, Color, and Insert ›
   Marker before / Marker after. ⌘X, ⌘C and ⌘V work on the selected marker. New markers are named "Marker 1",
   "Marker 2" and so on.
