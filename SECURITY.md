@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Device is pre-alpha and has no releases yet. Only the latest `main` branch is supported, and fixes land there.
+Device is pre-alpha. Only the latest release and the `main` branch are supported, and fixes land on `main`.
 
 ## Reporting a vulnerability
 

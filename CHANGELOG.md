@@ -11,7 +11,13 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
-Nothing has been released yet. The first release, 0.1.0, will cover what is on `main` today:
+Nothing yet.
+
+## [0.1.0] - 2026-11-16
+
+The first release of Device: a pre-alpha for trying it out and reporting what breaks. Packages for macOS (Apple
+silicon and Intel), Windows and Linux are attached below. The macOS app is not notarised yet and the Windows packages
+are not signed, so your system asks you to confirm the first launch.
 
 ### Added
 
