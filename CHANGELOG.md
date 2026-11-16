@@ -69,3 +69,7 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
 - An expanded window for Trance Gate: the step ring (step count, rate) and the pattern track on a panel down the
   left, the envelope with its draggable handles across the display, and a card with Attack, Decay, Sustain,
   Release, Swing and Mix. The ring and envelope are the card's, drawn and hit tested in the window's geometry.
+- Expanded windows for the restoration devices: De-Clipper (its transfer held at the threshold on a 48 dB square
+  beside two cycles of a sine through it, with the Reduction lit against unity) and De-Esser, De-Hummer and De-Noiser
+  (the card's graph at full size with its handles, over a dB ladder and frequency axis, captioned and with a legend),
+  each with one card of every control.
