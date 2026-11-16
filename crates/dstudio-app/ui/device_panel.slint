@@ -437,7 +437,8 @@ export component DeviceCanvas inherits Rectangle {
     in property <color> accent;
     // In a device window: Rust maps the well with the window's geometry (src/device_window.rs).
     in property <bool> window;
-    // Editor events from a device window carry kind + 16 (src/device_editors.rs).
+    // Editor and graph events from a device window carry kind + 16 (src/device_editors.rs,
+    // src/panel_graph.rs).
     property <int> ekind: root.window ? 16 : 0;
     property <float> zm: PanelStyle.z;
     property <MouseCursor> mouse-cursor: root.f.cursor == 1 ? MouseCursor.move : root.f.cursor == 2 ? MouseCursor.ew-resize : root.f.cursor == 3 ? MouseCursor.ns-resize
@@ -506,14 +507,14 @@ export component DeviceCanvas inherits Rectangle {
             mouse-cursor: root.mouse-cursor;
             pointer-event(e) => {
                 Studio.canvas-surface(root.window);
-                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { keys.focus(); Studio.panel-graph(root.device, 0, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { keys.focus(); Studio.panel-graph(root.device, root.ekind + 0, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
                 if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) { Studio.panel-graph-menu(root.device, self.mouse-x / 1px, self.mouse-y / 1px, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
-                if (e.kind == PointerEventKind.move) { Studio.panel-graph(root.device, self.pressed ? 1 : 4, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
-                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-graph(root.device, 2, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
-                if (e.kind == PointerEventKind.cancel) { Studio.panel-graph(root.device, 3, 0, 0, false, false); }
+                if (e.kind == PointerEventKind.move) { Studio.panel-graph(root.device, root.ekind + (self.pressed ? 1 : 4), self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-graph(root.device, root.ekind + 2, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
+                if (e.kind == PointerEventKind.cancel) { Studio.panel-graph(root.device, root.ekind + 3, 0, 0, false, false); }
             }
-            changed has-hover => { if (!self.has-hover && !self.pressed) { Studio.canvas-surface(root.window); Studio.panel-graph(root.device, 5, 0, 0, false, false); } }
-            double-clicked => { Studio.canvas-surface(root.window); Studio.panel-graph(root.device, 6, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
+            changed has-hover => { if (!self.has-hover && !self.pressed) { Studio.canvas-surface(root.window); Studio.panel-graph(root.device, root.ekind + 5, 0, 0, false, false); } }
+            double-clicked => { Studio.canvas-surface(root.window); Studio.panel-graph(root.device, root.ekind + 6, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
             scroll-event(e) => {
                 Studio.canvas-surface(root.window);
                 if (Studio.panel-graph-wheel(root.device, self.mouse-x / 1px, self.mouse-y / 1px, e.delta-y / 1px)) { return accept; }

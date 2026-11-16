@@ -139,6 +139,34 @@ pub struct GraphState {
     drag: Option<Drag>,
     hover: Option<(DeviceId, Zone)>,
     spectra: HashMap<DeviceId, Spectrum>,
+    /// The last pointer event came from a device window (its menu is hit tested there).
+    in_window: bool,
+}
+
+/// Plot size (pt) of a restoration graph in its expanded window (src/device_window.rs).
+pub(crate) const WIN_PLOT: (f32, f32) = (994.0, 441.0);
+
+thread_local! {
+    static IN_WINDOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Draws and hit tests the graph at its window size until dropped.
+pub(crate) struct WindowScope(bool);
+
+impl WindowScope {
+    pub(crate) fn new(on: bool) -> Self {
+        Self(IN_WINDOW.with(|c| c.replace(on)))
+    }
+}
+
+impl Drop for WindowScope {
+    fn drop(&mut self) {
+        IN_WINDOW.with(|c| c.set(self.0));
+    }
+}
+
+fn in_window() -> bool {
+    IN_WINDOW.with(|c| c.get())
 }
 
 /// Plot geometry in well pixels: x is a log frequency axis (or 0..1 for the
@@ -181,7 +209,7 @@ fn placement(def: &DeviceDef) -> (f32, f32, f32, f32) {
 
 fn geo(kind: Kind, def: &DeviceDef) -> Geo {
     let (_, _, w, h) = placement(def);
-    let (w, h) = (w * Z, (h - CAPTION) * Z);
+    let (w, h) = if in_window() { (WIN_PLOT.0 * Z, WIN_PLOT.1 * Z) } else { (w * Z, (h - CAPTION) * Z) };
     let full = |lo, hi, top, bottom| Geo { w, h, x0: 0.0, x1: w, y0: 0.0, y1: h, lo, hi, top, bottom };
     match kind {
         // Wave plot inset 8 pt in the well, amplitude axis +-1.25.
@@ -568,8 +596,57 @@ impl Controller {
                 value = String::new();
             }
         }
+        let win = in_window();
+        if win {
+            // The window's ladder and axis: finer rungs and more frequencies, labelled outside.
+            let (step, ticks): (f32, &[(f32, &str)]) = match kind {
+                Kind::Deesser => {
+                    (5.0, &[(2000.0, "2k"), (3000.0, "3k"), (5000.0, "5k"), (7000.0, "7k"), (10000.0, "10k"), (15000.0, "15k")])
+                }
+                Kind::Dehummer => (
+                    6.0,
+                    &[
+                        (30.0, "30"),
+                        (50.0, "50"),
+                        (70.0, "70"),
+                        (100.0, "100"),
+                        (200.0, "200"),
+                        (300.0, "300"),
+                        (500.0, "500"),
+                        (700.0, "700"),
+                        (1000.0, "1k"),
+                        (2000.0, "2k"),
+                    ],
+                ),
+                _ => (
+                    10.0,
+                    &[
+                        (50.0, "50"),
+                        (100.0, "100"),
+                        (200.0, "200"),
+                        (500.0, "500"),
+                        (1000.0, "1k"),
+                        (2000.0, "2k"),
+                        (5000.0, "5k"),
+                        (10000.0, "10k"),
+                        (20000.0, "20k"),
+                    ],
+                ),
+            };
+            hrules.clear();
+            vrules.clear();
+            let mut db = g.top;
+            while db >= g.bottom - 0.01 {
+                let t = if db == 0.0 { "0 dB".to_string() } else { axis_db(db) };
+                hrules.push(Rule { pos: g.y_of(db).min(g.h - 1.0), text: s(t), strong: db == 0.0 });
+                db -= step;
+            }
+            for &(hz, t) in ticks {
+                vrules.push(Rule { pos: g.x_of(hz).min(g.w - 1.0), text: s(t), strong: false });
+            }
+        }
         // Draw order: rules, spectrum, layers, axis labels, dots, grip pills.
-        let (ww, wh) = (w * Z, (h - CAPTION) * Z);
+        let (ww, wh) = if win { (g.w, g.h) } else { (w * Z, (h - CAPTION) * Z) };
         let rule = |commands: String, a: f32| PanelPath { commands: s(commands), stroke: ink(a), width: 1.0, fill: none(), fill2: none() };
         let mut paths: Vec<PanelPath> = Vec::new();
         paths.extend(
@@ -596,15 +673,23 @@ impl Controller {
             weight: 500,
             align,
         };
-        let mut texts: Vec<PanelText> =
-            hrules.iter().filter(|r| !r.text.is_empty()).map(|r| label_text(3.0 * Z, r.pos + 1.0, 40.0 * Z, &r.text, 0)).collect();
-        texts.extend(vrules.iter().map(|r| label_text(r.pos - 20.0 * Z, wh - 13.0 * Z, 40.0 * Z, &r.text, 1)));
+        let mut texts: Vec<PanelText> = if win {
+            Vec::new()
+        } else {
+            hrules.iter().filter(|r| !r.text.is_empty()).map(|r| label_text(3.0 * Z, r.pos + 1.0, 40.0 * Z, &r.text, 0)).collect()
+        };
+        if !win {
+            texts.extend(vrules.iter().map(|r| label_text(r.pos - 20.0 * Z, wh - 13.0 * Z, 40.0 * Z, &r.text, 1)));
+        }
         let mut grips = Vec::new();
         let mut next_x = 0.0;
         for p in &pills {
             let x = if p.x < 0.0 { next_x } else { p.x };
             next_x = x + pill_width(p) + 8.0 * Z;
             grips.push(PanelGrip { x, y: p.y, label: s(p.label), value: s(p.value.as_str()), hot: p.hot, ..Default::default() });
+        }
+        if win {
+            return self.graph_window_canvas(kind, d, def, accent, (ww, wh), &hrules, &vrules, (caption, value), paths, grips, cursor);
         }
         PanelCanvas {
             visible: true,
@@ -626,6 +711,104 @@ impl Controller {
             readout_accent: true,
             ..Default::default()
         }
+    }
+
+    /// The graph at window size: the ladder left of the plot, the axis under it, the caption
+    /// above and a legend under the axis, as on the other expanded windows.
+    #[allow(clippy::too_many_arguments)]
+    fn graph_window_canvas(
+        &self,
+        kind: Kind,
+        d: &Device,
+        def: &'static DeviceDef,
+        accent: Color,
+        (w, h): (f32, f32),
+        hrules: &[Rule],
+        vrules: &[Rule],
+        (caption, value): (&'static str, String),
+        mut paths: Vec<PanelPath>,
+        grips: Vec<PanelGrip>,
+        cursor: i32,
+    ) -> PanelCanvas {
+        let v = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let dim = Color::from_argb_u8(0x52, 255, 255, 255);
+        let text = |x: f32, y: f32, w: f32, t: SharedString, color: Color, size: f32, align: i32| PanelText {
+            x: match align {
+                1 => x - w / 2.0,
+                2 => x - w,
+                _ => x,
+            },
+            y: y - 8.0 * Z,
+            w,
+            h: 16.0 * Z,
+            text: t,
+            color,
+            size: size * Z,
+            weight: 500,
+            align,
+        };
+        let mut texts: Vec<PanelText> = Vec::new();
+        for r in hrules {
+            texts.push(text(-8.0 * Z, r.pos, 44.0 * Z, r.text.clone(), dim, 10.0, 2));
+        }
+        let axis_y = h + 10.0 * Z;
+        texts.push(text(6.0 * Z, axis_y, 30.0 * Z, s("Hz"), dim, 10.0, 0));
+        for r in vrules {
+            let right = r.pos > w - 12.0 * Z;
+            texts.push(text(r.pos, axis_y, 40.0 * Z, r.text.clone(), dim, 10.0, if right { 2 } else { 1 }));
+        }
+        // Caption above the plot.
+        let cy = -13.0 * Z;
+        let value = if kind == Kind::Denoiser { db_text(v("threshold")) } else { value };
+        texts.push(text(0.0, cy, 120.0 * Z, s(caption), Color::from_argb_u8(0x8c, 255, 255, 255), 12.0, 0));
+        let at = (crate::text_measure::value_width(caption) + 12.0) * Z;
+        texts.push(text(at, cy, 160.0 * Z, s(value), Color::from_argb_u8(0xeb, 255, 255, 255), 13.0, 0));
+        // Legend under the axis: the response line, the band it takes out, the signal.
+        let spectrum = self.devices.panel.graph.spectra.get(&d.id);
+        let level = spectrum.and_then(|sp| sp.shown.iter().copied().reduce(f32::max)).filter(|db| *db > -120.0);
+        let signal = match level {
+            Some(db) if kind != Kind::Denoiser => format!("Signal  {} dBFS", axis_db(db.round())),
+            _ => "Signal".to_string(),
+        };
+        let items: Vec<(u8, String)> = match kind {
+            Kind::Deesser => vec![(0, "Reach".into()), (1, "Removing".into()), (2, signal)],
+            Kind::Dehummer => vec![(0, "Notches".into()), (2, signal)],
+            _ => vec![(1, "Gate".into()), (2, signal)],
+        };
+        let ly = h + 31.0 * Z;
+        let (glyph, gap) = (14.0 * Z, 6.0 * Z);
+        let mut x = 0.0;
+        for (k, label) in items {
+            let commands = match k {
+                0 => format!("M{x:.1} {ly:.1} h{glyph:.1}"),
+                _ => format!("M{x:.1} {:.1} h{glyph:.1} v{:.1} h{:.1} Z", ly - 4.0 * Z, 8.0 * Z, -glyph),
+            };
+            paths.push(match k {
+                0 => PanelPath { commands: s(commands), stroke: ink(0.9), width: 1.5 * Z, fill: none(), fill2: none() },
+                1 => layer(commands, none(), 0.0, alpha(accent, 0.34)),
+                _ => layer(commands, none(), 0.0, ink(0.3)),
+            });
+            texts.push(text(x + glyph + gap, ly, 140.0 * Z, s(label.as_str()), Color::from_argb_u8(0xb3, 255, 255, 255), 9.0, 0));
+            x += glyph + gap + crate::text_measure::value_width(&label) * 0.9 * Z + 16.0 * Z;
+        }
+        PanelCanvas {
+            visible: true,
+            w,
+            h,
+            paths: model(paths),
+            texts: model(texts),
+            grips: model(grips),
+            pointer: true,
+            cursor,
+            label: s(caption),
+            ..Default::default()
+        }
+    }
+
+    /// The restoration graph drawn for its expanded window.
+    pub(crate) fn graph_window(&self, d: &Device, def: &'static DeviceDef, accent: Color) -> PanelCanvas {
+        let _w = WindowScope::new(true);
+        self.graph_canvas(d, def, accent)
     }
 
     pub(crate) fn panel_poll_graphs(&mut self) {
@@ -737,6 +920,7 @@ impl Controller {
     /// Right press on a canvas well: the parameter menu (modulate, map to a macro) of the
     /// handle under the pointer, as a right press on its knob opens.
     pub fn panel_graph_menu(&mut self, device: DeviceId, x: f32, y: f32, wx: f32, wy: f32) {
+        let _w = WindowScope::new(self.devices.panel.graph.in_window);
         let param = match self.graph_def(device) {
             Some((d, def, kind)) => self.graph_hit(d, def, kind, x, y).and_then(|z| z.params(kind).iter().find_map(|id| def.index_of(id))),
             None => self.field_param_at(device, x, y),
@@ -747,6 +931,11 @@ impl Controller {
     }
 
     pub fn panel_graph(&mut self, device: DeviceId, phase: i32, x: f32, y: f32, fine: bool, alt: bool) {
+        // Phase + 16: the event comes from the device's expanded window.
+        let win = phase >= 16;
+        let phase = phase % 16;
+        self.devices.panel.graph.in_window = win;
+        let _w = WindowScope::new(win);
         let Some((d, def, kind)) = self.graph_def(device) else {
             if matches!(phase, 2 | 3) && self.devices.panel.graph.drag.take().is_some() {
                 self.ui_dirty = true;

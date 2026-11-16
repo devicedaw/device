@@ -131,9 +131,15 @@ pub(crate) fn has_window(def: &DeviceDef) -> bool {
         "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb" | "echo"
     ) || is_wave_window(def)
         || matches!(def.id, "utility" | "widener" | "tuner" | "spectrum" | "trance-gate")
+        || is_repair_window(def)
         || def.id == "bitcrusher"
         || is_field_window(def)
         || is_dynamics_window(def)
+}
+
+/// The restoration graphs drawn at window size (src/panel_graph.rs).
+fn is_repair_window(def: &DeviceDef) -> bool {
+    matches!(def.id, "deesser" | "dehummer" | "denoiser")
 }
 
 /// Windows of the level-history family (src/device_window_dynamics.rs).
@@ -143,7 +149,7 @@ fn is_dynamics_window(def: &DeviceDef) -> bool {
 
 /// Windows of the waveshaper family (src/device_window_wave.rs).
 fn is_wave_window(def: &DeviceDef) -> bool {
-    matches!(def.id, "distortion" | "tapesaturation" | "soft-clipper")
+    matches!(def.id, "distortion" | "tapesaturation" | "soft-clipper" | "declipper")
 }
 
 /// Windows of the plotted-field family (motion and response pictures).
@@ -191,6 +197,11 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         "multiband-compressor" => field_kit(WIN_W, 336.0, 52.0, 43.0),
         // Waveshapers: the transfer square and the wave over a dB axis and legend.
         "distortion" | "tapesaturation" | "soft-clipper" => field_kit(WAVE_W, 454.0, 60.0, 44.0),
+        // De-Esser, De-Hummer, De-Noiser: the graph over its ladder, the axis and legend below
+        // (its plot is crate::panel_graph::WIN_PLOT).
+        "deesser" | "dehummer" | "denoiser" => field_kit(1200.0, 510.0, 46.0, 44.0),
+        // De-Clipper: the same picture on the wider face.
+        "declipper" => field_kit(1200.0, 510.0, 60.0, 44.0),
         // Utility: three cards and no display; the meters run the window's height.
         "utility" => Kit { w: 1200.0, display: (INSET, 52.0, 1042.0, 630.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: true, meters_h: 0.0 },
         // Stereo Widener: the field over the correlation lane.
@@ -682,6 +693,7 @@ impl Controller {
             _ if def.id == "bitcrusher" => self.crush_window_canvas(d, def, &k, accent),
             _ if def.id == "widener" => self.widener_window_canvas(d, def, &k, accent),
             _ if def.id == "spectrum" => self.spectrum_window_canvas(d, def, &k, accent),
+            _ if is_repair_window(def) => self.graph_window(d, def, accent),
             // The ring panel and the envelope display share one canvas from the panel's corner.
             _ if def.id == "trance-gate" => self.trance_gate_window_canvas(d, def, accent, dx + dw - INSET, dh),
             // The card's tuner at twice its scale, its bar across the middle of the display.
@@ -712,6 +724,7 @@ impl Controller {
             "tuner" => self.tuner_window(d, def, &mut b, dy + dh + 14.0),
             "spectrum" => self.spectrum_window(d, def, &mut b, dy + dh + 12.0),
             "trance-gate" => self.trance_gate_window(d, def, &mut b, dy + dh + 12.0),
+            _ if is_repair_window(def) => self.repair_window(d, def, &mut b, dy + dh + 12.0),
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
         let (mut meters, mut ticks, mut ticks_x) = self.window_meters(d.id, &k);
@@ -1637,6 +1650,11 @@ impl Controller {
                     14.0,
                 ),
             ],
+            "declipper" => vec![
+                (vec![knob("threshold", "Threshold", 2, 76.0), knob("ceiling", "Ceiling", 2, 76.0)], 8.0),
+                (vec![Item::Pills("oversampling", pills("oversampling"), "Oversampling", 130.0)], 8.0),
+                (vec![knob("mix", "Mix", 1, 62.0)], 8.0),
+            ],
             _ => vec![
                 (vec![knob("bitdepth", "Bit Depth", 2, 70.0)], 8.0),
                 (
@@ -1809,6 +1827,51 @@ impl Controller {
                 (vec![Item::ToggleW("mute_output", "Mute Output", 96.0)], 0.0),
             ],
         );
+        row.y + row.h + 16.0
+    }
+
+    /// De-Esser, De-Hummer and De-Noiser: one card with every control (the De-Esser's Listen
+    /// switch in a cluster of its own).
+    fn repair_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let knob = |id, name, size, w| Item::Knob(id, name, size, w, false);
+        let row = Row::main(y);
+        let clusters = match def.id {
+            "deesser" => vec![
+                (
+                    vec![
+                        knob("frequency", "Frequency", 2, 86.0),
+                        knob("bandwidth", "Bandwidth", 2, 86.0),
+                        knob("threshold", "Threshold", 1, 76.0),
+                        knob("reduction", "Reduction", 1, 76.0),
+                        knob("mix", "Mix", 1, 76.0),
+                    ],
+                    0.0,
+                ),
+                (vec![Item::Pills("listen", vec![("Off", 0.0), ("On", 1.0)], "Listen", 96.0)], 0.0),
+            ],
+            "dehummer" => vec![(
+                vec![
+                    knob("frequency", "Frequency", 2, 86.0),
+                    knob("num_harmonics", "Harmonics", 2, 86.0),
+                    knob("notch_width", "Q", 1, 66.0),
+                    knob("depth", "Depth", 1, 66.0),
+                    knob("mix", "Mix", 1, 66.0),
+                ],
+                0.0,
+            )],
+            _ => vec![(
+                vec![
+                    knob("threshold", "Threshold", 2, 86.0),
+                    knob("reduction", "Reduction", 2, 86.0),
+                    knob("frequency_smoothing", "Freq Smooth", 1, 92.0),
+                    knob("attack", "Attack", 1, 92.0),
+                    knob("release", "Release", 1, 92.0),
+                    knob("mix", "Mix", 1, 92.0),
+                ],
+                0.0,
+            )],
+        };
+        self.win_card(d, def, b, row, clusters);
         row.y + row.h + 16.0
     }
 
@@ -3425,6 +3488,61 @@ mod tests {
         }
     }
 
+    /// De-Esser, De-Hummer, De-Noiser: the graph at window size with its caption, ladder and
+    /// legend, one card with every control, and a drag in the window moves the De-Noiser's
+    /// threshold line where the window draws it.
+    #[test]
+    fn repair_windows_draw_the_graph_and_every_control() {
+        use slint::Model;
+        for (id, caption, legend) in [("deesser", "Band", "Removing"), ("dehummer", "Hum", "Notches"), ("denoiser", "Noise gate", "Gate")] {
+            let (c, did, def) = controller_with(id);
+            assert!(has_window(def), "{id}");
+            let v = view(&c, did, def);
+            assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 696.0).abs() < 0.5, "{id} {} x {}", v.w / Z, v.h / Z);
+            for p in def.params {
+                let i = def.index_of(p.id).unwrap() as i32;
+                assert!(v.knobs.iter().any(|k| k.param == i) || v.pills.iter().any(|q| q.param == i), "{id} {}", p.id);
+            }
+            for t in [caption, legend, "0 dB", "Hz"] {
+                assert!(v.display.texts.iter().any(|x| x.text == t), "{id} {t}");
+            }
+            assert!(v.display.pointer && !v.display.well, "{id}");
+        }
+        let (mut c, did, def) = controller_with("denoiser");
+        let t0 = c.panel_value(c.project().device(did).unwrap(), def, def.param("threshold").unwrap());
+        let (w, h) = crate::panel_graph::WIN_PLOT;
+        let y = (-t0 / 80.0) * h * Z;
+        c.panel_graph(did, 16, 0.5 * w * Z, y, false, false);
+        c.panel_graph(did, 17, 0.5 * w * Z, y - 40.0, false, false);
+        c.panel_graph(did, 18, 0.5 * w * Z, y - 40.0, false, false);
+        let t1 = c.panel_value(c.project().device(did).unwrap(), def, def.param("threshold").unwrap());
+        assert!(t1 > t0 + 3.0, "{t0} -> {t1}");
+    }
+
+    /// De-Clipper: the transfer held at the threshold beside the wave, captioned with the
+    /// transfer at 0 dBFS, and one card with every control.
+    #[test]
+    fn declipper_window_shows_the_transfer_and_every_control() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("declipper");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 696.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        let idx = |p: &str| def.index_of(p).unwrap() as i32;
+        for k in ["threshold", "ceiling", "mix"] {
+            assert!(v.knobs.iter().any(|n| n.param == idx(k)), "{k}");
+        }
+        assert_eq!(v.pills.iter().filter(|p| p.param == idx("oversampling")).count(), 3);
+        assert_eq!(v.meters.row_count(), 2);
+        for t in ["Wave", "Reduction"] {
+            assert!(v.display.texts.iter().any(|x| x.text == t), "{t}");
+        }
+        c.execute(Command::SetDeviceParam { device: did, param: "threshold".into(), value: -6.0 });
+        c.execute(Command::SetDeviceParam { device: did, param: "mix".into(), value: 0.0 });
+        let v = view(&c, did, def);
+        assert!(v.display.texts.iter().any(|x| x.text.contains("6.0 dB")), "caption reads the threshold");
+    }
+
     /// Trance Gate: the ring panel and envelope share one interactive canvas, no meters, and
     /// a press on the window's ring toggles the step under it (window geometry, not the card's).
     #[test]
@@ -3536,6 +3654,10 @@ mod tests {
             "tuner",
             "spectrum",
             "trance-gate",
+            "declipper",
+            "deesser",
+            "dehummer",
+            "denoiser",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =

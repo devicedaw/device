@@ -44,6 +44,12 @@ pub(crate) fn law(def: &DeviceDef, v: &dyn Fn(&str) -> f32) -> Law {
             let (dr, cp, mx, out, mode) = (v("drive"), v("compression"), v("mix"), v("output_gain"), v("mode").round() as u32);
             Law { curve: Box::new(move |x| builtin::tape_transfer(x, dr, cp, mx, out, mode)), open: Box::new(|x| x), clipper: false }
         }
+        // The De-Clipper's picture: the repaired signal held at the threshold, then scaled
+        // under the ceiling (the card's model).
+        "declipper" => {
+            let (t, c, mx) = (v("threshold"), v("ceiling"), v("mix") / 100.0);
+            Law { curve: Box::new(move |x| crate::panel_graph::declipper_wave(x, t, c, mx).0), open: Box::new(|x| x), clipper: false }
+        }
         "soft-clipper" => {
             let (inp, ceil, soft, shape, gm, mx, out) =
                 (v("input"), v("ceiling"), v("softness"), v("shape").round() as u32, v("gain_match") >= 0.5, v("mix"), v("output_gain"));
@@ -185,7 +191,13 @@ impl Controller {
         let ly = side + 31.0 * Z;
         let (glyph, gap) = (14.0 * Z, 6.0 * Z);
         let mut x = 0.0;
-        let band_name = if l.clipper { "Clipping" } else { "Gain" };
+        let band_name = if l.clipper {
+            "Clipping"
+        } else if def.id == "declipper" {
+            "Reduction"
+        } else {
+            "Gain"
+        };
         for (kind, label) in [(0, "Transfer"), (1, "Unity"), (2, band_name)] {
             match kind {
                 0 => paths.push(stroke(format!("M{x:.1} {ly:.1} h{glyph:.1}"), white(0.9), 1.5 * Z)),
@@ -328,6 +340,22 @@ mod tests {
         for lv in [-24.0, -12.0, 0.0] {
             assert!((peak_db(&*l.curve, lv) - (lv - 12.0)).abs() < 0.2, "{lv}");
         }
+    }
+
+    /// The De-Clipper holds the transfer at its threshold above it and passes it below.
+    #[test]
+    fn declipper_transfer_holds_at_the_threshold() {
+        let def = builtin::find("declipper").unwrap();
+        let v = |id: &str| match id {
+            "threshold" => -6.0,
+            "ceiling" => -0.3,
+            "mix" => 0.0,
+            _ => 0.0,
+        };
+        let l = law(def, &v);
+        assert!((peak_db(&*l.curve, -12.0) + 12.0).abs() < 0.1);
+        assert!((peak_db(&*l.curve, 0.0) + 6.0).abs() < 0.1);
+        assert!((peak_db(&*l.curve, 12.0) + 6.0).abs() < 0.1);
     }
 
     /// The soft clipper holds a hot sine under its open path.
