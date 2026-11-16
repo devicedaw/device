@@ -25,6 +25,11 @@ Fixed or Removed. Write it for people who use Device, not for developers.
   resizing, inserting or deleting a marker moves everything after it, and duplicating or pasting a marker copies its
   clips too. Each edit is one undo step.
 
+### Changed
+
+- Projects has its own tab at the top of the browser, next to Devices and Files, with its own search. The Files tab
+  now only shows your folders.
+
 ### Fixed
 
 - Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song
