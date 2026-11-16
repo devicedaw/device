@@ -134,7 +134,9 @@ the transfer curve beside a sine through the device, Bit Crusher, whose window d
 field over a live correlation lane, Tuner, and Spectrum, whose window shows the spectrum flat, as a 3D waterfall of its
 history, or split over a spectrogram, and Trance Gate, whose window draws its step ring and pattern track on a
 panel beside the envelope, De-Clipper, whose window draws its transfer beside a sine, and De-Esser, De-Hummer and
-De-Noiser, whose window draws the card's graph at full size over a dB ladder; the other devices open their card in a window for now.
+De-Noiser, whose window draws the card's graph at full size over a dB ladder, Pitch Shifter, whose window shows the
+interval against an A4 reference with the formant strip, Grains, whose window draws the buffer with its pitch and time
+axes over two cards of controls, and Pitch Corrector, whose window draws the correction trace over labelled cent rules; the other devices open their card in a window for now.
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |

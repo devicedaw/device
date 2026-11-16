@@ -67,7 +67,7 @@ flowchart LR
   Flanger, Phaser, Ring Mod and Character Mod; and the dynamics family:
   Compressor, Limiter, Gate, Glue Compressor, Character Compressor and Mastering
   Limiter; Transient Shaper; Multiband Compressor; Delay, Echo and Reverb; Distortion, Tape Saturation,
-  Soft Clipper and Bit Crusher; Utility, Stereo Widener, Tuner and Spectrum; Trance Gate; De-Clipper, De-Esser, De-Hummer and De-Noiser), otherwise the card itself in a window. A
+  Soft Clipper and Bit Crusher; Utility, Stereo Widener, Tuner and Spectrum; Trance Gate; De-Clipper, De-Esser, De-Hummer and De-Noiser; Pitch Shifter, Grains and Pitch Corrector), otherwise the card itself in a window. A
   window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same
@@ -140,7 +140,10 @@ flowchart LR
   (its law is the card's `declipper_wave`); De-Esser, De-Hummer and
   De-Noiser draw `graph_canvas` under a `WindowScope` (plot
   `panel_graph::WIN_PLOT`), and their pointer events carry phase + 16 so
-  drags are hit tested at that size. The
+  drags are hit tested at that size. Pitch Shifter and Grains draw
+  `field_canvas` with `window` set (the field adds its axes, legend and
+  readouts); Pitch Corrector draws `trace_window_canvas`, which shares
+  `trace_layers` with the card. The
   meters read `se_builtin_set_metering` / `se_builtin_levels`
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app

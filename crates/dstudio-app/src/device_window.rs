@@ -130,7 +130,7 @@ pub(crate) fn has_window(def: &DeviceDef) -> bool {
         def.id,
         "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb" | "echo"
     ) || is_wave_window(def)
-        || matches!(def.id, "utility" | "widener" | "tuner" | "spectrum" | "trance-gate")
+        || matches!(def.id, "utility" | "widener" | "tuner" | "spectrum" | "trance-gate" | "pitch-shifter" | "grains" | "pitch-corrector")
         || is_repair_window(def)
         || def.id == "bitcrusher"
         || is_field_window(def)
@@ -175,6 +175,17 @@ fn field_kit(w: f32, display_h: f32, left: f32, bottom: f32) -> Kit {
     Kit { w, display: (INSET, 52.0, w - 152.0, display_h), plot: (left, 25.0, 8.0, bottom), narrow: true, meters_h: 0.0 }
 }
 
+impl Kit {
+    fn with_plot_top(mut self, t: f32) -> Kit {
+        self.plot.1 = t;
+        self
+    }
+    fn with_plot_right(mut self, r: f32) -> Kit {
+        self.plot.2 = r;
+        self
+    }
+}
+
 pub(crate) fn kit(def: &DeviceDef) -> Kit {
     let eq = |y: f32, h: f32| Kit {
         w: WIN_W,
@@ -195,6 +206,12 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         "transient-shaper" => field_kit(880.0, 228.0, 8.0, 8.0),
         // Multiband: the band field over the dB ladder, its Hz axis and legend below.
         "multiband-compressor" => field_kit(WIN_W, 336.0, 52.0, 43.0),
+        // Pitch Shifter: the semitone field over its axis, the formant strip and legend.
+        "pitch-shifter" => field_kit(1200.0, 514.0, 12.0, 8.0),
+        // Pitch Corrector: the trace fills the display.
+        "pitch-corrector" => field_kit(1200.0, 514.0, 12.0, 8.0).with_plot_top(8.0),
+        // Grains: the buffer over its time axis, the pitch axis down its right edge.
+        "grains" => field_kit(1200.0, 402.0, 16.0, 24.0).with_plot_right(70.0),
         // Waveshapers: the transfer square and the wave over a dB axis and legend.
         "distortion" | "tapesaturation" | "soft-clipper" => field_kit(WAVE_W, 454.0, 60.0, 44.0),
         // De-Esser, De-Hummer, De-Noiser: the graph over its ladder, the axis and legend below
@@ -693,6 +710,10 @@ impl Controller {
             _ if def.id == "bitcrusher" => self.crush_window_canvas(d, def, &k, accent),
             _ if def.id == "widener" => self.widener_window_canvas(d, def, &k, accent),
             _ if def.id == "spectrum" => self.spectrum_window_canvas(d, def, &k, accent),
+            _ if def.id == "pitch-corrector" => {
+                let (w, h) = plot_size(def).unwrap_or_default();
+                self.trace_window_canvas(d, def, w, h, accent)
+            }
             _ if is_repair_window(def) => self.graph_window(d, def, accent),
             // The ring panel and the envelope display share one canvas from the panel's corner.
             _ if def.id == "trance-gate" => self.trance_gate_window_canvas(d, def, accent, dx + dw - INSET, dh),
@@ -718,6 +739,9 @@ impl Controller {
             "delay" => self.delay_window(d, def, &mut b, dy + dh + 12.0),
             "reverb" => self.reverb_window(d, def, &mut b, dy + dh + 12.0),
             "echo" => self.echo_window(d, def, &mut b, dy + dh + 12.0),
+            "pitch-shifter" => self.pitch_shifter_window(d, def, &mut b, dy + dh + 12.0),
+            "pitch-corrector" => self.pitch_corrector_window(d, def, &mut b, dy + dh + 12.0),
+            "grains" => self.grains_window(d, def, &mut b, dy + dh + 12.0),
             _ if is_wave_window(def) || def.id == "bitcrusher" => self.wave_window(d, def, &mut b, dy + dh + 12.0),
             "utility" => self.utility_window(d, def, &mut b),
             "widener" => self.widener_window(d, def, &mut b, dy + dh + 12.0),
@@ -2059,6 +2083,10 @@ impl Controller {
         let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
         match def.id {
             "echo" => ("Tail".into(), String::new(), String::new()),
+            "grains" => ("Buffer".into(), String::new(), String::new()),
+            "pitch-shifter" => {
+                ("Interval".into(), dstudio_core::builtin::pitch_shifter::interval_text(val("semitones"), val("cents")), String::new())
+            }
             "delay" => {
                 let synced = val("sync") >= 0.5;
                 let (l, r) = if synced { (fmt("timeDivision"), fmt("timeDivisionR")) } else { (fmt("timeMs"), fmt("timeMsR")) };
@@ -2255,6 +2283,144 @@ impl Controller {
         range.y = (top + 12.0) * Z;
         b.square = range;
         row.y + row.h + 16.0
+    }
+
+    /// Pitch Shifter: Semitones and Cents, the Formant switch (Shift, or Keep), Mix.
+    fn pitch_shifter_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let keep = def.param("formant_preserve").is_some_and(|p| self.panel_value(d, def, p) >= 0.5);
+        let row = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (vec![Item::Knob("semitones", "Semitones", 2, 72.0, false), Item::Knob("cents", "Cents", 2, 72.0, false)], 14.0),
+                (vec![Item::Latch("formant_preserve", if keep { "Keep" } else { "Shift" }, "Formant", 120.0, false)], 14.0),
+                (vec![Item::Knob("mix", "Mix", 2, 72.0, false)], 14.0),
+            ],
+        );
+        row.y + row.h + 16.0
+    }
+
+    /// Pitch Corrector: Follow, Key and Scale (the Key picker inert while the project's key is
+    /// followed), then Speed, Retune Speed and Humanize, then Mix.
+    fn pitch_corrector_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let fmt = |id: &str| def.param(id).map_or_else(String::new, |p| p.format(val(id)));
+        let row = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (
+                    vec![
+                        Item::Pills("key_follow", vec![("Manual", 0.0), ("Project", 1.0)], "Follow", 136.0),
+                        Item::Picker(idx("key"), fmt("key"), "Key", 56.0, val("key_follow") >= 0.5),
+                        Item::Pills("scale", vec![("Chromatic", 0.0), ("Major", 1.0), ("Minor", 2.0)], "Scale", 210.0),
+                    ],
+                    16.0,
+                ),
+                (
+                    vec![
+                        Item::Knob("speed", "Speed", 2, 72.0, false),
+                        Item::Knob("retune_speed_ms", "Retune Speed", 2, 96.0, false),
+                        Item::Knob("humanize", "Humanize", 1, 72.0, false),
+                    ],
+                    14.0,
+                ),
+                (vec![Item::Knob("mix", "Mix", 2, 72.0, false)], 14.0),
+            ],
+        );
+        row.y + row.h + 16.0
+    }
+
+    /// Grains: Cloud / Rhythm and Freeze in the header; the grain card (where, how long and
+    /// how often, pitch) over the sound card (texture, Character, Mix, Output). Rhythm swaps
+    /// Position, Size and Density for its note, Gate, Rate and Chance.
+    fn grains_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let fmt = |id: &str| def.param(id).map_or_else(String::new, |p| p.format(val(id)));
+        let x = self.header_latch(d, def, b, "freeze", b.w - INSET);
+        let x = Self::header_rule(b, x);
+        self.header_choice(d, def, b, "mode", x);
+
+        let rhythm = val("mode").round() as u32 == dstudio_core::builtin::grains::RHYTHM;
+        let (where_, timing) = if rhythm {
+            (
+                vec![
+                    Item::Picker(idx("position_note"), fmt("position_note"), "Position", 72.0, false),
+                    Item::Knob("spray", "Spray", 1, 62.0, false),
+                    Item::Knob("drift", "Drift", 1, 62.0, false),
+                ],
+                vec![
+                    Item::Picker(idx("rate"), fmt("rate"), "Rate", 72.0, false),
+                    Item::Knob("gate", "Gate", 1, 62.0, false),
+                    Item::Knob("chance", "Chance", 1, 62.0, false),
+                    Item::Knob("shape", "Shape", 1, 62.0, false),
+                ],
+            )
+        } else {
+            (
+                vec![
+                    Item::Knob("position", "Position", 1, 62.0, false),
+                    Item::Knob("spray", "Spray", 1, 62.0, false),
+                    Item::Knob("drift", "Drift", 1, 62.0, false),
+                ],
+                vec![
+                    Item::Knob("size", "Size", 1, 62.0, false),
+                    Item::Knob("density", "Density", 1, 62.0, false),
+                    Item::Knob("shape", "Shape", 1, 62.0, false),
+                ],
+            )
+        };
+        let row = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (where_, 8.0),
+                (timing, 8.0),
+                (
+                    vec![
+                        Item::Knob("pitch", "Pitch", 1, 62.0, false),
+                        Item::Knob("spread", "Spread", 1, 62.0, rhythm),
+                        Item::Picker(idx("scale"), fmt("scale"), "Scale", 84.0, false),
+                        Item::Knob("reverse", "Reverse", 1, 62.0, false),
+                    ],
+                    8.0,
+                ),
+            ],
+        );
+        let row2 = Row { h: 100.0, ..Row::main(row.y + row.h + 12.0) };
+        self.win_card(
+            d,
+            def,
+            b,
+            row2,
+            vec![
+                (
+                    vec![
+                        Item::Knob("width", "Width", 1, 56.0, false),
+                        Item::Knob("feedback", "Feedback", 1, 56.0, false),
+                        Item::Knob("blur", "Blur", 1, 56.0, false),
+                        Item::Knob("tone", "Tone", 1, 56.0, false),
+                        Item::Knob("space", "Space", 1, 56.0, false),
+                    ],
+                    8.0,
+                ),
+                (vec![Item::Picker(idx("character"), fmt("character"), "Character", 96.0, false)], 8.0),
+                (vec![Item::Knob("mix", "Mix", 1, 56.0, false), Item::Toggle("mix_lock", "Mix Lock", false)], 10.0),
+                (vec![Item::Knob("output", "Output", 1, 62.0, false)], 8.0),
+            ],
+        );
+        row2.y + row2.h + 16.0
     }
 
     /// A two-handle range on a line (Reverb's Filter): the span between the handles lit, each
@@ -3091,6 +3257,91 @@ mod tests {
         assert_eq!(knob_names(&view(&c, did, def)), ["Frequency", "Spread", "Bias", "Rectify", "Mix", "Output"]);
     }
 
+    /// Pitch Shifter: the interval caption, the note readouts against A4, the axis, the
+    /// formant strip and legend over a card of every control; the Formant switch says Shift
+    /// or Keep.
+    #[test]
+    fn pitch_shifter_window_shows_the_interval_and_every_control() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("pitch-shifter");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 700.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert_eq!(knob_names(&v), ["Semitones", "Cents", "Mix"]);
+        let texts: Vec<String> = v.display.texts.iter().map(|t| t.text.to_string()).collect();
+        for t in ["Interval", "Unison", "A4", "+24 st", "Formant", "Follows the shift", "Interval"] {
+            assert!(texts.iter().any(|x| x == t), "missing {t}: {texts:?}");
+        }
+        assert!(v.pills.iter().any(|p| p.label == "Shift" && !p.active));
+        c.execute(Command::SetDeviceParam { device: did, param: "semitones".into(), value: 7.0 });
+        c.execute(Command::SetDeviceParam { device: did, param: "formant_preserve".into(), value: 1.0 });
+        let v = view(&c, did, def);
+        let texts: Vec<String> = v.display.texts.iter().map(|t| t.text.to_string()).collect();
+        for t in ["Fifth up", "E5", "Out  659.3 Hz", "Held in place"] {
+            assert!(texts.iter().any(|x| x == t), "missing {t}: {texts:?}");
+        }
+        assert!(v.pills.iter().any(|p| p.label == "Keep" && p.active));
+    }
+
+    /// Pitch Corrector: the cent rules labelled in the gutter over a card of every control.
+    #[test]
+    fn pitch_corrector_window_shows_the_trace_rules_and_every_control() {
+        use slint::Model;
+        let (c, did, def) = controller_with("pitch-corrector");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 700.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert_eq!(knob_names(&v), ["Speed", "Retune Speed", "Humanize", "Mix"]);
+        let texts: Vec<String> = v.display.texts.iter().map(|t| t.text.to_string()).collect();
+        for t in ["+100", "+50", "0", "\u{2212}50", "\u{2212}100", "ct"] {
+            assert!(texts.iter().any(|x| x == t), "missing {t}: {texts:?}");
+        }
+        for l in ["Manual", "Project", "Chromatic", "Major", "Minor"] {
+            assert!(v.pills.iter().any(|p| p.label == l), "pill {l}");
+        }
+        assert!(v.display.visible && v.display.paths.row_count() >= 3);
+    }
+
+    /// Grains: the buffer with both readouts and its two axes; Cloud and Rhythm swap the
+    /// grain card's timing controls; Freeze and the mode sit in the header.
+    #[test]
+    fn grains_window_shows_the_buffer_and_both_cards() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("grains");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 700.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert_eq!(
+            knob_names(&v),
+            [
+                "Position", "Spray", "Drift", "Size", "Density", "Shape", "Pitch", "Spread", "Reverse", "Width", "Feedback", "Blur",
+                "Tone", "Space", "Mix", "Output"
+            ]
+        );
+        let grips: Vec<String> = v.display.grips.iter().map(|g| g.label.to_string()).collect();
+        assert_eq!(grips, ["Position", "Spray"]);
+        let texts: Vec<String> = v.display.texts.iter().map(|t| t.text.to_string()).collect();
+        for t in ["Buffer", "+24", "\u{2212}24", "s", "st"] {
+            assert!(texts.iter().any(|x| x == t), "missing {t}: {texts:?}");
+        }
+        for l in ["Cloud", "Rhythm", "Freeze"] {
+            assert!(v.pills.iter().any(|p| p.label == l), "header {l}");
+        }
+        c.execute(Command::SetDeviceParam { device: did, param: "mode".into(), value: 1.0 });
+        let v = view(&c, did, def);
+        assert_eq!(
+            knob_names(&v),
+            [
+                "Spray", "Drift", "Gate", "Chance", "Shape", "Pitch", "Spread", "Reverse", "Width", "Feedback", "Blur", "Tone", "Space",
+                "Mix", "Output"
+            ]
+        );
+        assert!(v.knobs.iter().any(|k| k.label == "Spread" && k.inert));
+        for k in v.knobs.iter() {
+            assert!(k.y > 0.0 && k.y < v.h, "{} outside", k.label);
+        }
+    }
+
     /// Cost of rebuilding a field window against its card, per device
     /// (`cargo test -p dstudio-app --release bench_field_windows -- --ignored --nocapture`).
     #[test]
@@ -3658,6 +3909,9 @@ mod tests {
             "deesser",
             "dehummer",
             "denoiser",
+            "pitch-shifter",
+            "grains",
+            "pitch-corrector",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =
