@@ -69,6 +69,7 @@ ENGINE_BENCHES = {
     "dstudio_decode_bench": (["1"], ["5"]),
     "dstudio_offline_plugin_bench": (["1"], ["5"]),
     "dstudio_scan_cache_bench": (["500", "3"], ["2000", "20"]),
+    "dstudio_pcm_convert_bench": (["200"], ["20000"]),
 }
 RUST_BENCH_PACKAGE = "dstudio-core"  # its [[bench]] targets take no arguments
 

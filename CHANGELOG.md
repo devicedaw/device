@@ -13,6 +13,9 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ### Added
 
+- Linux: Device now plays and records without PipeWire. When no sound server runs, it goes straight through ALSA,
+  which every Linux system has, and it starts even when PipeWire isn't installed. Settings › Audio also lists each
+  sound card's ALSA devices, marked "(ALSA)", next to the PipeWire ones, for the lowest latency.
 - Device chains can be saved and reused. The chain's name menu has Save, Save as…, Rename…, Unpack chain (keeps the
   effects, drops the chain) and Delete saved chain, and Chains › swaps the chain for another one.
 - 27 ready-made chains in eight folders (Vocals, Drums, Bass, Guitar, Keys & Synths, Pads & Textures, FX and
