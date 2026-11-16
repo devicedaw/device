@@ -82,3 +82,6 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
   and the curve editor across the rest of it (points, bends and the lane's own pills edited in place), with the
   lane's Rate and Depth, the trigger's Threshold, Mix and Output below. The editor is the card's, drawn and hit
   tested in the window's geometry.
+- An expanded window for LFO: two cycles of the wave across the window with phase quarters, the live position
+  dotted and the same Rate / Depth drag as the card, captioned with the shape and the cycle length, over Shape,
+  Timebase, Rate, Phase and Depth.
