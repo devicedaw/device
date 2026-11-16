@@ -956,6 +956,7 @@ impl Controller {
         if self.menu.clip.is_some_and(|c| !p.clip_id_in_use(c)) {
             self.menu_close();
         }
+        self.auto_prune_sel();
         self.pr_sync_clip();
         if self.published_rev != Some(self.doc.revision()) {
             self.publish();
@@ -1949,11 +1950,11 @@ impl Controller {
                     }
                     Drag::MidiLeft { clip, orig, .. } => {
                         let end = orig.0 + orig.1;
-                        let start = snap(beat).clamp(0, end - PPQ);
+                        let start = midi_left_start(snap(beat), orig);
                         self.drag = Some(Drag::MidiLeft { clip, orig, cur: (start, end - start) });
                     }
                     Drag::MidiRight { clip, orig, corner, .. } => {
-                        let end = snap(beat).max(orig.0 + PPQ);
+                        let end = midi_right_end(snap(beat), orig);
                         self.drag = Some(Drag::MidiRight { clip, orig, cur: (orig.0, end - orig.0), corner });
                     }
                     Drag::LoopRight { clip, start, orig, .. } => {
@@ -1961,9 +1962,7 @@ impl Controller {
                         self.drag = Some(Drag::LoopRight { clip, start, orig, cur });
                     }
                     Drag::Stretch { clip, start, orig, .. } => {
-                        // The speed range bounds how far a clip stretches.
-                        let (lo, hi) = (orig as f64 / dstudio_core::warp::MAX_SPEED, orig as f64 / dstudio_core::warp::MIN_SPEED);
-                        let cur = ((snap(beat) - start) as f64).clamp(lo.max((PPQ / 4) as f64), hi).round() as Ticks;
+                        let cur = stretched_len(snap(beat) - start, orig);
                         self.drag = Some(Drag::Stretch { clip, start, orig, cur });
                     }
                     Drag::TrimRight { clip, orig, .. } => {
@@ -2713,10 +2712,61 @@ pub(crate) fn sync_model<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: 
     }
 }
 
+/// Shortest a MIDI clip gets from an edge drag: a beat, or its own length when it is shorter.
+fn midi_min_len(len: Ticks) -> Ticks {
+    len.clamp(0, PPQ)
+}
+
+/// Start of a MIDI clip `orig` = (start, length) whose left edge is dragged to tick `want`: the
+/// end stays, and the clip keeps at least [midi_min_len].
+fn midi_left_start(want: Ticks, orig: (Ticks, Ticks)) -> Ticks {
+    let end = orig.0 + orig.1;
+    want.clamp(0, (end - midi_min_len(orig.1)).max(0))
+}
+
+/// End of a MIDI clip `orig` = (start, length) whose right edge is dragged to tick `want`.
+fn midi_right_end(want: Ticks, orig: (Ticks, Ticks)) -> Ticks {
+    want.max(orig.0 + midi_min_len(orig.1))
+}
+
+/// Timeline length of an audio clip `orig` ticks long stretched to `want` ticks: within the warp
+/// speed range, and at least a quarter beat unless the clip is already shorter.
+fn stretched_len(want: Ticks, orig: Ticks) -> Ticks {
+    use dstudio_core::warp::{MAX_SPEED, MIN_SPEED};
+    let hi = orig as f64 / MIN_SPEED;
+    let lo = (orig as f64 / MAX_SPEED).max(orig.min(PPQ / 4) as f64).min(hi);
+    (want as f64).clamp(lo, hi).round() as Ticks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn short_midi_clip_edges_keep_their_length_floor() {
+        // A clip from 0 to half a beat: the left edge used to panic (clamp(0, -PPQ / 2)).
+        let short = (0, PPQ / 2);
+        assert_eq!(midi_left_start(PPQ, short), 0, "the left edge can't pass the end");
+        assert_eq!(midi_left_start(-5, short), 0);
+        assert_eq!(midi_right_end(0, short), PPQ / 2, "a sub-beat clip isn't snapped out to a beat");
+        assert_eq!(midi_right_end(3 * PPQ, short), 3 * PPQ);
+        // Clips of a beat or more keep the one-beat minimum.
+        let long = (4 * PPQ, 4 * PPQ);
+        assert_eq!(midi_left_start(10 * PPQ, long), 7 * PPQ);
+        assert_eq!(midi_left_start(5 * PPQ, long), 5 * PPQ);
+        assert_eq!(midi_right_end(4 * PPQ, long), 5 * PPQ);
+    }
+    #[test]
+    fn stretching_a_very_short_audio_clip_stays_in_range() {
+        // 10 ticks: the quarter-beat floor (PPQ / 4) is above the slowest stretch (80 ticks), which panicked.
+        assert_eq!(stretched_len(0, 10), 10);
+        assert_eq!(stretched_len(1000, 10), 80);
+        assert_eq!(stretched_len(40, 10), 40);
+        // A normal clip: the quarter-beat floor and the speed range still apply.
+        assert_eq!(stretched_len(0, 4 * PPQ), (4 * PPQ) / 8);
+        assert_eq!(stretched_len(0, PPQ), PPQ / 4);
+        assert_eq!(stretched_len(100 * PPQ, PPQ), 8 * PPQ);
+    }
     #[test]
     fn playhead_on_stop() {
         assert_eq!(play_from(false, Some(100), true, None), Some(100), "Return to start");
