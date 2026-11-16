@@ -65,6 +65,8 @@ const TRACE_FRAMES: usize = 256;
 const TRACE_WINDOW: f32 = 4.0;
 const TRACE_RANGE_CT: f32 = 120.0;
 const BANDS: usize = 256;
+/// Bands of a Spectrum frame (log spaced 20 Hz..20 kHz).
+pub(crate) const SPECTRUM_BANDS: usize = BANDS;
 const FLOOR_DB: f32 = -120.0;
 const SUCCESS: Color = Color::from_rgb_u8(0x4c, 0xaf, 0x50);
 /// Spectrum stroke colours by Color Scheme.
@@ -76,6 +78,10 @@ const PALETTE: [Color; 6] = [
     Color::from_rgb_u8(0x7e, 0xc8, 0xe8),
     Color::from_rgb_u8(0xc8, 0xd0, 0xdc),
 ];
+/// A Spectrum's curve colour for its Color Scheme choice.
+pub(crate) fn spectrum_color(scheme: usize) -> Color {
+    PALETTE[scheme.min(PALETTE.len() - 1)]
+}
 const NOTES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
 #[derive(Debug, Clone, Copy)]
@@ -481,6 +487,11 @@ impl Controller {
             }
         }
         canvas(FIELD_X * Z, FIELD_Y * Z, w, h, body_y, "Pitch", String::new(), [Vec::new(), layers, over], Vec::new())
+    }
+
+    /// A Spectrum card's newest frame: (analyser sequence, shown curve, peak hold), dB per band.
+    pub(crate) fn spectrum_frame(&self, id: DeviceId) -> Option<(u64, &[f32], &[f32])> {
+        self.devices.panel.analyzers.spectra.get(&id).map(|s| (s.seq, s.shown.as_slice(), s.peak.as_slice()))
     }
 
     fn tuner_canvas(&self, d: &Device, def: &'static DeviceDef, w_pt: f32, accent: Color) -> PanelCanvas {
