@@ -195,6 +195,27 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// Settings › General › Projects folder › Choose…: save it, list it in the browser's
+    /// Projects tab and start Save there.
+    pub fn set_projects_folder(&mut self, dir: std::path::PathBuf) {
+        self.settings.prefs.general.projects_folder = Some(dir.clone());
+        self.save_prefs();
+        self.files.projects_dir = Some(dir);
+        self.files_refresh();
+        self.ui_dirty = true;
+    }
+
+    /// The projects folder for display, with ~ for the home folder.
+    pub fn projects_folder_text(&self) -> String {
+        let Some(d) = self.files.projects_dir.as_deref() else { return "Not set".into() };
+        let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default();
+        let s = d.display().to_string();
+        match s.strip_prefix(&home) {
+            Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with(std::path::MAIN_SEPARATOR)) => format!("~{rest}"),
+            _ => s,
+        }
+    }
+
     /// Settings › General › Playhead on stop: Return to start (false) or Stop in place (true).
     pub fn general_stop_in_place(&mut self, on: bool) {
         self.settings.prefs.general.stop_in_place = on;
@@ -580,6 +601,7 @@ impl Controller {
             s.set_general_on(slint::ModelRc::new(slint::VecModel::from(on.to_vec())));
         }
         s.set_general_stop_in_place(g.stop_in_place);
+        s.set_general_projects_folder(self.projects_folder_text().into());
         s.set_set_latency_text(self.latency_text().into());
         s.set_settings_note(self.settings.note.clone().into());
         match &self.settings.menu {

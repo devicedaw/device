@@ -21,6 +21,8 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 - Markers (the labelled ranges on the ruler) have a full right-click menu: Cut, Copy, Paste, Color, and Insert ›
   Marker before / Marker after. ⌘X, ⌘C and ⌘V work on the selected marker. New markers are named "Marker 1",
   "Marker 2" and so on.
+- Settings › General › Projects folder: choose where your projects are saved. Save starts there, and the browser
+  lists the projects in it.
 - Settings › General › Sections move clips: when on, moving a marker moves the clips and automation in it,
   resizing, inserting or deleting a marker moves everything after it, and duplicating or pasting a marker copies its
   clips too. Each edit is one undo step.
