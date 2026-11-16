@@ -86,7 +86,8 @@ wgpu.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
-  macros.
+  macros. Save a chain to reuse it in any project, or start from one of 27 ready-made chains for vocals, drums, bass,
+  guitar, keys, pads, FX and mix bus.
 - **Plugins.** Hosts AU (macOS), VST3 and CLAP plugins. Plugins are scanned in a separate process, so a crashing plugin
   is blocklisted instead of taking the app down, and their editors open in their own windows. Besides the standard
   plugin folders, Settings › Plugins scans any folders you add.
