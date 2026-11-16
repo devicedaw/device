@@ -714,6 +714,10 @@ impl Controller {
         // dropped, to keep its drawing and hit area off the master lane.
         let master_top = h - v.master_h;
         for (i, t) in self.project().tracks.iter().take(self.lane_tracks()).enumerate() {
+            // A folded group's tracks have no row (pitch 0), so no automation rows either.
+            if self.hidden_by_fold(t) {
+                continue;
+            }
             let key = Some(t.id);
             let top = v.track_top(i);
             let pinned = v.is_pinned(i);
@@ -749,6 +753,19 @@ impl Controller {
             pinned: false,
         });
         rows
+    }
+
+    /// After a document change: selected points that are no longer in their lane (a lane
+    /// shortened or removed by another edit) leave the selection, so no gesture indexes past it.
+    pub(crate) fn auto_prune_sel(&mut self) {
+        let Some((key, target, _)) = &self.auto.sel else { return };
+        let n = self.model_lane(*key, target).map_or(0, |l| l.points.len());
+        if let Some((_, _, idx)) = &mut self.auto.sel {
+            idx.retain(|&i| i < n);
+            if idx.is_empty() {
+                self.auto.sel = None;
+            }
+        }
     }
 
     fn sel_indices(&self, row: &Row) -> Vec<usize> {
@@ -826,7 +843,7 @@ impl Controller {
             .filter_map(|r| {
                 let val = self.lane(r.key, &r.target).and_then(|l| l.value_at(t0)).unwrap_or_else(|| self.static_value(r.key, &r.target));
                 let ly = r.y_of(norm_of(&r.target, val));
-                let y = (ly - 9.5 - 6.5).clamp(r.y0 + 1.0, r.y0 + r.h - 14.0);
+                let y = label_top(ly, &r);
                 // A row cut off by the pinned rows keeps its label only while the label is in view.
                 if !Self::label_visible(&r, y, bottom) {
                     return None;
@@ -1205,6 +1222,7 @@ impl Controller {
             }
             self.auto.last_down = Some((now, row.key, row.target.clone(), i));
             let mut idx = self.sel_indices(&row);
+            idx.retain(|&j| j < base.points.len());
             if shift {
                 if let Some(pos) = idx.iter().position(|j| *j == i) {
                     idx.remove(pos);
@@ -1906,6 +1924,13 @@ fn freehand_lane(base: &AutomationLane, target: &AutomationTarget, samples: &[(T
     lane
 }
 
+/// Top of a row's value label for the lane line at `ly`: just above the line, kept inside the
+/// row (at its top when the row is too short to hold the label).
+fn label_top(ly: f32, r: &Row) -> f32 {
+    let top = r.y0 + 1.0;
+    (ly - 9.5 - 6.5).clamp(top, (r.y0 + r.h - 14.0).max(top))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1990,6 +2015,49 @@ mod tests {
         assert_eq!(last.label, "On");
         assert!(matches!(&last.target, Some(AutomationTarget::DeviceOn { device, .. }) if *device == d));
         assert_eq!(c.pick_categories(None).len(), 1, "the master only has volume");
+    }
+
+    #[test]
+    fn a_folded_groups_tracks_have_no_automation_rows() {
+        let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, dstudio_core::Project::default());
+        c.lanes_size = (1200.0, 600.0);
+        let members: Vec<TrackId> = c.project().tracks.iter().map(|t| t.id).filter(|&id| c.groupable(id)).take(2).collect();
+        assert_eq!(members.len(), 2);
+        let g = c.group_tracks(&members).unwrap();
+        c.auto_toggle_shown();
+        c.auto_toggle_expanded(members[0]);
+        c.toggle_group_folded(g);
+        c.auto_sync_view();
+        let rows = c.auto_rows();
+        assert!(rows.iter().all(|r| r.key.is_none_or(|k| !members.contains(&k))), "hidden tracks have no rows (extra lanes included)");
+        assert!(rows.iter().all(|r| r.h > 0.0));
+        // Used to panic every frame: a hidden track's row was -0.5 pt high.
+        assert!(!c.auto_labels().is_empty());
+    }
+
+    #[test]
+    fn labels_stay_in_rows_too_short_for_them() {
+        let row = Row { key: None, target: AutomationTarget::Volume, y0: 100.0, h: 8.0, master: false, extra: false, pinned: false };
+        assert_eq!(label_top(104.0, &row), 101.0);
+        let tall = Row { h: 60.0, ..row.clone() };
+        assert_eq!(label_top(140.0, &tall), 124.0);
+        assert_eq!(label_top(200.0, &tall), 146.0);
+    }
+
+    #[test]
+    fn a_shortened_lane_drops_selected_points_past_its_end() {
+        let (mut c, t, _) = with_compressor();
+        let pt = |time: Ticks| AutoPoint { time, value: 0.0, curve: 0.0 };
+        let mut lane = AutomationLane::new(AutomationTarget::Volume);
+        lane.points = vec![pt(0), pt(PPQ), pt(2 * PPQ), pt(3 * PPQ)];
+        assert!(c.execute(Command::SetAutomationLane { track: Some(t), target: AutomationTarget::Volume, lane: Some(lane.clone()) }));
+        c.auto.sel = Some((Some(t), AutomationTarget::Volume, vec![1, 3]));
+        lane.points.truncate(2);
+        assert!(c.execute(Command::SetAutomationLane { track: Some(t), target: AutomationTarget::Volume, lane: Some(lane) }));
+        assert_eq!(c.auto.sel, Some((Some(t), AutomationTarget::Volume, vec![1])));
+        assert!(c.execute(Command::SetAutomationLane { track: Some(t), target: AutomationTarget::Volume, lane: None }));
+        assert_eq!(c.auto.sel, None, "a removed lane leaves no selection");
     }
 
     #[test]
