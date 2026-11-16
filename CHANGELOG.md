@@ -21,6 +21,8 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 - Markers (the labelled ranges on the ruler) have a full right-click menu: Cut, Copy, Paste, Color, and Insert ›
   Marker before / Marker after. ⌘X, ⌘C and ⌘V work on the selected marker. New markers are named "Marker 1",
   "Marker 2" and so on.
+- Settings › General › Projects folder: choose where your projects are saved. Save starts there, and the browser
+  lists the projects in it.
 
 ### Changed
 

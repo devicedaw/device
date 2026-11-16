@@ -998,6 +998,9 @@ export global Studio {
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show
     // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top.
     in property <[bool]> general-on: [false, true, false, true];
+    // Settings › General › Projects folder, shown with ~ for the home folder; Choose… picks another.
+    in property <string> general-projects-folder: "~/Documents/Device Studio";
+    callback general-choose-projects-folder();
     in property <bool> general-stop-in-place;
     callback general-toggle(int);
     callback general-stop-mode(bool);                       // true = Stop in place

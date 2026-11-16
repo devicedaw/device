@@ -11031,19 +11031,19 @@ fn general_settings_steps() -> Vec<Step> {
         ),
         Do(
             "general: click Stop in place",
-            Box::new(|a| click(a, page_x() + content_w() - 20.5 - 172.5 + 87.0 + 40.0, set_y() + 143.8 + 8.6)),
+            Box::new(|a| click(a, page_x() + content_w() - 20.5 - 172.5 + 87.0 + 40.0, set_y() + 203.8 + 8.6)),
         ),
         Do(
             "general: click Auto-show built-in effect windows",
             Box::new(move |a| {
-                let (x, y) = switch_xy(331.4);
+                let (x, y) = switch_xy(391.4);
                 click(a, x, y);
             }),
         ),
         Do(
             "general: click the disabled Sample licensing switch",
             Box::new(move |a| {
-                let (x, y) = switch_xy(202.9);
+                let (x, y) = switch_xy(262.9);
                 click(a, x, y);
             }),
         ),
