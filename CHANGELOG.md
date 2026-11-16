@@ -18,6 +18,7 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 - 27 ready-made chains in eight folders (Vocals, Drums, Bass, Guitar, Keys & Synths, Pads & Textures, FX and
   Mix & Master), each with its main controls on macros. Find them, and your saved chains, under Browser › Devices ›
   Chains and Add device › Chains.
+
 ### Changed
 
 - Projects has its own tab at the top of the browser, next to Devices and Files, with its own search. The Files tab
