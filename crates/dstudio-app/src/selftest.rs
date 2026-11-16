@@ -13058,6 +13058,11 @@ fn more_key_steps() -> Vec<Step> {
                 key(a, "-", true, false);
             }),
         ),
+        // ⌘- is the View menu's Zoom Out shortcut, and a menu shortcut's key can be replayed from a
+        // zero-delay timer (main.rs, on_menu_key). On Windows under WARP the zoom's re-layout makes
+        // the step outlast the step timer's period, so the check ran before the zoom landed
+        // ("in 90 out 90", 85 one step later): give it one turn of the event loop.
+        Do("keys: let the menu's ⌘- replay land", Box::new(|_| {})),
         Check(
             "keys: ⌘= zoomed the interface in a step and ⌘- back out",
             Box::new(move |c, _| {
