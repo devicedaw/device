@@ -3448,6 +3448,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // ⌘+ is ⇧= on most layouts: the chord is "⌘ +", without the shift.
             let shift = shift && key != "+";
             let chord = Chord { key, primary, shift, alt, ctrl };
+            if chord.key == "-" || chord.key == "=" {
+                eprintln!("DIAG on_key {:?} primary={primary} ctrl={ctrl} shift={shift} repeat={repeat} ctl_free={}", chord.key, ctl.try_borrow_mut().is_ok());
+            }
             // Settings › Shortcuts is recording keys for an action: this chord is them.
             if !repeat
                 && let Ok(mut c) = ctl.try_borrow_mut()
@@ -3474,6 +3477,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     Some("view.ui_zoom_reset") => Some(0),
                     _ => None,
                 };
+                eprintln!("DIAG zoom_action {:?}", zoom_action);
                 if let Some(step) = step {
                     let percent = {
                         let mut z = zm.borrow_mut();

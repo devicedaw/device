@@ -13050,6 +13050,7 @@ fn more_key_steps() -> Vec<Step> {
                 (c.selected_track == Some(t)).then_some(()).ok_or(format!("selected {:?} want {t:?}", c.selected_track))
             }),
         ),
+        DoC("keys: DIAG zoom before", Box::new(|_, ctl| eprintln!("DIAG prefs zoom before = {}", ctl.borrow().settings.prefs.interface_zoom))),
         Do("keys: ⌘=", Box::new(|a| key(a, "=", true, false))),
         DoC(
             "keys: note the zoom, then ⌘-",
@@ -13065,6 +13066,8 @@ fn more_key_steps() -> Vec<Step> {
                 (zin > crate::zoom::MIN_PERCENT && z + crate::zoom::STEP_PERCENT == zin).then_some(()).ok_or(format!("in {zin} out {z}"))
             }),
         ),
+        Do("keys: DIAG wait", Box::new(|_| {})),
+        DoC("keys: DIAG zoom after wait", Box::new(|_, ctl| eprintln!("DIAG prefs zoom after wait = {}", ctl.borrow().settings.prefs.interface_zoom))),
     ]
 }
 
