@@ -439,6 +439,53 @@ impl Controller {
             }
             layers.push(line(g, white(a), 1.0));
         }
+        let over = self.trace_layers(d, def, x0, w, &y_of, accent, &mut layers);
+        canvas(FIELD_X * Z, FIELD_Y * Z, w, h, body_y, "Pitch", String::new(), [Vec::new(), layers, over], Vec::new())
+    }
+
+    /// The Pitch Corrector's window display (w x h px): the trace over rules every 25 ct,
+    /// the ±100 / ±50 / 0 rules labelled in the left gutter and "ct" under them.
+    pub(crate) fn trace_window_canvas(&self, d: &Device, def: &'static DeviceDef, w: f32, h: f32, accent: Color) -> PanelCanvas {
+        let edge = 43.0 * Z;
+        let mid = h / 2.0;
+        let y_of = |ct: f32| (mid - ct / 100.0 * (mid - edge)).clamp(2.0 * Z, h - 2.0 * Z);
+        let gutter = 34.0 * Z;
+        let mut layers = Vec::new();
+        let mut texts = Vec::new();
+        for (cts, a) in [(&[0.0][..], 0.2), (&[50.0, -50.0, 100.0, -100.0][..], 0.09), (&[25.0, -25.0, 75.0, -75.0][..], 0.045)] {
+            let mut g = String::new();
+            for c in cts {
+                let labelled = (*c as i32) % 50 == 0;
+                hline(&mut g, if labelled { gutter } else { 0.0 }, w, y_of(*c).round() + 0.5);
+                if labelled {
+                    let t = match *c as i32 {
+                        0 => "0".to_string(),
+                        v if v > 0 => format!("+{v}"),
+                        v => format!("\u{2212}{}", -v),
+                    };
+                    texts.push(text(6.0 * Z, y_of(*c) - 7.0 * Z, gutter, 14.0 * Z, &t, white(0.4), 9.5 * Z, 600, 0));
+                }
+            }
+            layers.push(line(g, white(a), 1.0));
+        }
+        texts.push(text(6.0 * Z, y_of(-100.0) + 8.0 * Z, gutter, 14.0 * Z, "ct", white(0.4), 9.5 * Z, 600, 0));
+        let over = self.trace_layers(d, def, gutter, w, &y_of, accent, &mut layers);
+        PanelCanvas { well: false, ..canvas(0.0, 0.0, w, h, 0.0, "", String::new(), [Vec::new(), layers, over], texts) }
+    }
+
+    /// The trace's runs (input against corrected, per target note) into `layers`, from x0 to
+    /// the now edge at w; returns the marker of the newest voiced frame.
+    #[allow(clippy::too_many_arguments)]
+    fn trace_layers(
+        &self,
+        d: &Device,
+        def: &'static DeviceDef,
+        x0: f32,
+        w: f32,
+        y_of: &dyn Fn(f32) -> f32,
+        accent: Color,
+        layers: &mut Vec<PanelPath>,
+    ) -> Vec<PanelPath> {
         let mixv = def.param("mix").map_or(100.0, |p| self.panel_value(d, def, p)) / 100.0;
         let corr_color = alpha(accent, 0.25 + 0.75 * mixv);
         let mut over = Vec::new();
@@ -479,14 +526,13 @@ impl Controller {
             layers.push(area(fill, alpha(accent, 0.09), alpha(accent, 0.09)));
             layers.push(line(raw_l, white(0.55), 1.4 * Z));
             layers.push(line(fix_l, corr_color, 1.6 * Z));
-            if let Some(f) = frames.back().filter(|f| f.voiced)
+            if frames.back().is_some_and(|f| f.voiced)
                 && let Some(p) = runs.last().and_then(|r| r.last())
             {
-                let _ = f;
                 over.push(rect(p.0 - 2.0 * Z, p.2 - 2.0 * Z, 4.0 * Z, 4.0 * Z, 2.0 * Z, corr_color));
             }
         }
-        canvas(FIELD_X * Z, FIELD_Y * Z, w, h, body_y, "Pitch", String::new(), [Vec::new(), layers, over], Vec::new())
+        over
     }
 
     /// A Spectrum card's newest frame: (analyser sequence, shown curve, peak hold), dB per band.

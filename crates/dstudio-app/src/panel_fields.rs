@@ -1308,7 +1308,8 @@ impl Controller {
 
 fn draw_pitch(c: &mut Canvas, v: &dyn Fn(&str) -> f32, accent: Color, w: f32, h: f32, hot: bool) {
     let x_of = |st: f32| (st + 24.5) / 49.0 * w;
-    let main = h * 0.72;
+    // The window keeps a band under the field for the axis, the formant strip and the legend.
+    let main = if c.window { h - 96.0 * Z } else { h * 0.72 };
     let (mut major, mut minor) = (String::new(), String::new());
     for st in -24..=24 {
         let x = x_of(st as f32);
@@ -1336,7 +1337,7 @@ fn draw_pitch(c: &mut Canvas, v: &dyn Fn(&str) -> f32, accent: Color, w: f32, h:
     seg(&mut wet, x1, 0.0, x1, main);
     c.stroke(wet, accent.with_alpha(0.25 + 0.75 * mix), if hot { 2.15 } else { 1.4 } * Z);
     // Formant strip: baseline and the formant marker (held at 0 st, or following the shift).
-    let base_y = main + (h - main) * 0.55;
+    let base_y = if c.window { main + 40.0 * Z } else { main + (h - main) * 0.55 };
     let mut base = String::new();
     seg(&mut base, 0.0, base_y, w, base_y);
     c.stroke(base, ink(0.06), 1.0);
@@ -1350,6 +1351,84 @@ fn draw_pitch(c: &mut Canvas, v: &dyn Fn(&str) -> f32, accent: Color, w: f32, h:
     let mut tri = String::new();
     let _ = write!(tri, "M{:.2} {:.2} L{:.2} {:.2} L{:.2} {:.2} Z", fx, base_y - 8.0 * Z, fx + 5.0 * Z, base_y, fx - 5.0 * Z, base_y);
     c.fill(tri, if held { accent.with_alpha(0.9) } else { ink(0.55) });
+    if c.window {
+        pitch_window_marks(c, accent, x0, x1, v("semitones") + v("cents") / 100.0, held, w, main);
+    }
+}
+
+/// Note name of a frequency (A4 = 440 Hz), e.g. "C#5".
+fn note_name(hz: f32) -> String {
+    const NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    let midi = (69.0 + 12.0 * (hz / 440.0).log2()).round() as i32;
+    format!("{}{}", NAMES[midi.rem_euclid(12) as usize], midi.div_euclid(12) - 1)
+}
+
+/// The Pitch Shifter window's labels: the In / Out notes on their lines (against the A4
+/// reference), the semitone axis, the formant caption and the legend.
+#[allow(clippy::too_many_arguments)]
+fn pitch_window_marks(c: &mut Canvas, accent: Color, x0: f32, x1: f32, shift: f32, held: bool, w: f32, main: f32) {
+    let (dim, faint) = (ink(0.55), ink(0.4));
+    let note = |c: &mut Canvas, x: f32, hz: f32, tag: &str, color: Color| {
+        let right = x > w - 150.0 * Z;
+        let (tx, align) = if right { (x - 8.0 * Z - 150.0 * Z, 2) } else { (x + 8.0 * Z, 0) };
+        c.text(tx, 11.0 * Z, 150.0 * Z, note_name(hz), color, 11.0 * Z, align);
+        c.text(tx, 25.0 * Z, 150.0 * Z, format!("{tag}  {hz:.1} Hz"), faint, 9.5 * Z, align);
+    };
+    note(c, x0, 440.0, "In (ref)", dim);
+    if (x1 - x0).abs() > 0.5 {
+        note(c, x1, 440.0 * 2f32.powf(shift / 12.0), "Out", accent);
+    }
+    for st in [-24, -12, 0, 12, 24] {
+        let x = (st as f32 + 24.5) / 49.0 * w;
+        let t = match st {
+            0 => "0".to_string(),
+            24 => "+24 st".to_string(),
+            s if s > 0 => format!("+{s}"),
+            s => format!("{MINUS}{}", -s),
+        };
+        c.text(x - 30.0 * Z, main + 10.0 * Z, 60.0 * Z, t, faint, 9.5 * Z, 1);
+    }
+    let fy = main + 61.0 * Z;
+    c.text(0.0, fy, 60.0 * Z, "Formant", ink(0.6), 10.5 * Z, 0);
+    let follow = if held { "Held in place" } else { "Follows the shift" };
+    c.text(58.0 * Z, fy, 200.0 * Z, follow, if held { accent } else { ink(0.75) }, 12.0 * Z, 0);
+    // Legend: In, Out, Interval, Formant.
+    let ly = main + 85.0 * Z;
+    let mut x = 6.0 * Z;
+    let mut marks = |c: &mut Canvas, label: &str, draw: &dyn Fn(&mut Canvas, f32)| {
+        draw(c, x);
+        c.text(x + 14.0 * Z, ly, 80.0 * Z, label.to_string(), dim, 9.5 * Z, 0);
+        x += (crate::text_measure::value_width(label) * 0.8 + 38.0) * Z;
+    };
+    marks(c, "In", &|c, x| {
+        let mut l = String::new();
+        seg(&mut l, x + 3.0 * Z, ly - 5.0 * Z, x + 3.0 * Z, ly + 5.0 * Z);
+        c.stroke(l, ink(0.5), 1.0);
+    });
+    marks(c, "Out", &|c, x| {
+        let mut l = String::new();
+        seg(&mut l, x + 3.0 * Z, ly - 5.0 * Z, x + 3.0 * Z, ly + 5.0 * Z);
+        c.stroke(l, accent, 1.6 * Z);
+    });
+    marks(c, "Interval", &|c, x| {
+        let mut r = String::new();
+        rect(&mut r, x - 2.0 * Z, ly - 4.0 * Z, 14.0 * Z, 8.0 * Z);
+        c.fill(r, accent.with_alpha(0.18));
+    });
+    marks(c, "Formant", &|c, x| {
+        let mut t = String::new();
+        let _ = write!(
+            t,
+            "M{:.2} {:.2} L{:.2} {:.2} L{:.2} {:.2} Z",
+            x + 4.0 * Z,
+            ly - 5.0 * Z,
+            x + 9.0 * Z,
+            ly + 4.0 * Z,
+            x - 1.0 * Z,
+            ly + 4.0 * Z
+        );
+        c.fill(t, accent.with_alpha(0.9));
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1646,10 +1725,54 @@ fn draw_grains(
         -9.0 * Z
     );
     c.fill(tab, ink(0.95));
+    if c.window {
+        // The window keeps both readouts up, Position at the top and Spray at the foot.
+        let position = if r.rhythm {
+            grains::POSITION_NOTES[(v("position_note").round() as usize).min(9)].to_string()
+        } else {
+            grains::ms_text(r.position * 1000.0)
+        };
+        let dragged = drag.map(|g| g.grab);
+        c.pill(xp + 6.0 * Z, 15.0 * Z, w, "Position", &position, matches!(dragged, Some(Grab::GrainsPosition { .. })));
+        c.pill(xs + 6.0 * Z, h - 18.0 * Z, w, "Spray", &grains::ms_text(r.spray * 1000.0), dragged == Some(Grab::GrainsSpray));
+        grains_window_axes(c, span, w, h, &y_of);
+        return;
+    }
     match drag.map(|g| g.grab) {
         Some(Grab::GrainsPosition { .. }) => c.pill(xp + 6.0 * Z, 26.0 * Z, w, "Position", &grains::ms_text(r.position * 1000.0), true),
         Some(Grab::GrainsSpray) => c.pill(xs + 6.0 * Z, 26.0 * Z, w, "Spray", &grains::ms_text(r.spray * 1000.0), true),
         _ => {}
+    }
+}
+
+/// The Grains window's axes: pitch (st) down the right edge, time back from now (s) below.
+fn grains_window_axes(c: &mut Canvas, span: f32, w: f32, h: f32, y_of: &dyn Fn(f32) -> f32) {
+    let faint = ink(0.45);
+    let mut edge = String::new();
+    seg(&mut edge, w, 0.0, w, h);
+    c.stroke(edge, ink(0.1), 1.0);
+    for st in [24, 12, 0, -12, -24] {
+        let t = match st {
+            0 => "0".to_string(),
+            s if s > 0 => format!("+{s}"),
+            s => format!("{MINUS}{}", -s),
+        };
+        c.text(w + 12.0 * Z, y_of(st as f32), 40.0 * Z, t, faint, 9.5 * Z, 0);
+    }
+    let y = h + 11.0 * Z;
+    c.text(2.0 * Z, y, 20.0 * Z, "s", faint, 9.5 * Z, 0);
+    c.text(w + 12.0 * Z, y, 20.0 * Z, "st", faint, 9.5 * Z, 0);
+    let step = ruler_step(span, w, 150.0 * Z);
+    let mut t = step;
+    for _ in 0..64 {
+        if t >= span * 0.97 {
+            break;
+        }
+        let x = grains_x(t, span, w);
+        if x > 30.0 * Z {
+            c.text(x - 30.0 * Z, y, 60.0 * Z, seconds_label(t), faint, 9.5 * Z, 1);
+        }
+        t += step;
     }
 }
 
