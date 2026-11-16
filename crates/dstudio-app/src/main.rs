@@ -216,7 +216,8 @@ struct Args {
     /// review-files-sort: the audio folder with the sort menu open.
     files_review: u8,
     /// review-section-added / review-sections-two: one new 8-bar section,
-    /// or two with the second selected.
+    /// or two with the second selected; review-marker-menu: two, with the first one's menu and
+    /// its Color submenu open.
     sections_review: u8,
     /// reference-devices-effects: browser Devices › Effects sub-tab.
     devices_effects_state: bool,
@@ -557,6 +558,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-sections-two" => {
                     a.reference_default = true;
                     a.sections_review = 2;
+                }
+                "review-marker-menu" => {
+                    a.reference_default = true;
+                    a.sections_review = 3;
                 }
                 "review-bottom-collapsed" => {
                     a.reference_default = true;
@@ -1164,16 +1169,34 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "clip.duplicate" => ctl.borrow_mut().duplicate_clip(),
         "clip.split_at_marker" => ctl.borrow_mut().split_clip(),
         "clip.disable" => ctl.borrow_mut().toggle_clip_disabled(),
-        "clip.cut" => ctl.borrow_mut().cut_clip(),
+        "clip.cut" => {
+            let mut c = ctl.borrow_mut();
+            match c.marker_shortcut_target() {
+                Some(s) => c.cut_section(s),
+                None => c.cut_clip(),
+            }
+        }
         "clip.consolidate" | "clip.bounce_to_track" => {
             let mut c = ctl.borrow_mut();
             let Some(id) = c.selected_clip else { return true };
             if action == "clip.consolidate" { c.consolidate_clip(id) } else { c.bounce_clip(id) }
         }
         "edit.copy" => {
-            ctl.borrow_mut().copy_clip();
+            let mut c = ctl.borrow_mut();
+            match c.marker_shortcut_target() {
+                Some(s) => c.copy_section(s),
+                None => {
+                    c.copy_clip();
+                }
+            }
         }
-        "edit.paste" => ctl.borrow_mut().paste_clip(),
+        "edit.paste" => {
+            let mut c = ctl.borrow_mut();
+            match c.marker_shortcut_target().filter(|_| c.section_clipboard.is_some()) {
+                Some(s) => c.paste_section(Some(s)),
+                None => c.paste_clip(),
+            }
+        }
         "midi.paint_pen" => ctl.borrow_mut().pr_action("pen"),
         "midi.delete_notes" => {
             let mut c = ctl.borrow_mut();
@@ -2054,8 +2077,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.sections_review > 0 {
         let mut c = ctl.borrow_mut();
-        for _ in 0..args.sections_review {
+        for _ in 0..args.sections_review.min(2) {
             c.insert_section(None);
+        }
+        if args.sections_review == 3 {
+            // The first marker's menu with Color › open (window size of the review screenshots).
+            if let Some(id) = c.project().sections.first().map(|s| s.id) {
+                use controller::MenuAction::*;
+                let items = [Cut, Copy, Paste, Duplicate, SectionRename, SectionColor, SectionInsert, SectionDelete, SectionClear];
+                c.open_menu(items.iter().map(|&a| (a, a != Paste)).collect(), 560.0, 200.0, (1440.0, 820.0));
+                c.menu.section = Some(id);
+                c.menu.sub_for = Some(SectionColor);
+                c.menu.sub_open = true;
+            }
         }
         c.ui_dirty = true;
     }

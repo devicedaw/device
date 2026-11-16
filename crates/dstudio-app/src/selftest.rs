@@ -11243,13 +11243,13 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "+ added \"Section 1\": 8 bars from bar 1, first colour, selected, one undo step",
+            "+ added \"Marker 1\": 8 bars from bar 1, first colour, selected, one undo step",
             Box::new(move |c, _| {
                 let p = c.project();
                 let s = p.sections.first().ok_or("no section")?;
                 f1.set(s.id.0);
                 let ok = p.sections.len() == 1
-                    && s.name == "Section 1"
+                    && s.name == "Marker 1"
                     && s.length == 8 * p.ticks_per_bar()
                     && s.color == crate::sections::PALETTE[6]
                     && c.selected_section == Some(s.id)
@@ -11265,17 +11265,17 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "\"Section 2\" follows at bar 9 in the next colour",
+            "\"Marker 2\" follows at bar 9 in the next colour",
             Box::new(|c, _| {
                 let p = c.project();
-                let ok = names(c) == ["Section 1", "Section 2"]
+                let ok = names(c) == ["Marker 1", "Marker 2"]
                     && p.section_start(1) == 8 * p.ticks_per_bar()
                     && p.sections[1].color == crate::sections::PALETTE[7];
                 ok.then_some(()).ok_or(format!("{:?} {:?}", names(c), bars(c)))
             }),
         ),
         DoC(
-            "drag Section 1's right edge from bar 9 to bar 5",
+            "drag Marker 1's right edge from bar 9 to bar 5",
             Box::new(|a, ctl| {
                 let (x0, x1) = {
                     let c = ctl.borrow();
@@ -11285,7 +11285,7 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "Section 1 is 4 bars and Section 2 moved with its end",
+            "Marker 1 is 4 bars and Marker 2 moved with its end",
             Box::new(|c, _| {
                 let p = c.project();
                 (bars(c) == [4, 8] && p.section_start(1) == 4 * p.ticks_per_bar() && c.doc.undo_label() == Some("Resize Section"))
@@ -11294,7 +11294,7 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         DoC(
-            "drag Section 2 to bar 1",
+            "drag Marker 2 to bar 1",
             Box::new(|a, ctl| {
                 let (x0, x1) = {
                     let c = ctl.borrow();
@@ -11304,15 +11304,15 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "Section 2 now comes first",
+            "Marker 2 now comes first",
             Box::new(|c, _| {
-                (names(c) == ["Section 2", "Section 1"] && c.doc.undo_label() == Some("Move Section"))
+                (names(c) == ["Marker 2", "Marker 1"] && c.doc.undo_label() == Some("Move Section"))
                     .then_some(())
                     .ok_or(format!("{:?}", names(c)))
             }),
         ),
         DoC(
-            "double-click Section 1",
+            "double-click Marker 1",
             Box::new(|a, ctl| {
                 let x = visible_x(&ctl.borrow(), 8.0, 12.0);
                 double_click(a, x, row_y());
@@ -11322,7 +11322,7 @@ fn section_steps() -> Vec<Step> {
             "rename popup open for the section",
             Box::new(move |c, a| {
                 let s = a.global::<Studio>();
-                (s.get_rename_open() && s.get_rename_title() == "Rename section" && c.rename_section == Some(SectionId(f2.get())))
+                (s.get_rename_open() && s.get_rename_title() == "Rename marker" && c.rename_section == Some(SectionId(f2.get())))
                     .then_some(())
                     .ok_or(format!("open {} title {}", s.get_rename_open(), s.get_rename_title()))
             }),
@@ -11338,7 +11338,7 @@ fn section_steps() -> Vec<Step> {
         Check(
             "renamed to Chorus (one undo step)",
             Box::new(|c, _| {
-                (names(c) == ["Section 2", "Chorus"] && c.doc.undo_label() == Some("Rename Section")).then_some(()).ok_or(format!(
+                (names(c) == ["Marker 2", "Chorus"] && c.doc.undo_label() == Some("Rename Section")).then_some(()).ok_or(format!(
                     "{:?} {:?}",
                     names(c),
                     c.doc.undo_label()
@@ -11353,18 +11353,18 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "section menu: Duplicate, Rename, Delete section, Clear all sections",
+            "section menu: Duplicate, Rename, Delete marker, Clear all markers",
             Box::new(|_, a| {
                 let s = a.global::<Studio>();
                 let ok = s.get_menu_open()
-                    && ["Duplicate", "Rename…", "Delete section", "Clear all sections"].iter().all(|l| menu_row(a, l).is_some());
+                    && ["Duplicate", "Rename…", "Delete marker", "Clear all markers"].iter().all(|l| menu_row(a, l).is_some());
                 ok.then_some(()).ok_or(format!("open {}", s.get_menu_open()))
             }),
         ),
         Do(
-            "choose Delete section",
+            "choose Delete marker",
             Box::new(|a| {
-                if let Some((x, y)) = menu_row(a, "Delete section") {
+                if let Some((x, y)) = menu_row(a, "Delete marker") {
                     click(a, x, y);
                 }
             }),
@@ -11372,12 +11372,12 @@ fn section_steps() -> Vec<Step> {
         Check(
             "Chorus deleted, menu closed",
             Box::new(|c, a| {
-                (names(c) == ["Section 2"] && !a.global::<Studio>().get_menu_open()).then_some(()).ok_or(format!("{:?}", names(c)))
+                (names(c) == ["Marker 2"] && !a.global::<Studio>().get_menu_open()).then_some(()).ok_or(format!("{:?}", names(c)))
             }),
         ),
         Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         DoC(
-            "click Section 2, press Delete",
+            "click Marker 2, press Delete",
             Box::new(|a, ctl| {
                 let x = bar_x(&ctl.borrow(), 2.0);
                 click(a, x, row_y());
@@ -11389,11 +11389,11 @@ fn section_steps() -> Vec<Step> {
             Box::new(|c, _| (names(c) == ["Chorus"]).then_some(()).ok_or(format!("{:?}", names(c)))),
         ),
         DoC(
-            "right-click Chorus, Clear all sections",
+            "right-click Chorus, Clear all markers",
             Box::new(|a, ctl| {
                 let x = bar_x(&ctl.borrow(), 1.0);
                 right_click(a, x, row_y());
-                if let Some((x, y)) = menu_row(a, "Clear all sections") {
+                if let Some((x, y)) = menu_row(a, "Clear all markers") {
                     click(a, x, y);
                 }
             }),
@@ -11405,6 +11405,90 @@ fn section_steps() -> Vec<Step> {
                 (c.project().sections.is_empty() && approx(x, c.view.x_of(0.0) + 8.5, 0.01))
                     .then_some(())
                     .ok_or(format!("{:?} add x {x}", names(c)))
+            }),
+        ),
+        DoC(
+            "click +, right-click the new marker",
+            Box::new(|a, ctl| {
+                let x = lane_x() + ctl.borrow().section_add_x();
+                click(a, x, row_y());
+                let x = bar_x(&ctl.borrow(), 2.0);
+                right_click(a, x, row_y());
+            }),
+        ),
+        Check(
+            "marker menu: Cut, Copy, Color, Insert on; Paste off with nothing copied",
+            Box::new(|c, a| {
+                let on = |l: &str| c.menu.items.iter().find(|(m, _)| m.label() == l).map(|(_, e)| *e);
+                (a.global::<Studio>().get_menu_open()
+                    && on("Cut") == Some(true)
+                    && on("Copy") == Some(true)
+                    && on("Paste") == Some(false)
+                    && on("Color") == Some(true)
+                    && on("Insert") == Some(true))
+                .then_some(())
+                .ok_or(format!("items {:?}", c.menu.items))
+            }),
+        ),
+        DoC(
+            "Color › Sea",
+            Box::new(|a, ctl| {
+                if let Some((x, y)) = menu_row(a, "Color") {
+                    click(a, x, y);
+                }
+                let mut c = ctl.borrow_mut();
+                let i = crate::sections::PALETTE_NAMES.iter().position(|n| *n == "Sea").unwrap();
+                c.submenu_activate(i);
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "the marker takes the colour in one undo step",
+            Box::new(|c, _| {
+                let s = c.project().sections.first().ok_or("no marker")?;
+                (s.color == crate::sections::PALETTE[12] && c.doc.undo_label() == Some("Section Color")).then_some(()).ok_or(format!(
+                    "color {:06x} undo {:?}",
+                    s.color,
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        DoC(
+            "Copy, then Paste after it; Insert › Marker before the first",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                let Some(id) = c.project().sections.first().map(|s| s.id) else { return };
+                c.selected_section = Some(id);
+                c.copy_section(id);
+                c.paste_section(Some(id));
+                let x = bar_x(&c, 2.0);
+                drop(c);
+                right_click(a, x, row_y());
+                if let Some((x, y)) = menu_row(a, "Insert") {
+                    click(a, x, y);
+                }
+                let mut c = ctl.borrow_mut();
+                c.submenu_activate(0);
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "markers: a new one before, the original, then its pasted copy in the same colour",
+            Box::new(|c, _| {
+                let p = c.project();
+                let colors: Vec<u32> = p.sections.iter().map(|s| s.color).collect();
+                let n = names(c);
+                (n.len() == 3 && n[1] == "Marker 1" && n[2] == "Marker 1" && colors[1] == colors[2] && n[0].starts_with("Marker "))
+                    .then_some(())
+                    .ok_or(format!("{n:?} {colors:06x?}"))
+            }),
+        ),
+        DoC(
+            "clean up: clear all markers",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.clear_sections();
+                c.section_clipboard = None;
             }),
         ),
     ]
