@@ -63,6 +63,8 @@ pub enum Item {
     /// A built-in device (dstudio_core::builtin), added as an insert.
     Builtin(&'static DeviceDef),
     Plugin(PluginRef),
+    /// A saved or factory device chain (src/chain_presets.rs), added as a whole.
+    Chain(crate::chain_presets::ChainRef),
 }
 
 impl Item {
@@ -71,6 +73,7 @@ impl Item {
             Item::BuiltinSynth => "Synth",
             Item::Builtin(d) => d.name,
             Item::Plugin(p) => &p.name,
+            Item::Chain(c) => &c.name,
         }
     }
     pub fn kind(&self) -> PluginKind {
@@ -78,6 +81,7 @@ impl Item {
             Item::BuiltinSynth => PluginKind::Instrument,
             Item::Builtin(d) => d.kind,
             Item::Plugin(p) => p.kind,
+            Item::Chain(_) => PluginKind::Effect,
         }
     }
 }
@@ -332,6 +336,17 @@ pub enum MenuPick {
     Add(Item),
     /// Built-in device panel: sidechain source (None = off).
     Sidechain(DeviceId, Option<TrackId>),
+    /// Chains: the folder list (Some = replace that chain head instead of adding).
+    ChainFolders(Option<DeviceId>),
+    /// Chains: one folder's chains.
+    ChainFolder(Option<DeviceId>, String),
+    /// Chain card: replace the chain with another.
+    ChainReplace(DeviceId, crate::chain_presets::ChainRef),
+    ChainSave(DeviceId),
+    ChainSaveAs(DeviceId),
+    ChainRename(DeviceId),
+    ChainUnpack(DeviceId),
+    ChainDelete(DeviceId),
     /// Built-in device panel: load factory preset `n`.
     Preset(DeviceId, usize),
     /// Built-in device panel: choice `n` of parameter index `i` (menu pill).
@@ -397,8 +412,12 @@ pub enum DropTarget {
 #[derive(Debug)]
 pub struct DevicesUi {
     pub catalog: Catalog,
-    /// Browser Devices sub-tab: 0 Instruments, 1 Effects, 2 Chains (PLACEHOLDER).
+    /// Browser Devices sub-tab: 0 Instruments, 1 Effects, 2 Chains.
     pub tab: usize,
+    /// Saved and factory chains (src/chain_presets.rs).
+    pub chains: crate::chain_presets::ChainLib,
+    /// Chain card whose name field is open (Rename…, Save as…).
+    pub renaming: Option<DeviceId>,
     pub expanded: HashSet<String>,
     pub search: String,
     pub selected: Option<String>,
@@ -441,6 +460,8 @@ impl Default for DevicesUi {
         DevicesUi {
             catalog: Catalog::default(),
             tab: 0,
+            chains: Default::default(),
+            renaming: None,
             expanded,
             search: String::new(),
             selected: None,
@@ -482,7 +503,13 @@ fn row(depth: i32, label: &str, count: String, icon: i32, expander: i32, leaf: b
 }
 
 /// Browser tree rows for a tab: (entries, rows). Pure, for tests.
-pub fn build_tree(cat: &Catalog, tab: usize, search: &str, expanded: &HashSet<String>) -> (Vec<TreeEntry>, Vec<TreeRow>) {
+pub fn build_tree(
+    cat: &Catalog,
+    chains: &crate::chain_presets::ChainLib,
+    tab: usize,
+    search: &str,
+    expanded: &HashSet<String>,
+) -> (Vec<TreeEntry>, Vec<TreeRow>) {
     let q = search.trim().to_lowercase();
     let mut entries = Vec::new();
     let mut rows = Vec::new();
@@ -491,10 +518,28 @@ pub fn build_tree(cat: &Catalog, tab: usize, search: &str, expanded: &HashSet<St
         rows.push(r);
     };
     if tab == 2 {
-        // PLACEHOLDER: no device chains (presets of chains) exist yet. Folder names only.
-        for name in crate::placeholder::CHAIN_FOLDERS {
-            if q.is_empty() || name.to_lowercase().contains(&q) {
-                push(TreeEntry { key: format!("c/{name}"), item: None, folder: true }, row(0, name, String::new(), 0, 0, false));
+        // Saved chains first ("My chains"), then the factory folders. A search opens every
+        // folder and keeps the chains whose name (or folder) matches.
+        for folder in chains.folders() {
+            let fit = |r: &crate::chain_presets::ChainRef| q.is_empty() || r.name.to_lowercase().contains(&q) || folder.to_lowercase().contains(&q);
+            let list: Vec<_> = chains.in_folder(folder).into_iter().filter(fit).collect();
+            if list.is_empty() {
+                continue;
+            }
+            let key = format!("c/{folder}");
+            let o = !q.is_empty() || expanded.contains(&key);
+            push(
+                TreeEntry { key: key.clone(), item: None, folder: true },
+                row(0, folder, count_text(list.len()), 0, if o { 2 } else { 1 }, false),
+            );
+            if o {
+                for r in list {
+                    let label = r.name.clone();
+                    push(
+                        TreeEntry { key: format!("c/{folder}/{}", r.name), item: Some(Item::Chain(r)), folder: false },
+                        row(1, &label, String::new(), 2, 0, true),
+                    );
+                }
             }
         }
         return (entries, rows);
@@ -875,6 +920,7 @@ impl Controller {
         let Some(t) = self.project().track(track) else { return false };
         let (kind, has_synth) = (t.kind, t.instrument_plugin.as_ref().is_some_and(is_builtin_synth));
         let ok = match (item.kind(), item) {
+            (PluginKind::Effect, Item::Chain(r)) => self.add_chain(r, track, index),
             (PluginKind::Effect, Item::Plugin(p)) => self.execute(Command::AddDevice { track, index, device: Device::new(p.clone()) }),
             (PluginKind::Effect, Item::Builtin(d)) => self.execute(Command::AddDevice { track, index, device: d.instantiate() }),
             (PluginKind::Instrument, _) if kind != TrackKind::Instrument => {
@@ -901,7 +947,7 @@ impl Controller {
                 self.close_instrument_editor(track);
                 self.execute(Command::SetInstrumentPlugin { track, device: Some(d.instantiate()) })
             }
-            (PluginKind::Effect, Item::BuiltinSynth) => false,
+            (PluginKind::Effect, Item::BuiltinSynth) | (PluginKind::Instrument, Item::Chain(_)) => false,
         };
         if ok {
             self.select_track(track);
@@ -920,7 +966,7 @@ impl Controller {
         let show = match item {
             Item::Plugin(_) => g.show_plugin_windows && EDITORS_SUPPORTED && !self.settings.headless,
             Item::Builtin(_) => g.show_builtin_windows,
-            Item::BuiltinSynth => false,
+            Item::BuiltinSynth | Item::Chain(_) => false,
         };
         if !show || item.kind() != PluginKind::Effect {
             return;
@@ -980,9 +1026,7 @@ impl Controller {
     pub fn tree_click(&mut self, i: usize) {
         let Some(e) = self.devices.entries.get(i).cloned() else { return };
         if e.folder {
-            if e.key.starts_with("c/") {
-                self.set_status("Device chains: not implemented yet", 3);
-            } else if self.devices.search.trim().is_empty() && !self.devices.expanded.remove(&e.key) {
+            if self.devices.search.trim().is_empty() && !self.devices.expanded.remove(&e.key) {
                 self.devices.expanded.insert(e.key.clone());
             }
         }
@@ -1407,7 +1451,7 @@ impl Controller {
         v
     }
 
-    /// "Add device" row: 0 Built-in, 1 Audio Units, 2 VST3, 3 CLAP, 4 Chains (PLACEHOLDER).
+    /// "Add device" row: 0 Built-in, 1 Audio Units, 2 VST3, 3 CLAP, 4 Chains.
     pub fn add_category(&mut self, row: usize, x: f32, y: f32) {
         if self.selected_track.is_none() {
             self.set_status("Select a track first", 3);
@@ -1421,18 +1465,7 @@ impl Controller {
             1 => ("Audio Units", self.offered(Some(PluginFormat::AudioUnit), "")),
             2 => ("VST3 plugins", self.offered(Some(PluginFormat::Vst3), "")),
             3 => ("CLAP plugins", self.offered(Some(PluginFormat::Clap), "")),
-            _ => {
-                // Chains: an empty chain (saved chains are not implemented yet).
-                let rows = vec![(
-                    "Empty chain".to_string(),
-                    "Chain".to_string(),
-                    Some(MenuPick::Add(Item::Builtin(&dstudio_core::builtin::rack::RACK))),
-                    false,
-                )];
-                self.devices.menu = Some(DevMenu { pos: (x, y), w: 220.0, rows });
-                self.ui_dirty = true;
-                return;
-            }
+            _ => return self.chain_folders_menu(None, x, y),
         };
         let mut rows = Vec::new();
         let mut kind = None;
@@ -1452,6 +1485,7 @@ impl Controller {
                 Item::BuiltinSynth => "Built-in".to_string(),
                 Item::Builtin(d) => d.category.to_string(),
                 Item::Plugin(p) => p.vendor.clone(),
+                Item::Chain(_) => "Chain".to_string(),
             };
             rows.push((it.name().to_string(), right, Some(MenuPick::Add(it)), false));
         }
@@ -1529,6 +1563,16 @@ impl Controller {
             }
             Some(MenuPick::AddToChain(head, item)) => return self.add_to_chain(head, item),
             Some(MenuPick::CardParam(device, id)) => return self.card_toggle_param(device, id),
+            Some(
+                p @ (MenuPick::ChainFolders(_)
+                | MenuPick::ChainFolder(..)
+                | MenuPick::ChainReplace(..)
+                | MenuPick::ChainSave(_)
+                | MenuPick::ChainSaveAs(_)
+                | MenuPick::ChainRename(_)
+                | MenuPick::ChainUnpack(_)
+                | MenuPick::ChainDelete(_)),
+            ) => return self.chain_pick(p, m.pos),
             None => return,
         };
         let Some(t) = self.selected_track else { return };
@@ -1571,7 +1615,7 @@ impl Controller {
     /// folders, the found plugins) to the UI.
     pub(crate) fn push_devices(&mut self, s: &Studio) {
         // ---- browser tree ----
-        let (entries, mut rows) = build_tree(&self.devices.catalog, self.devices.tab, &self.devices.search, &self.devices.expanded);
+        let (entries, mut rows) = build_tree(&self.devices.catalog, &self.devices.chains, self.devices.tab, &self.devices.search, &self.devices.expanded);
         for (e, r) in entries.iter().zip(rows.iter_mut()) {
             r.selected = self.devices.selected.as_deref() == Some(e.key.as_str());
         }
@@ -1754,6 +1798,7 @@ impl Controller {
                 shortcut: match it {
                     Item::BuiltinSynth | Item::Builtin(_) => "Built-in".into(),
                     Item::Plugin(p) => format_badge(p.format).into(),
+                    Item::Chain(_) => "Chain".into(),
                 },
                 enabled: true,
                 separator: false,
@@ -1802,6 +1847,7 @@ impl Controller {
             }
             None => s.set_devmenu_open(false),
         }
+        s.set_renaming_device(self.devices.renaming.map_or(-1, |d| d.0 as i32));
 
         // ---- Settings › Plugins (only while that page is shown) ----
         if !(self.settings.open && self.settings.page == crate::settings::PLUGINS_PAGE) {
@@ -1950,7 +1996,7 @@ mod tests {
     fn effects_tree_groups_by_format_and_au_vendor() {
         let c = catalog();
         let mut open: HashSet<String> = ["e/au", "e/vst3", "e/clap"].iter().map(|s| s.to_string()).collect();
-        let (_, rows) = build_tree(&c, 1, "", &open);
+        let (_, rows) = build_tree(&c, &Default::default(), 1, "", &open);
         let l = |d: i32, s: &str, n: &str| (d, s.to_string(), n.to_string());
         // Every built-in effect is listed under Built-in (more arrive with each device family).
         let n = dstudio_core::builtin::all().iter().filter(|d| d.kind == PluginKind::Effect && dstudio_core::builtin::listed(d)).count();
@@ -1970,7 +2016,7 @@ mod tests {
         assert_eq!(rows[6].expander, 0, "empty folder has no expander");
         open.insert("e/au/Apple".into());
         open.insert("e/builtin".into());
-        let (entries, rows) = build_tree(&c, 1, "", &open);
+        let (entries, rows) = build_tree(&c, &Default::default(), 1, "", &open);
         assert!(matches!(&entries[1].item, Some(Item::Builtin(d)) if d.id == "compressor"));
         // One row per built-in device under the open Built-in folder.
         assert_eq!(rows[4 + n].label, "AUDelay");
@@ -1983,7 +2029,7 @@ mod tests {
     fn instruments_tree_has_builtin_synth_first() {
         let c = catalog();
         let open: HashSet<String> = ["i/builtin", "i/au", "i/au/Apple"].iter().map(|s| s.to_string()).collect();
-        let (entries, rows) = build_tree(&c, 0, "", &open);
+        let (entries, rows) = build_tree(&c, &Default::default(), 0, "", &open);
         assert_eq!(rows[0].label, "Built-in");
         assert_eq!(entries[1].item, Some(Item::BuiltinSynth));
         assert_eq!(rows[0].count, "4");
@@ -1996,21 +2042,30 @@ mod tests {
     #[test]
     fn search_filters_and_expands() {
         let c = catalog();
-        let (entries, rows) = build_tree(&c, 1, "lowp", &HashSet::new());
+        let (entries, rows) = build_tree(&c, &Default::default(), 1, "lowp", &HashSet::new());
         assert_eq!(labels(&rows).iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), ["Audio Units", "Apple", "AULowpass"]);
         assert_eq!(rows[0].count, "1");
         assert!(entries[2].item.is_some());
-        let (_, rows) = build_tree(&c, 1, "nothing-matches", &HashSet::new());
+        let (_, rows) = build_tree(&c, &Default::default(), 1, "nothing-matches", &HashSet::new());
         assert!(rows.is_empty());
         // Vendor matches too.
-        let (_, rows) = build_tree(&c, 1, "acme", &HashSet::new());
+        let (_, rows) = build_tree(&c, &Default::default(), 1, "acme", &HashSet::new());
         assert_eq!(rows.last().unwrap().label, "Crusher");
     }
 
     #[test]
-    fn chains_tab_is_placeholder_folders() {
-        let (entries, rows) = build_tree(&catalog(), 2, "", &HashSet::new());
-        assert!(!rows.is_empty() && entries.iter().all(|e| e.item.is_none()));
+    fn chains_tab_lists_folders_and_opens_them() {
+        let lib = crate::chain_presets::ChainLib::default();
+        let (entries, rows) = build_tree(&catalog(), &lib, 2, "", &HashSet::new());
+        assert_eq!(rows.len(), dstudio_core::chains::FOLDERS.len(), "closed folders only");
+        assert!(entries.iter().all(|e| e.folder));
+        let open: HashSet<String> = ["c/Drums".to_string()].into();
+        let (entries, _) = build_tree(&catalog(), &lib, 2, "", &open);
+        assert!(entries.iter().any(|e| matches!(&e.item, Some(Item::Chain(r)) if r.name == "Punchy Kit")));
+        // A search opens every folder and keeps only matching chains.
+        let (entries, _) = build_tree(&catalog(), &lib, 2, "glue", &HashSet::new());
+        let names: Vec<_> = entries.iter().filter_map(|e| e.item.as_ref().map(|i| i.name().to_string())).collect();
+        assert_eq!(names, vec!["Bus Glue".to_string()]);
     }
 
     #[test]

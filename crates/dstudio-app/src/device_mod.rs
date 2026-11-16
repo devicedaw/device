@@ -111,7 +111,7 @@ fn wave_paths(shape: usize, phase: f64, depth: f32, w: f32, h: f32) -> (String, 
 }
 
 impl Controller {
-    fn track_of(&self, id: DeviceId) -> Option<&dstudio_core::Track> {
+    pub(crate) fn track_of(&self, id: DeviceId) -> Option<&dstudio_core::Track> {
         self.project().find_device(id).map(|(ti, _)| &self.project().tracks[ti])
     }
 
@@ -689,6 +689,9 @@ impl Controller {
         let Some(d) = self.project().device(id) else {
             return;
         };
+        if modu::is_rack(d) {
+            return self.chain_card_menu(id, x, y);
+        }
         if modu::outputs(d) > 0 || !self.track_of(id).is_some_and(|t| t.devices.iter().any(|x| x.id == id)) {
             return;
         }
@@ -698,7 +701,7 @@ impl Controller {
             |it| match it {
                 Item::Builtin(def) => cur.format == PluginFormat::Builtin && cur.id == def.id,
                 Item::Plugin(p) => cur.format == p.format && cur.id == p.id,
-                Item::BuiltinSynth => false,
+                Item::BuiltinSynth | Item::Chain(_) => false,
             },
         );
         rows.push(("Modulation".to_string(), String::new(), None, true));
@@ -711,7 +714,7 @@ impl Controller {
         let mut with = match item {
             Item::Builtin(def) => def.instantiate(),
             Item::Plugin(p) => Device::new(p),
-            Item::BuiltinSynth => return,
+            Item::BuiltinSynth | Item::Chain(_) => return,
         };
         let Some(d) = self.project().device(id) else {
             return;
@@ -1211,7 +1214,7 @@ impl Controller {
         let mut device = match item {
             Item::Builtin(def) => def.instantiate(),
             Item::Plugin(p) => Device::new(p),
-            Item::BuiltinSynth => return,
+            Item::BuiltinSynth | Item::Chain(_) => return,
         };
         device.chain = Some(head);
         self.execute(Command::AddDevice { track, index: Some(index), device });
