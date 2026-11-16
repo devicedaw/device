@@ -8101,6 +8101,100 @@ fn modulation_steps() -> Vec<Step> {
             }),
         ),
         DoC(
+            "chains: add the factory chain Bus Glue to the audio track",
+            Box::new(|a, ctl| {
+                key(a, Key::Escape, false, false);
+                let mut c = ctl.borrow_mut();
+                let Some(t) = track_of(&c, TrackKind::Audio).map(|i| c.project().tracks[i].id) else { return };
+                let r = crate::chain_presets::ChainRef { user: false, name: "Bus Glue".into() };
+                c.add_item_to_track(&crate::devices::Item::Chain(r), t, None);
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "chains: the chain arrives whole (head, two members, two macro links) in one undo step",
+            Box::new(|c, _| {
+                let head = device_where(c, |d| d.label.as_deref() == Some("Bus Glue")).ok_or("no Bus Glue head")?;
+                let members =
+                    c.project().tracks[track_of(c, TrackKind::Audio).unwrap()].devices.iter().filter(|d| d.chain == Some(head.id)).count();
+                let last = c.doc.history_labels().last().cloned().unwrap_or_default();
+                (members == 2 && head.links.len() == 2 && last.contains("Add Chain"))
+                    .then_some(())
+                    .ok_or(format!("members {members} links {} last {last}", head.links.len()))
+            }),
+        ),
+        DoC(
+            "chains: open the chain card's name menu",
+            Box::new(|a, ctl| {
+                let Some(h) = device_where(&ctl.borrow(), |d| d.label.as_deref() == Some("Bus Glue")) else { return };
+                a.global::<Studio>().invoke_device_swap_menu(h.id.0 as i32, 600.0, 300.0);
+            }),
+        ),
+        Check(
+            "chains: the menu offers Save as…, Rename…, Unpack; Save is off for a factory chain",
+            Box::new(|_, a| {
+                let items = devmenu_labels(a);
+                let on = |l: &str| items.iter().find(|r| r.0 == l).map(|r| r.2);
+                (on("Save") == Some(false)
+                    && on("Save as…") == Some(true)
+                    && on("Unpack chain") == Some(true)
+                    && on("Delete saved chain") == Some(false))
+                .then_some(())
+                .ok_or(format!("items {items:?}"))
+            }),
+        ),
+        DoC(
+            "chains: Save as… \"My Glue\"",
+            Box::new(|a, ctl| {
+                key(a, Key::Escape, false, false);
+                let mut c = ctl.borrow_mut();
+                let Some(h) = device_where(&c, |d| d.label.as_deref() == Some("Bus Glue")) else { return };
+                c.chain_pick(crate::devices::MenuPick::ChainSaveAs(h.id), (0.0, 0.0));
+                c.update_ui(a);
+                c.chain_rename_done(h.id, "My Glue");
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "chains: the saved chain is listed under My chains and the card takes its name",
+            Box::new(|c, _| {
+                let listed = c.devices.chains.in_folder(crate::chain_presets::MY_CHAINS).iter().any(|r| r.name == "My Glue");
+                let head = device_where(c, |d| d.label.as_deref() == Some("My Glue"));
+                (listed && head.is_some_and(|h| h.preset.as_deref() == Some("My Glue"))).then_some(()).ok_or(format!("listed {listed}"))
+            }),
+        ),
+        DoC(
+            "chains: Unpack chain",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                let Some(h) = device_where(&c, |d| d.label.as_deref() == Some("My Glue")) else { return };
+                c.chain_pick(crate::devices::MenuPick::ChainUnpack(h.id), (0.0, 0.0));
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "chains: unpacking keeps the effects in place, outside any chain",
+            Box::new(|c, _| {
+                let glue = device_where(c, |d| d.plugin.id == "glue-compressor").ok_or("glue gone")?;
+                let head = device_where(c, |d| d.label.as_deref() == Some("My Glue"));
+                (head.is_none() && glue.chain.is_none()).then_some(()).ok_or("still chained".into())
+            }),
+        ),
+        DoC(
+            "chains: undo the unpack, the save and the add",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                for _ in 0..3 {
+                    c.undo();
+                }
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "chains: the track is back to its earlier chain",
+            Box::new(|c, _| device_where(c, |d| d.plugin.id == "glue-compressor").is_none().then_some(()).ok_or("glue left".into())),
+        ),
+        DoC(
             "plugin card: add the CLAP test gain, open + Add",
             Box::new(|a, ctl| {
                 key(a, Key::Escape, false, false);
