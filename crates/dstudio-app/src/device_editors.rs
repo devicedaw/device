@@ -532,26 +532,95 @@ fn sector(r0: f32, r1: f32, a0: f32, a1: f32) -> PathData {
 
 // Shaper geometry (pt at 100%, card relative).
 const SH_W: f32 = 501.0;
-const SH_TABS_Y: f32 = 50.0;
-const SH_TAB_X: [f32; 7] = [16.0, 95.5, 161.0, 232.5, 291.5, 357.0, 428.0];
-const SH_STRIP_Y: f32 = 71.5; // pill top, 19 tall
-const SH_WELL: (f32, f32, f32, f32) = (8.0, 93.0, 485.0, 120.5);
-const SH_PLOT: (f32, f32, f32, f32) = (48.0, 108.0, 483.0, 205.0); // x0, y top (1), x1, y bottom (0)
-const SH_TRIGGER: (f32, f32, f32, f32) = (171.0, 245.0, 141.0, 19.0);
 const SH_TRIGGER_SPLIT: f32 = 84.5; // divider from the pill's left
 const SH_KNOBS: [f32; 4] = [39.0, 111.0, 371.5, 461.5];
 
+/// Where the Shaper's editor draws: the card's, or its window's (relative to the top left of
+/// the window's canvas, which starts at the lane tabs above the display).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ShGeo {
+    tabs_y: f32,
+    tab_x: [f32; 7],
+    /// Strip row: pill top, 19 tall.
+    strip_y: f32,
+    /// Curve well and its plot: x0, y top (1), x1, y bottom (0).
+    well: (f32, f32, f32, f32),
+    plot: (f32, f32, f32, f32),
+    /// Trigger pill; its caption under it (the card) or to its left (the window).
+    trigger: (f32, f32, f32, f32),
+    trigger_caption_under: bool,
+}
+
+const SH_CARD: ShGeo = ShGeo {
+    tabs_y: 50.0,
+    tab_x: [16.0, 95.5, 161.0, 232.5, 291.5, 357.0, 428.0],
+    strip_y: 71.5,
+    well: (8.0, 93.0, 485.0, 120.5),
+    plot: (48.0, 108.0, 483.0, 205.0),
+    trigger: (171.0, 245.0, 141.0, 19.0),
+    trigger_caption_under: true,
+};
+
+/// The window: the tabs over the display, the strip and Trigger on the display's caption row,
+/// the curve across the rest of the display.
+pub(crate) const SH_WIN: ShGeo = ShGeo {
+    tabs_y: 20.0,
+    tab_x: [8.0, 96.0, 169.0, 248.0, 315.0, 388.0, 467.0],
+    strip_y: 58.0,
+    well: (0.0, 48.0, 1048.0, 466.0),
+    plot: (60.0, 92.0, 1032.0, 500.0),
+    trigger: (891.0, 58.0, 141.0, 19.0),
+    trigger_caption_under: false,
+};
+
+#[cfg(test)]
+impl ShGeo {
+    /// A point on lane `l`'s name in the tab row.
+    pub(crate) fn tab_name(&self, l: usize) -> (f32, f32) {
+        (self.tab_x[l] + 20.0, self.tabs_y)
+    }
+}
+
+thread_local! {
+    static SH_GEO: std::cell::Cell<ShGeo> = const { std::cell::Cell::new(SH_CARD) };
+}
+
+fn sh_geo() -> ShGeo {
+    SH_GEO.with(|g| g.get())
+}
+
+/// Draws and hit tests the Shaper with `g` (and the window's origin) until dropped.
+pub(crate) struct ShScope(ShGeo, Option<TgScope>);
+
+impl ShScope {
+    pub(crate) fn new(g: ShGeo) -> Self {
+        let origin = TgScope::new(TgGeo { origin_y: 0.0, ..tg_geo() });
+        Self(SH_GEO.with(|c| c.replace(g)), Some(origin))
+    }
+}
+
+impl Drop for ShScope {
+    fn drop(&mut self) {
+        SH_GEO.with(|c| c.set(self.0));
+        self.1.take();
+    }
+}
+
 fn sh_px(x: f32) -> f32 {
-    SH_PLOT.0 + x * (SH_PLOT.2 - SH_PLOT.0)
+    let p = sh_geo().plot;
+    p.0 + x * (p.2 - p.0)
 }
 fn sh_py(y: f32) -> f32 {
-    SH_PLOT.3 - y * (SH_PLOT.3 - SH_PLOT.1)
+    let p = sh_geo().plot;
+    p.3 - y * (p.3 - p.1)
 }
 fn sh_x_of(px: f32) -> f32 {
-    ((px - SH_PLOT.0) / (SH_PLOT.2 - SH_PLOT.0)).clamp(0.0, 1.0)
+    let p = sh_geo().plot;
+    ((px - p.0) / (p.2 - p.0)).clamp(0.0, 1.0)
 }
 fn sh_y_of(py: f32) -> f32 {
-    ((SH_PLOT.3 - py) / (SH_PLOT.3 - SH_PLOT.1)).clamp(0.0, 1.0)
+    let p = sh_geo().plot;
+    ((p.3 - py) / (p.3 - p.1)).clamp(0.0, 1.0)
 }
 
 /// The Crush lane's strip controls from the row start x (pt at 100%):
@@ -951,25 +1020,56 @@ impl Controller {
         sh::TIME_MAX_SECONDS * self.project().transport.bpm / 60.0
     }
 
-    fn shaper_lane(&self, id: DeviceId) -> usize {
+    pub(crate) fn shaper_lane(&self, id: DeviceId) -> usize {
         self.devices.panel.editors.lane.get(&id).copied().unwrap_or(0).min(sh::LANE_COUNT - 1)
     }
 
     fn shaper_card(&self, d: &Device, def: &'static DeviceDef, card: &mut DeviceCard) {
-        let accent = card.accent;
+        let mut c = Canvas::default();
+        let cursor = self.sh_draw(d, def, card.accent, &mut c);
+        // Knobs: the lane's Rate and Depth, then Mix and Output.
+        let values = self.values(d, def);
+        let base = sh::lane_base(self.shaper_lane(d.id));
+        let idx = [base + sh::RATE, base + sh::DEPTH, 2, 3];
+        let knobs: Vec<PanelKnob> = idx.iter().zip(SH_KNOBS).map(|(&i, x)| knob(def, values[i], i, x)).collect();
+        card.knobs = ModelRc::from(Rc::new(VecModel::from(knobs)));
+        card.canvas = c.into_canvas(SH_W, cursor);
+    }
+
+    /// The Shaper's expanded window picture (src/device_window.rs places it): the lane tabs
+    /// over the display, the strip and Trigger on its caption row, the curve below. `w` x `h` pt.
+    pub(crate) fn shaper_editor_window_canvas(&self, d: &Device, def: &'static DeviceDef, accent: Color, w: f32, h: f32) -> PanelCanvas {
+        let _g = ShScope::new(SH_WIN);
+        let mut c = Canvas::default();
+        let cursor = self.sh_draw(d, def, accent, &mut c);
+        PanelCanvas {
+            visible: true,
+            w: w * Z,
+            h: h * Z,
+            paths: ModelRc::from(Rc::new(VecModel::from(c.paths))),
+            texts: ModelRc::from(Rc::new(VecModel::from(c.texts))),
+            interactive: true,
+            cursor,
+            ..Default::default()
+        }
+    }
+
+    /// The lane tabs, strip, curve and Trigger in the current geometry ([`ShScope`]); returns
+    /// the cursor.
+    fn sh_draw(&self, d: &Device, def: &'static DeviceDef, accent: Color, c: &mut Canvas) -> i32 {
+        let g = sh_geo();
         let (hit, hp) = self.hover_of(d.id);
         let lane = self.shaper_lane(d.id);
         let values = self.values(d, def);
         let base = sh::lane_base(lane);
         let lane_on = values[base + sh::ON] >= 0.5;
         let depth = values[base + sh::DEPTH] / 100.0;
-        let mut c = Canvas::default();
         let rest_col = ink(0.45);
 
         // Lane tabs: ring switch + name.
         for (l, (_, name)) in sh::LANES.iter().enumerate() {
             let on = values[sh::lane_base(l) + sh::ON] >= 0.5;
-            let x = SH_TAB_X[l];
+            let x = g.tab_x[l];
             let sel = l == lane;
             let hot = matches!(hit, Hit::LaneOn(h) | Hit::Lane(h) if h == l);
             let ring_col = if on {
@@ -979,9 +1079,9 @@ impl Controller {
             } else {
                 rest_col
             };
-            c.stroke(PathData::default().circle(x, SH_TABS_Y, 6.25 * 0.75), ring_col, 1.5);
+            c.stroke(PathData::default().circle(x, g.tabs_y, 6.25 * 0.75), ring_col, 1.5);
             if on {
-                c.fill(PathData::default().circle(x, SH_TABS_Y, 3.0 * 0.75), accent);
+                c.fill(PathData::default().circle(x, g.tabs_y, 3.0 * 0.75), accent);
             }
             let col = if sel {
                 ink(1.0)
@@ -990,14 +1090,14 @@ impl Controller {
             } else {
                 rest_col
             };
-            c.text(x + 14.5, SH_TABS_Y - 10.0, 70.0, 20.0, *name, col, 12.5, 600, 0);
+            c.text(x + 14.5, g.tabs_y - 10.0, 70.0, 20.0, *name, col, 12.5, 600, 0);
         }
 
         // Strip row: Shape, Band (+ Split), the lane's own controls.
         let dim = if lane_on { 1.0 } else { 0.55 };
         let pts = sh::lane_points(&values, lane);
         let shape_name = sh::matching_shape(lane, &pts).unwrap_or("Custom");
-        let y = SH_STRIP_Y;
+        let y = g.strip_y;
         c.text(8.0, y, 40.0, 19.0, "Shape", ink(0.4 * dim), 11.5, 500, 0);
         c.pill(48.5, y, 97.0, 19.0, hit == Hit::Shape);
         c.text(56.5, y, 70.0, 19.0, shape_name, ink(0.95 * dim), 11.5, 600, 0);
@@ -1055,15 +1155,15 @@ impl Controller {
         }
 
         // Curve well.
-        c.fill(PathData::default().rrect(SH_WELL.0, SH_WELL.1, SH_WELL.2, SH_WELL.3, 6.0), rgba(0, 0, 0, 0.26));
+        c.fill(PathData::default().rrect(g.well.0, g.well.1, g.well.2, g.well.3, 6.0), rgba(0, 0, 0, 0.26));
         let grid = *self.devices.panel.editors.grid.get(&d.id).unwrap_or(&16);
         let (mut strong, mut weak) = (PathData::default(), PathData::default());
         for k in 0..=grid {
             let gx = sh_px(k as f32 / grid as f32);
             if k % (grid / 4).max(1) == 0 {
-                strong = strong.m(gx, SH_PLOT.1).l(gx, SH_PLOT.3);
+                strong = strong.m(gx, g.plot.1).l(gx, g.plot.3);
             } else {
-                weak = weak.m(gx, SH_PLOT.1).l(gx, SH_PLOT.3);
+                weak = weak.m(gx, g.plot.1).l(gx, g.plot.3);
             }
         }
         c.stroke(weak, ink(0.05), 1.0);
@@ -1082,7 +1182,7 @@ impl Controller {
             _ => vec![],
         };
         if lane == 6 && depth > 0.0 {
-            let spacing = (SH_PLOT.3 - SH_PLOT.1) / (24.0 * depth);
+            let spacing = (g.plot.3 - g.plot.1) / (24.0 * depth);
             if spacing >= 5.0 {
                 let (mut semis, mut fifths) = (PathData::default(), PathData::default());
                 for s in -12i32..=12 {
@@ -1092,9 +1192,9 @@ impl Controller {
                     }
                     let py = sh_py(yy);
                     if s.abs() == 7 {
-                        fifths = fifths.m(SH_PLOT.0, py).l(SH_PLOT.2, py);
+                        fifths = fifths.m(g.plot.0, py).l(g.plot.2, py);
                     } else {
-                        semis = semis.m(SH_PLOT.0, py).l(SH_PLOT.2, py);
+                        semis = semis.m(g.plot.0, py).l(g.plot.2, py);
                     }
                 }
                 c.stroke(semis, ink(0.05), 1.0);
@@ -1104,15 +1204,15 @@ impl Controller {
         let rest = sh::REST[lane];
         for (ry, text) in &rulers {
             let py = sh_py(*ry);
-            c.text(SH_PLOT.0 - 46.0, py - 7.0, 38.0, 14.0, text.as_str(), ink(0.5), 10.0, 600, 2);
+            c.text(g.plot.0 - 46.0, py - 7.0, 38.0, 14.0, text.as_str(), ink(0.5), 10.0, 600, 2);
             if (*ry - rest).abs() > 1e-4 {
-                c.stroke(PathData::default().m(SH_PLOT.0, py).l(SH_PLOT.2, py), ink(0.05), 1.0);
+                c.stroke(PathData::default().m(g.plot.0, py).l(g.plot.2, py), ink(0.05), 1.0);
             }
         }
         let mut dash = PathData::default();
-        let mut xx = SH_PLOT.0;
-        while xx < SH_PLOT.2 {
-            dash = dash.m(xx, sh_py(rest)).l((xx + 3.0).min(SH_PLOT.2), sh_py(rest));
+        let mut xx = g.plot.0;
+        while xx < g.plot.2 {
+            dash = dash.m(xx, sh_py(rest)).l((xx + 3.0).min(g.plot.2), sh_py(rest));
             xx += 6.0;
         }
         c.stroke(dash, ink(0.22), 1.0);
@@ -1135,10 +1235,10 @@ impl Controller {
                 line.insert(pos, (px, sh_py(w[0].y)));
             }
         }
-        let area = PathData::default().poly(&line).l(SH_PLOT.2, SH_PLOT.3).l(SH_PLOT.0, SH_PLOT.3).z();
+        let area = PathData::default().poly(&line).l(g.plot.2, g.plot.3).l(g.plot.0, g.plot.3).z();
         c.fill(area, vgrad(alpha(accent, 0.3 * curve_alpha), alpha(accent, 0.04 * curve_alpha)));
         c.stroke(PathData::default().poly(&line), alpha(accent, if lane_on { 1.0 } else { 0.45 }), 2.0);
-        let over_plot = in_rect(hp, SH_WELL.0, SH_WELL.1, SH_WELL.2, SH_WELL.3);
+        let over_plot = in_rect(hp, g.well.0, g.well.1, g.well.2, g.well.3);
         let gesture = match &self.devices.panel.editors.gesture {
             Some(Gesture::Curve { device, k, mid, .. }) if *device == d.id => Some((*k, *mid)),
             _ => None,
@@ -1186,8 +1286,8 @@ impl Controller {
             let text = lane_text(lane, by, depth, quarters, self.time_max_beats(), values[7], values[8]);
             let w = 10.0 + 6.2 * text.chars().count() as f32;
             let (px, py) = (sh_px(bx), sh_py(by));
-            let top = if py - 30.0 < SH_WELL.1 { py + 10.0 } else { py - 28.0 };
-            let left = (px - w / 2.0).clamp(SH_WELL.0 + 2.0, SH_WELL.0 + SH_WELL.2 - w - 2.0);
+            let top = if py - 30.0 < g.well.1 { py + 10.0 } else { py - 28.0 };
+            let left = (px - w / 2.0).clamp(g.well.0 + 2.0, g.well.0 + g.well.2 - w - 2.0);
             c.fill(PathData::default().rrect(left, top, w, 17.0, 8.5), rgba(0x2e, 0x2f, 0x35, 0.96));
             c.text(left, top, w, 17.0, text, ink(0.95), 10.5, 600, 1);
         }
@@ -1195,8 +1295,8 @@ impl Controller {
         if lane == 4 {
             for (i, (idx, h)) in [(8usize, Hit::FilterHigh), (7usize, Hit::FilterLow)].into_iter().enumerate() {
                 let w = 38.0;
-                let px = SH_WELL.0 + SH_WELL.2 - w - 6.0;
-                let py = if i == 0 { SH_WELL.1 + 6.0 } else { SH_WELL.1 + SH_WELL.3 - 6.0 - 16.0 };
+                let px = g.well.0 + g.well.2 - w - 6.0;
+                let py = if i == 0 { g.well.1 + 6.0 } else { g.well.1 + g.well.3 - 6.0 - 16.0 };
                 c.fill(
                     PathData::default().rrect(px, py, w, 16.0, 8.0),
                     if hit == h { rgba(0x29, 0x2a, 0x30, 1.0) } else { rgba(0x22, 0x23, 0x28, 1.0) },
@@ -1206,7 +1306,7 @@ impl Controller {
         }
 
         // Trigger cell: [Sync / This track / source] | threshold, caption under.
-        let (tx, ty, tw, th) = SH_TRIGGER;
+        let (tx, ty, tw, th) = g.trigger;
         let audio = values[0] >= 0.5;
         c.pill(tx, ty, tw, th, matches!(hit, Hit::Trigger | Hit::Threshold));
         let source = if !audio {
@@ -1230,13 +1330,13 @@ impl Controller {
         );
         let thr_alpha = if audio { if hit == Hit::Threshold { 0.95 } else { 0.75 } } else { 0.35 };
         c.text(tx + SH_TRIGGER_SPLIT, ty, tw - SH_TRIGGER_SPLIT, th, def.params[1].format(values[1]), ink(thr_alpha), 11.0, 600, 1);
-        c.text(tx, 284.5, tw, 14.0, "Trigger", rgba(0xe5, 0xe5, 0xe8, 1.0), 11.0, 600, 1);
+        if g.trigger_caption_under {
+            c.text(tx, 284.5, tw, 14.0, "Trigger", rgba(0xe5, 0xe5, 0xe8, 1.0), 11.0, 600, 1);
+        } else {
+            c.text(tx - 60.0, ty, 52.0, th, "Trigger", ink(0.4), 11.5, 500, 2);
+        }
 
-        // Knobs: the lane's Rate and Depth, then Mix and Output.
-        let idx = [base + sh::RATE, base + sh::DEPTH, 2, 3];
-        let knobs: Vec<PanelKnob> = idx.iter().zip(SH_KNOBS).map(|(&i, x)| knob(def, values[i], i, x)).collect();
-        card.knobs = ModelRc::from(Rc::new(VecModel::from(knobs)));
-        let cursor = match hit {
+        match hit {
             Hit::LaneOn(_) | Hit::Lane(_) | Hit::Shape | Hit::Band | Hit::FilterType | Hit::Trigger => CURSOR_POINTER,
             Hit::Split | Hit::Resonance | Hit::Bits | Hit::Decimate | Hit::Threshold | Hit::FilterHigh | Hit::FilterLow => CURSOR_NS,
             Hit::CurvePoint(k) => {
@@ -1249,25 +1349,25 @@ impl Controller {
             Hit::Mid(_) => CURSOR_NS,
             Hit::Plot if pts.len() < sh::MAX_POINTS => CURSOR_CROSSHAIR,
             _ => 0,
-        };
-        card.canvas = c.into_canvas(SH_W, cursor);
+        }
     }
 
     fn sh_hit(&self, d: &Device, def: &DeviceDef, p: (f32, f32)) -> Hit {
+        let g = sh_geo();
         let lane = self.shaper_lane(d.id);
         let values = self.values(d, def);
         let base = sh::lane_base(lane);
         for l in 0..sh::LANE_COUNT {
-            let x = SH_TAB_X[l];
-            if in_rect(p, x - 8.0, SH_TABS_Y - 9.0, 16.0, 18.0) {
+            let x = g.tab_x[l];
+            if in_rect(p, x - 8.0, g.tabs_y - 9.0, 16.0, 18.0) {
                 return Hit::LaneOn(l);
             }
-            let end = if l + 1 < sh::LANE_COUNT { SH_TAB_X[l + 1] - 12.0 } else { x + 70.0 };
-            if in_rect(p, x + 8.0, SH_TABS_Y - 10.0, end - x - 8.0, 20.0) {
+            let end = if l + 1 < sh::LANE_COUNT { g.tab_x[l + 1] - 12.0 } else { x + 70.0 };
+            if in_rect(p, x + 8.0, g.tabs_y - 10.0, end - x - 8.0, 20.0) {
                 return Hit::Lane(l);
             }
         }
-        let y = SH_STRIP_Y;
+        let y = g.strip_y;
         if in_rect(p, 48.5, y, 97.0, 19.0) {
             return Hit::Shape;
         }
@@ -1296,22 +1396,22 @@ impl Controller {
                 return Hit::Decimate;
             }
         }
-        let (tx, ty, tw, th) = SH_TRIGGER;
+        let (tx, ty, tw, th) = g.trigger;
         if in_rect(p, tx, ty, SH_TRIGGER_SPLIT, th) {
             return Hit::Trigger;
         }
         if in_rect(p, tx + SH_TRIGGER_SPLIT, ty, tw - SH_TRIGGER_SPLIT, th) {
             return if values[0] >= 0.5 { Hit::Threshold } else { Hit::None };
         }
-        if !in_rect(p, SH_WELL.0, SH_WELL.1, SH_WELL.2, SH_WELL.3) {
+        if !in_rect(p, g.well.0, g.well.1, g.well.2, g.well.3) {
             return Hit::None;
         }
         if lane == 4 {
-            let px = SH_WELL.0 + SH_WELL.2 - 44.0;
-            if in_rect(p, px, SH_WELL.1 + 6.0, 38.0, 16.0) {
+            let px = g.well.0 + g.well.2 - 44.0;
+            if in_rect(p, px, g.well.1 + 6.0, 38.0, 16.0) {
                 return Hit::FilterHigh;
             }
-            if in_rect(p, px, SH_WELL.1 + SH_WELL.3 - 22.0, 38.0, 16.0) {
+            if in_rect(p, px, g.well.1 + g.well.3 - 22.0, 38.0, 16.0) {
                 return Hit::FilterLow;
             }
         }
@@ -1423,6 +1523,7 @@ impl Controller {
             _ => return,
         };
         let _geo = (win && name == "trance-gate").then(|| TgScope::new(TG_WIN));
+        let _sh = (win && name == "shaper").then(|| ShScope::new(SH_WIN));
         let p = e.pt();
         let hit = match name {
             "trance-gate" => self.tg_hit(d, def, p),
