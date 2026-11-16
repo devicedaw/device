@@ -89,6 +89,8 @@ pub(crate) const ACT_MB_BAND: i32 = 13;
 pub(crate) const ACT_VIEW: i32 = 14;
 /// Delay: the repeat-EQ band the rack edits (value: 0..6).
 pub(crate) const ACT_DELAY_BAND: i32 = 15;
+/// Spectrum: clear the window's history.
+pub(crate) const ACT_SPEC_RESET: i32 = 16;
 const PILL_GHOST: i32 = 6;
 /// Character Mod's Mode parameter of each circuit (Ensemble has none).
 const CM_MODES: [Option<&str>; 11] = dstudio_core::builtin::character_mod::MODE_PARAMS;
@@ -126,7 +128,7 @@ pub(crate) fn has_window(def: &DeviceDef) -> bool {
         def.id,
         "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb" | "echo"
     ) || is_wave_window(def)
-        || matches!(def.id, "utility" | "widener" | "tuner")
+        || matches!(def.id, "utility" | "widener" | "tuner" | "spectrum")
         || def.id == "bitcrusher"
         || is_field_window(def)
         || is_dynamics_window(def)
@@ -190,6 +192,8 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         // Utility: three cards and no display; the meters run the window's height.
         "utility" => Kit { w: 1200.0, display: (INSET, 52.0, 1042.0, 630.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: true, meters_h: 0.0 },
         // Stereo Widener: the field over the correlation lane.
+        // Spectrum: the analyser across the display, one Level meter beside it.
+        "spectrum" => Kit { w: 1200.0, display: (INSET, 52.0, 1108.0, 514.0), plot: (36.0, 32.0, 42.0, 34.0), narrow: true, meters_h: 0.0 },
         // Tuner: the bar across a tall display, one In meter beside it.
         "tuner" => Kit { w: 1200.0, display: (INSET, 52.0, 1108.0, 550.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: true, meters_h: 0.0 },
         // Its meters run down past the card, as the Bit Crusher's.
@@ -245,6 +249,8 @@ pub(crate) struct WinUi {
     epoch: Option<Instant>,
     /// Stereo Widener: input and output correlation of the open windows.
     pub(crate) corr: HashMap<DeviceId, std::collections::VecDeque<crate::device_window_widener::CorrSample>>,
+    /// Spectrum: the frames each open window keeps for its 3D and Split views.
+    pub(crate) spec: HashMap<DeviceId, crate::device_window_spectrum::SpecHistory>,
 }
 
 /// Which signal a window's analyser shows.
@@ -658,6 +664,7 @@ impl Controller {
             _ if is_wave_window(def) => self.wave_window_canvas(d, def, &k, accent),
             _ if def.id == "bitcrusher" => self.crush_window_canvas(d, def, &k, accent),
             _ if def.id == "widener" => self.widener_window_canvas(d, def, &k, accent),
+            _ if def.id == "spectrum" => self.spectrum_window_canvas(d, def, &k, accent),
             // The card's tuner at twice its scale, its bar across the middle of the display.
             _ if def.id == "tuner" => {
                 PanelCanvas { well: false, ..self.tuner_canvas_at(d, def, k.display.2 / 2.0, TUNER_WIN_H, 2.0 * Z, accent) }
@@ -681,13 +688,17 @@ impl Controller {
             "utility" => self.utility_window(d, def, &mut b),
             "widener" => self.widener_window(d, def, &mut b, dy + dh + 12.0),
             "tuner" => self.tuner_window(d, def, &mut b, dy + dh + 14.0),
+            "spectrum" => self.spectrum_window(d, def, &mut b, dy + dh + 12.0),
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
         let (mut meters, ticks, mut ticks_x) = self.window_meters(d.id, &k);
-        // The Tuner meters its input only.
-        if def.id == "tuner" {
+        // The Tuner meters its input only; the Spectrum its level.
+        if matches!(def.id, "tuner" | "spectrum") {
             meters.truncate(1);
             ticks_x = meters[0].x / Z + 38.0;
+            if def.id == "spectrum" {
+                meters[0].label = s("Level");
+            }
         }
         Some(WinView {
             visible: true,
@@ -784,6 +795,21 @@ impl Controller {
         self.devices.wins.meters.retain(|id, _| open.contains(id));
         self.devices.wins.history.retain(|id, _| open.contains(id));
         self.devices.wins.corr.retain(|id, _| open.contains(id));
+        self.devices.wins.spec.retain(|id, _| open.contains(id));
+        for &id in &open {
+            let Some(d) = self.project().device(id) else { continue };
+            let Some(def) = dstudio_core::builtin::def_of(d).filter(|def| def.id == "spectrum") else { continue };
+            if self.devices.wins.held.contains(&id) {
+                continue;
+            }
+            let depth = def.param("history_depth").map_or(3, |p| self.panel_value(d, def, p).round() as usize);
+            let depth = crate::device_window_spectrum::DEPTHS[depth.min(crate::device_window_spectrum::DEPTHS.len() - 1)];
+            let Some((seq, shown, _)) = self.spectrum_frame(id) else { continue };
+            let shown = shown.to_vec();
+            if self.devices.wins.spec.entry(id).or_default().take(seq, &shown, depth) {
+                self.ui_dirty = true;
+            }
+        }
         let epoch = *self.devices.wins.epoch.get_or_insert(now);
         let t = now.duration_since(epoch).as_secs_f64();
         let mut out = Vec::new();
@@ -1648,6 +1674,91 @@ impl Controller {
         }
         b.w = full;
         700.0
+    }
+
+    /// A picker in the header after its name, right-aligned at `right`; returns the left.
+    #[allow(clippy::too_many_arguments)]
+    fn header_picker(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, id: &str, name: &str, right: f32, inert: bool) -> f32 {
+        let label = def.param(id).map_or_else(String::new, |p| p.format(self.panel_value(d, def, p)));
+        let pw = pill_w(&label) + 14.0;
+        let p = b.pill(PILL_PICKER, def.index_of(id).map_or(-1, |i| i as i32), 0, right - pw / 2.0, 9.5, 0.0, &label, false);
+        p.inert = inert;
+        let lw = crate::text_measure::value_width(name) * 1.15 + 6.0;
+        let ink = if inert { 0x59 } else { 0xb3 };
+        b.texts.push(PanelText {
+            x: (right - pw - 8.0 - lw) * Z,
+            y: 13.5 * Z,
+            w: lw * Z,
+            h: 16.0 * Z,
+            text: s(name),
+            color: Color::from_argb_u8(ink, 0xe5, 0xe5, 0xe8),
+            size: 12.0 * Z,
+            weight: 600,
+            align: 2,
+        });
+        right - pw - 8.0 - lw
+    }
+
+    /// Spectrum: header (View pills, Reset and Hold view, History and Color), the analyser
+    /// in the display (the Split view's spectrogram in a well of its own below the 2D
+    /// part), and one card: FFT, Window, Channel | Slope, Ceiling, Range | Smoothing,
+    /// Averaging, Peak Hold, Decay.
+    fn spectrum_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let label = |id: &str| def.param(id).map_or_else(String::new, |p| p.format(self.panel_value(d, def, p)));
+        let mode = val("display_mode").round() as i32;
+        let mut x = self.header_choice(d, def, b, "display_mode", b.w - INSET);
+        x = Self::header_rule(b, x);
+        let rw = pill_w("Reset") + 4.0;
+        b.pill(PILL_GHOST, ACT_SPEC_RESET, 0, x - rw, 10.5, rw, "Reset", false);
+        x -= rw + 10.0 + 77.5;
+        b.pill(PILL_GHOST_LATCH, ACT_HOLD, 0, x, 10.5, 77.5, "Hold view", self.win_held(d.id));
+        x = Self::header_rule(b, x);
+        x = self.header_picker(d, def, b, "history_depth", "History", x, mode == crate::device_window_spectrum::MODE_2D);
+        self.header_picker(d, def, b, "color_scheme", "Color", x - 24.0, false);
+        // Split: the 2D part in the display, the spectrogram in its own well below.
+        if mode == crate::device_window_spectrum::MODE_SPLIT {
+            let k = kit(def);
+            if let Some(bx) = b.boxes.iter_mut().find(|bx| bx.kind == BOX_DISPLAY) {
+                bx.h = (k.plot.1 + crate::device_window_spectrum::SPLIT_GRAM_Y - 16.0) * Z;
+            }
+        }
+        let row = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (
+                    vec![
+                        Item::Picker(idx("fft_size"), label("fft_size"), "FFT", 104.0, false),
+                        Item::Picker(idx("window"), label("window"), "Window", 104.0, false),
+                        Item::Picker(idx("channel_mode"), label("channel_mode"), "Channel", 104.0, false),
+                    ],
+                    0.0,
+                ),
+                (
+                    vec![
+                        Item::Knob("slope", "Slope", 2, 70.0, false),
+                        Item::Knob("db_ceiling", "Ceiling", 2, 70.0, false),
+                        Item::Knob("db_range", "Range", 2, 70.0, false),
+                    ],
+                    4.0,
+                ),
+                (
+                    vec![
+                        Item::Knob("smoothing", "Smoothing", 1, 76.0, false),
+                        Item::Knob("averaging", "Averaging", 1, 76.0, false),
+                        Item::Picker(idx("peak_hold"), label("peak_hold"), "Peak Hold", 90.0, false),
+                        Item::Knob("decay", "Decay", 1, 70.0, false),
+                    ],
+                    4.0,
+                ),
+            ],
+        );
+        row.y + row.h + 16.0
     }
 
     /// Tuner: a short card: Tuning and Reference, then Mute Output.
@@ -2696,6 +2807,9 @@ impl Controller {
                 let span = crate::device_window_dynamics::SPANS[value.clamp(0, 2) as usize];
                 self.devices.wins.span.insert(device, span);
             }
+            (ACT_SPEC_RESET, _) => {
+                self.devices.wins.spec.remove(&device);
+            }
             (ACT_HOLD, _) => {
                 if !self.devices.wins.held.remove(&device) {
                     self.devices.wins.held.insert(device);
@@ -3262,6 +3376,44 @@ mod tests {
         }
     }
 
+    /// Spectrum: three views from one history; Reset clears it, Hold view stops taking
+    /// frames, the History picker is inert in 2D.
+    #[test]
+    fn spectrum_window_draws_each_view_from_its_history() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("spectrum");
+        assert!(has_window(def));
+        let idx = |p: &str| def.index_of(p).unwrap() as i32;
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 700.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert_eq!(v.meters.row_count(), 1);
+        assert_eq!(v.meters.row_data(0).unwrap().label, "Level");
+        for p in ["fft_size", "window", "channel_mode", "peak_hold", "color_scheme", "history_depth"] {
+            assert!(v.pills.iter().any(|q| q.param == idx(p)), "{p}");
+        }
+        assert_eq!(v.pills.iter().filter(|q| q.param == idx("display_mode")).count(), 3);
+        let empty_3d = v.display.paths.row_count();
+        let h = c.devices.wins.spec.entry(did).or_default();
+        for i in 1..=200u64 {
+            let f: Vec<f32> = (0..crate::analyzer_views::SPECTRUM_BANDS).map(|b| -30.0 - (b as f32 * 0.2) - (i % 7) as f32).collect();
+            h.take(i, &f, 128);
+        }
+        assert_eq!(h.frames.len(), 128);
+        let full_3d = view(&c, did, def).display.paths.row_count();
+        assert!(full_3d >= empty_3d + 2 * 32, "{empty_3d} -> {full_3d}");
+        c.execute(Command::SetDeviceParam { device: did, param: "display_mode".into(), value: 2.0 });
+        let split = view(&c, did, def);
+        let well = split.boxes.iter().find(|b| b.kind == BOX_DISPLAY).unwrap();
+        assert!(well.h / Z < 300.0, "{}", well.h / Z);
+        assert!(split.display.paths.row_count() > 4);
+        c.execute(Command::SetDeviceParam { device: did, param: "display_mode".into(), value: 0.0 });
+        let flat = view(&c, did, def);
+        assert!(flat.pills.iter().any(|q| q.param == idx("history_depth") && q.inert));
+        assert!(flat.display.texts.iter().any(|t| t.text.starts_with("Tilt")));
+        c.win_action(did, ACT_SPEC_RESET, 0);
+        assert!(c.win_spec_history(did).is_none());
+    }
+
     /// A full ten-second history draws as one line per series, however many samples it holds.
     #[test]
     fn dynamics_history_draws_once_per_series() {
@@ -3300,12 +3452,21 @@ mod tests {
             "utility",
             "widener",
             "tuner",
+            "spectrum",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =
                 (0..630).map(|i| (i as f64 / 60.0, -12.0 + (i as f32 * 0.1).sin() * 6.0, -18.0, -6.0)).collect();
             c.devices.wins.history.insert(did, h);
             c.devices.wins.epoch = Some(Instant::now() - std::time::Duration::from_millis(10_500));
+            if id == "spectrum" {
+                let h = c.devices.wins.spec.entry(did).or_default();
+                for i in 1..=128u64 {
+                    let f: Vec<f32> =
+                        (0..crate::analyzer_views::SPECTRUM_BANDS).map(|b| -20.0 - b as f32 * 0.25 - (i % 9) as f32).collect();
+                    h.take(i, &f, 128);
+                }
+            }
             let d = c.project().device(did).unwrap().clone();
             let t0 = std::time::Instant::now();
             for _ in 0..n {

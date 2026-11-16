@@ -59,6 +59,7 @@ mod device_window_dynamics;
 mod device_window_fields;
 mod device_window_multiband;
 mod device_window_shaper;
+mod device_window_spectrum;
 mod device_window_wave;
 mod device_window_widener;
 mod devices;
@@ -252,6 +253,8 @@ struct Args {
     track_rename_review: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
     device_state: Option<&'static str>,
+    /// A parameter the device-window review sets first (review-window-spectrum-2d / -split).
+    window_param: Option<(&'static str, f32)>,
     /// window-<built-in device id>: as reference-<id>, with the device's window open.
     device_window: bool,
     /// review-window-<id>: a test signal runs through the device so its window's meters and
@@ -677,6 +680,13 @@ fn parse_args() -> Result<Args, String> {
                     a.device_state = s.strip_prefix("window-").and_then(dstudio_core::builtin::find).map(|d| d.id);
                     a.device_window = true;
                 }
+                st @ ("review-window-spectrum-2d" | "review-window-spectrum-split") => {
+                    a.reference_default = true;
+                    a.device_state = Some("spectrum");
+                    a.device_window = true;
+                    a.window_signal = true;
+                    a.window_param = Some(("display_mode", if st.ends_with("2d") { 0.0 } else { 2.0 }));
+                }
                 s if s.strip_prefix("review-window-").and_then(dstudio_core::builtin::find).is_some() => {
                     a.reference_default = true;
                     a.device_state = s.strip_prefix("review-window-").and_then(dstudio_core::builtin::find).map(|d| d.id);
@@ -741,7 +751,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1366,6 +1376,7 @@ impl WindowSignal {
             c.set_status(format!("review-window: {e}"), 10);
             return;
         }
+        c.panel_poll_views_at(at);
         c.poll_window_meters_at(at);
     }
 }
@@ -2373,6 +2384,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if args.device_window
                 && let Some(d) = c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id)
             {
+                if let Some((param, value)) = args.window_param {
+                    c.execute(dstudio_core::Command::SetDeviceParam { device: d, param: param.into(), value });
+                }
                 c.device_window(d);
             }
             if args.window_signal {
@@ -2383,8 +2397,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.execute(dstudio_core::Command::SetTrackMonitor { track: t, monitor: true });
                 c.set_track_input(t, Some(dstudio_core::InputSource { channel: 0, stereo: false }));
                 let mut sig = WindowSignal::default();
-                let mut at = Instant::now() - Duration::from_millis(990);
-                for _ in 0..33 {
+                // Spectrum renders long enough to fill its window's 128-frame history.
+                let pre = if id == "spectrum" { 160 } else { 33 };
+                let mut at = Instant::now() - Duration::from_millis(30 * pre as u64);
+                for _ in 0..pre {
                     sig.step(&mut c, at);
                     at += Duration::from_millis(30);
                 }

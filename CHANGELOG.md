@@ -62,3 +62,7 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
   field over frequency above a correlation lane that plots the input and output correlation of the last six seconds).
   The engine measures a built-in device's stereo correlation while its window is open (`se_builtin_correlation`).
 - An expanded window for Tuner: the card's tuner at twice its size across the display, with its input meter.
+- An expanded window for Spectrum with three views: 2D (the spectrum, its peak hold and the slope guide on a dB
+  ladder), 3D (a waterfall of the last 32 to 256 frames) and Split (the spectrum over a spectrogram), with Hold view,
+  Reset, History and Color in its top bar and every analyser setting in one card. Curve drawing in every expanded
+  window is about three times cheaper (coordinates are written without the float formatter).
