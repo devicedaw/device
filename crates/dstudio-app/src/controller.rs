@@ -513,7 +513,8 @@ pub struct Controller {
     pub rename: Option<ClipId>,
     pub rename_section: Option<dstudio_core::SectionId>,
     /// Marker copied with Cut / Copy (src/sections.rs), pasted with Paste.
-    pub section_clipboard: Option<dstudio_core::Section>,
+    /// The copied marker and what was in it (pasted with it when sections move clips).
+    pub section_clipboard: Option<(dstudio_core::Section, dstudio_core::section_follow::SectionContent)>,
     /// Counts presses on the lanes and the clip editors; the UI moves the keyboard focus back to
     /// the shortcuts on each, so an open name field commits (Studio.press-epoch).
     pub press_epoch: i32,

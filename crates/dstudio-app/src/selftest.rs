@@ -11022,7 +11022,7 @@ fn general_settings_steps() -> Vec<Step> {
                 let s = a.global::<Studio>();
                 let on: Vec<bool> = s.get_general_on().iter().collect();
                 (s.get_settings_page() == 0
-                    && on == [false, true, false, true]
+                    && on == [false, true, false, true, false]
                     && !s.get_general_stop_in_place()
                     && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
                 .then_some(())
@@ -11481,6 +11481,67 @@ fn section_steps() -> Vec<Step> {
                 (n.len() == 3 && n[1] == "Marker 1" && n[2] == "Marker 1" && colors[1] == colors[2] && n[0].starts_with("Marker "))
                     .then_some(())
                     .ok_or(format!("{n:?} {colors:06x?}"))
+            }),
+        ),
+        DoC(
+            "sections move clips: on; two markers, a MIDI clip in the second, move it to the front",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.clear_sections();
+                c.settings.prefs.general.sections_move_clips = true;
+                c.insert_section(None);
+                let second = c.insert_section(None);
+                let p = c.project();
+                let start = p.section_start(1) + dstudio_core::PPQ;
+                let Some(track) = p.tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) else { return };
+                let clip = dstudio_core::MidiClip { name: "Follow".into(), ..dstudio_core::MidiClip::empty(start, dstudio_core::PPQ) };
+                c.execute(dstudio_core::Command::AddMidiClip { track, clip });
+                if let Some(id) = second {
+                    c.execute_section(dstudio_core::Command::MoveSection { section: id, index: 0 }, Vec::new());
+                }
+            }),
+        ),
+        Check(
+            "sections move clips: the clip moved with its marker, in one Move Section undo step",
+            Box::new(|c, _| {
+                let p = c.project();
+                let clip = p.tracks.iter().flat_map(|t| &t.midi_clips).find(|m| m.name == "Follow");
+                let label = c.doc.undo_label().unwrap_or_default().to_string();
+                (clip.is_some_and(|m| m.start == dstudio_core::PPQ) && label == "Move Section")
+                    .then_some(())
+                    .ok_or(format!("clip {:?} undo {label:?}", clip.map(|m| m.start)))
+            }),
+        ),
+        DoC("sections move clips: undo once", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check(
+            "sections move clips: undo puts the marker and the clip back together",
+            Box::new(|c, _| {
+                let p = c.project();
+                let back = p.sections.len() == 2 && p.sections[0].name == "Marker 1";
+                let clip = p.tracks.iter().flat_map(|t| &t.midi_clips).find(|m| m.name == "Follow");
+                (back && clip.is_some_and(|m| m.start == p.section_start(1) + dstudio_core::PPQ)).then_some(()).ok_or(format!(
+                    "{:?} clip {:?}",
+                    names(c),
+                    clip.map(|m| m.start)
+                ))
+            }),
+        ),
+        DoC(
+            "sections move clips: delete the second marker removes its clip; then off",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if let Some(id) = c.project().sections.get(1).map(|s| s.id) {
+                    c.delete_section(id);
+                }
+                c.settings.prefs.general.sections_move_clips = false;
+            }),
+        ),
+        Check(
+            "sections move clips: the deleted marker took its clip with it",
+            Box::new(|c, _| {
+                let p = c.project();
+                let gone = !p.tracks.iter().flat_map(|t| &t.midi_clips).any(|m| m.name == "Follow");
+                (gone && p.sections.len() == 1).then_some(()).ok_or(format!("{:?}", names(c)))
             }),
         ),
         DoC(

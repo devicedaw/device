@@ -136,6 +136,9 @@ pub struct GeneralPrefs {
     /// None is the default folder (~/Documents/Device Studio).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub projects_folder: Option<std::path::PathBuf>,
+    /// Timeline annotations: moving, resizing, adding or deleting a marker moves the clips and
+    /// automation in and after it.
+    pub sections_move_clips: bool,
 }
 
 impl Default for GeneralPrefs {
@@ -147,6 +150,7 @@ impl Default for GeneralPrefs {
             show_builtin_windows: false,
             plugin_windows_on_top: true,
             projects_folder: None,
+            sections_move_clips: false,
         }
     }
 }

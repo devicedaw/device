@@ -117,10 +117,9 @@ component SmallSelect inherits Rectangle {
     Icon { x: parent.width - 16px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; d: Icons.chevron-down; ink: #a6a8ac; stroke-width: 1.4px; }
 }
 
-// General page. Startup, Projects folder, Playhead on stop and the three plugin
-// window switches work (prefs.general). Sample licensing, Sections move clips and the
-// Assistant section are shown off and disabled: DStudio has no licensing, section-moves-clips
-// mode, audio-listening assistant or voice input.
+// General page. Startup, Projects folder, Playhead on stop, Sections move clips and the three
+// plugin window switches work (prefs.general). Sample licensing and the Assistant section are
+// shown off and disabled: DStudio has no licensing, audio-listening assistant or voice input.
 component GeneralPage inherits Rectangle {
     property <length> sw-x: root.width - 20.5px - 22.5px;
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "General"; font-size: 17.25px; font-weight: 700; }
@@ -132,7 +131,7 @@ component GeneralPage inherits Rectangle {
     // k: index into Studio.general-on, -1 = not available in DStudio (off, disabled).
     for r in [
         { t: "Always load last session", y: 88.4px, k: 0 }, { t: "License samples when you use them", y: 262.9px, k: -1 },
-        { t: "Sections move clips", y: 317.4px, k: -1 }, { t: "Auto-show third-party effect windows", y: 371.8px, k: 1 },
+        { t: "Sections move clips", y: 317.4px, k: 4 }, { t: "Auto-show third-party effect windows", y: 371.8px, k: 1 },
         { t: "Auto-show built-in effect windows", y: 391.4px, k: 2 }, { t: "Keep plugin windows on top", y: 411.6px, k: 3 },
         { t: "Let the assistant listen to audio", y: 466.7px, k: -1 }, { t: "Hold talk key to record", y: 534.6px, k: -1 },
         { t: "Auto-send", y: 554.8px, k: -1 },
