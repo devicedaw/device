@@ -1278,6 +1278,14 @@ int32_t se_builtin_set_metering(se_engine* engine, uint64_t device_id, uint8_t o
  * -> SE_ERR_INVALID_ARG. */
 int32_t se_builtin_levels(se_engine* engine, uint64_t device_id, float* out);
 
+/* Stereo correlation of a live built-in device's input (out[0]) and output
+ * (out[1]) since the previous call: -1 cancels in mono, 0 uncorrelated, +1 in
+ * phase; 2 where that side was silent or metering is off. Reading resets it.
+ * Measured while metering is on (se_builtin_set_metering).
+ * MAIN THREAD. Unknown or non-built-in device -> SE_ERR_NOT_FOUND; out NULL
+ * -> SE_ERR_INVALID_ARG. */
+int32_t se_builtin_correlation(se_engine* engine, uint64_t device_id, float* out);
+
 /* The analyser of a built-in device's expanded window: mode 0 off, 1 the
  * device's input (Pre), 2 its output (Post). While it is on the audio thread
  * measures a 128-bin log-spaced level spectrum (20 Hz .. 20 kHz, dBFS, floor

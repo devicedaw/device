@@ -1973,6 +1973,15 @@ int32_t Engine::builtin_levels(uint64_t device_id, float* out) {
     return SE_OK;
 }
 
+int32_t Engine::builtin_correlation(uint64_t device_id, float* out) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    BuiltinInstance* b = inst != nullptr ? inst->as_builtin() : nullptr;
+    if (b == nullptr) return SE_ERR_NOT_FOUND;
+    b->take_correlation(out);
+    return SE_OK;
+}
+
 int32_t Engine::builtin_set_spectrum(uint64_t device_id, int mode) {
     std::lock_guard lock(plugins_.mutex());
     PluginInstance* inst = plugins_.instance(device_id);

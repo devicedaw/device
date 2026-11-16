@@ -806,6 +806,15 @@ int32_t se_builtin_levels(se_engine* engine, uint64_t device_id, float* out) {
     });
 }
 
+int32_t se_builtin_correlation(se_engine* engine, uint64_t device_id, float* out) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&]() -> int32_t {
+        const int32_t rc = engine->impl->builtin_correlation(device_id, out);
+        return rc == SE_OK ? rc : fail(rc, "no live built-in device with this id");
+    });
+}
+
 int32_t se_builtin_set_spectrum(se_engine* engine, uint64_t device_id, uint8_t mode) {
     SE_REQUIRE_ENGINE(engine);
     if (mode > 2) return fail(SE_ERR_INVALID_ARG, "mode must be 0 (off), 1 (pre) or 2 (post)");

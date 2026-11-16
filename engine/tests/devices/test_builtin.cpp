@@ -413,6 +413,42 @@ TEST_CASE(builtin_metering_reports_in_and_out_peaks_without_allocating) {
     CHECK_EQ(se_builtin_levels(e, 10, nullptr), SE_ERR_INVALID_ARG);
 }
 
+TEST_CASE(builtin_metering_reports_stereo_correlation) {
+    EngineHandle e(48000, 256);
+    // Right is the left inverted: the input cancels in mono.
+    const uint64_t a = load_asset(e, {sine(48000, 440.0, 48000.0, 0.5), sine(48000, 440.0, 48000.0, -0.5)});
+    DeviceSession s;
+    auto& tr = s.add_track(1, a, 48000);
+    DeviceSession::add_device(tr, 10, "compressor", kComp);
+    REQUIRE(s.publish(e) == SE_OK);
+    REQUIRE(se_transport_play(e) == SE_OK);
+    std::vector<float> buf(2 * 256);
+    float c[2] = {0.f, 0.f};
+
+    // Off by default: both sides read as silent.
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    REQUIRE(se_builtin_correlation(e, 10, c) == SE_OK);
+    CHECK_EQ(c[0], 2.0f);
+    CHECK_EQ(c[1], 2.0f);
+
+    REQUIRE(se_builtin_set_metering(e, 10, 1) == SE_OK);
+    const long before = rt_alloc_count();
+    for (int i = 0; i < 8; ++i) {
+        RtAllocGuard g;
+        REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    }
+    CHECK_EQ(rt_alloc_count() - before, 0);
+    REQUIRE(se_builtin_correlation(e, 10, c) == SE_OK);
+    CHECK(c[0] < -0.99f);
+    CHECK(c[1] < -0.9f);
+
+    // Reading resets it.
+    REQUIRE(se_builtin_correlation(e, 10, c) == SE_OK);
+    CHECK_EQ(c[0], 2.0f);
+    CHECK_EQ(se_builtin_correlation(e, 999, c), SE_ERR_NOT_FOUND);
+    CHECK_EQ(se_builtin_correlation(e, 10, nullptr), SE_ERR_INVALID_ARG);
+}
+
 TEST_CASE(builtin_window_spectrum_measures_pre_and_post) {
     EngineHandle e(48000, 256);
     const uint64_t a = load_asset(e, {sine(48000, 1000.0, 48000.0, 0.5), sine(48000, 1000.0, 48000.0, 0.5)});

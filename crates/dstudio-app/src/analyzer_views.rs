@@ -484,8 +484,12 @@ impl Controller {
     }
 
     fn tuner_canvas(&self, d: &Device, def: &'static DeviceDef, w_pt: f32, accent: Color) -> PanelCanvas {
-        let z = Z;
-        let (w, h) = (w_pt, TUNER_BOTTOM - FIELD_Y); // unscaled; scaled on output
+        self.tuner_canvas_at(d, def, w_pt, TUNER_BOTTOM - FIELD_Y, Z, accent)
+    }
+
+    /// The tuner picture `w` x `h` units drawn at `z` px per unit (the card's is Z; the
+    /// expanded window draws it larger).
+    pub(crate) fn tuner_canvas_at(&self, d: &Device, def: &'static DeviceDef, w: f32, h: f32, z: f32, accent: Color) -> PanelCanvas {
         let empty = TunerView::default();
         let tv = self.devices.panel.analyzers.tuners.get(&d.id).unwrap_or(&empty);
         let tuning = def.param("tuning").map_or(0, |p| self.panel_value(d, def, p).round() as usize).min(TUNING_STRINGS.len() - 1);

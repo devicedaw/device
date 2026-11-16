@@ -607,6 +607,12 @@ impl Engine {
         check(unsafe { ffi::se_builtin_levels(self.raw, device_id, out.as_mut_ptr()) })
     }
 
+    /// Stereo correlation of a live built-in device's input and output since the previous
+    /// call (-1..1; 2 where that side was silent or metering is off).
+    pub fn builtin_correlation(&self, device_id: u64, out: &mut [f32; 2]) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_builtin_correlation(self.raw, device_id, out.as_mut_ptr()) })
+    }
+
     /// Number of bins in an analyser frame ([`Engine::builtin_spectrum`]).
     pub const SPECTRUM_BINS: usize = 128;
 

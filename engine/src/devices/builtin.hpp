@@ -21,7 +21,9 @@
 #include "../spsc_queue.hpp"
 #include "dstudio_engine.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -246,6 +248,18 @@ public:
     void take_levels(float* out) noexcept {
         for (int i = 0; i < 4; ++i) out[i] = peaks_[i].exchange(0.0f, std::memory_order_relaxed);
     }
+    // Main thread: stereo correlation of the input and the output since the last take
+    // (-1 cancels in mono, 0 uncorrelated, +1 in phase); 2 where a side was silent.
+    // Measured while metering is on; reset by taking it.
+    void take_correlation(float* out) noexcept {
+        for (int k = 0; k < 2; ++k) {
+            const float lr = corr_[3 * k].exchange(0.0f, std::memory_order_relaxed);
+            const float ll = corr_[3 * k + 1].exchange(0.0f, std::memory_order_relaxed);
+            const float rr = corr_[3 * k + 2].exchange(0.0f, std::memory_order_relaxed);
+            const float d = ll * rr;
+            out[k] = d > 1e-12f ? std::clamp(lr / std::sqrt(d), -1.0f, 1.0f) : 2.0f;
+        }
+    }
     // Main thread: the expanded window's analyser: 0 off, 1 the input (Pre),
     // 2 the output (Post). The analyser is built on first use and kept.
     void set_spectrum(int mode);
@@ -319,6 +333,7 @@ private:
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
     std::atomic<bool> metering_{false};
     std::atomic<float> peaks_[4] = {}; // in L, in R, out L, out R since the last take_levels
+    std::atomic<float> corr_[6] = {};  // (sum LR, sum LL, sum RR) of the input, then the output
     std::unique_ptr<WindowSpectrum> spectrum_;           // built by the main thread, kept
     std::atomic<WindowSpectrum*> spectrum_rt_{nullptr}; // published to the audio thread
     std::atomic<int> spectrum_mode_{0};                  // 0 off, 1 input, 2 output
