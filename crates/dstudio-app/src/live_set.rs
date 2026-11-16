@@ -1075,7 +1075,8 @@ pub(crate) fn value<'a>(n: roxmltree::Node<'a, '_>, p: &str) -> Result<&'a str, 
 }
 
 pub(crate) fn number(n: roxmltree::Node, p: &str) -> Result<f64, String> {
-    value(n, p)?.parse::<f64>().map_err(|e| format!("{p}: {e}"))
+    // Rust's parser also takes "NaN" and "inf"; no Live value is one, and they would reach the model.
+    value(n, p)?.parse::<f64>().map_err(|e| format!("{p}: {e}")).and_then(|v| if v.is_finite() { Ok(v) } else { Err(format!("{p}: {v}")) })
 }
 
 fn require(n: roxmltree::Node, paths: &[&str], what: &str) -> Result<(), String> {

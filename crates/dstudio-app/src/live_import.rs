@@ -607,7 +607,7 @@ pub fn build(
         let id = TrackId(p.alloc_id());
         let kind = if t.midi { TrackKind::Instrument } else { TrackKind::Audio };
         let mut track = Track::new(id, kind, &t.name, crate::controller::next_track_color(&p));
-        track.gain = t.volume.clamp(0.0, 4.0);
+        track.gain = t.volume.clamp(0.0, dstudio_core::command::MAX_GAIN);
         track.pan = t.pan.clamp(-1.0, 1.0);
         track.mute = !t.on;
         for c in &t.audio {
@@ -658,7 +658,7 @@ pub fn build(
                     start: ticks(c.span.start + at),
                     source_offset: s0,
                     source_length: s1 - s0,
-                    gain: c.gain.clamp(0.0, 4.0),
+                    gain: c.gain.clamp(0.0, dstudio_core::command::MAX_GAIN),
                     warp: warp.clone(),
                     disabled: c.disabled,
                     clip_loop,
@@ -970,6 +970,17 @@ mod tests {
             [(60, 0, PPQ, 100), (64, 7 * PPQ / 2, PPQ / 2, 90)]
         );
         assert_eq!(report.summary("Set"), "Imported Set: 2 tracks, 2 clips");
+    }
+
+    #[test]
+    fn non_finite_numbers_fall_back() {
+        let xml = to_xml(&set());
+        let volume = r#"<Volume>"#;
+        let at = xml.find(volume).unwrap();
+        let manual = at + xml[at..].find(r#"<Manual Value="0.5" />"#).unwrap();
+        let xml = format!("{}<Manual Value=\"NaN\" />{}", &xml[..manual], &xml[manual + r#"<Manual Value="0.5" />"#.len()..]);
+        let (p, _) = import(&xml);
+        assert_eq!(p.tracks[0].gain, 1.0);
     }
 
     #[test]
