@@ -181,9 +181,7 @@ mod tests {
     /// in each marker (ids 20, 21) and one after them (22), plus a volume lane with a point in
     /// each marker.
     fn project() -> Project {
-        let mut p = Project::default();
-        p.next_id = 100;
-        p.sections = vec![section(1, 8), section(2, 8)];
+        let mut p = Project { next_id: 100, sections: vec![section(1, 8), section(2, 8)], ..Project::default() };
         let t = &mut p.tracks[1];
         assert_eq!(t.kind, TrackKind::Instrument);
         for (id, bar) in [(20, 2), (21, 9), (22, 20)] {
