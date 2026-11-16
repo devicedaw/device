@@ -38,11 +38,11 @@ static CLIP_TAKES_REVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 static ZOOM_FIT_REVIEW: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 mod analyzer_views;
-mod chain_presets;
 mod appmenu;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;
+mod chain_presets;
 mod clip_bench;
 mod clip_render;
 mod clipedit;

@@ -49,11 +49,7 @@ impl ChainLib {
     }
 
     pub fn get(&self, r: &ChainRef) -> Option<&ChainPreset> {
-        if r.user {
-            self.user.iter().find(|p| p.name == r.name)
-        } else {
-            self.factory.iter().map(|(_, p)| p).find(|p| p.name == r.name)
-        }
+        if r.user { self.user.iter().find(|p| p.name == r.name) } else { self.factory.iter().map(|(_, p)| p).find(|p| p.name == r.name) }
     }
 
     pub fn is_user(&self, name: &str) -> bool {
@@ -139,7 +135,12 @@ impl Controller {
     pub(crate) fn chain_folders_menu(&mut self, replace: Option<DeviceId>, x: f32, y: f32) {
         let mut rows = Vec::new();
         if replace.is_none() {
-            rows.push(("Empty chain".to_string(), "Chain".to_string(), Some(MenuPick::Add(Item::Builtin(&dstudio_core::builtin::rack::RACK))), false));
+            rows.push((
+                "Empty chain".to_string(),
+                "Chain".to_string(),
+                Some(MenuPick::Add(Item::Builtin(&dstudio_core::builtin::rack::RACK))),
+                false,
+            ));
         }
         for (i, f) in self.devices.chains.folders().into_iter().enumerate() {
             rows.push((f.to_string(), "›".to_string(), Some(MenuPick::ChainFolder(replace, f.to_string())), i == 0 && replace.is_none()));
@@ -253,8 +254,7 @@ impl Controller {
         while at < t.devices.len() && at > 0 && modu::head_of(&t.devices, at).is_some() {
             at += 1;
         }
-        let commands =
-            devs.into_iter().enumerate().map(|(i, device)| Command::AddDevice { track, index: Some(at + i), device }).collect();
+        let commands = devs.into_iter().enumerate().map(|(i, device)| Command::AddDevice { track, index: Some(at + i), device }).collect();
         self.execute(Command::Batch { label: format!("Add Chain \"{}\"", r.name), commands })
     }
 

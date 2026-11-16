@@ -8115,7 +8115,8 @@ fn modulation_steps() -> Vec<Step> {
             "chains: the chain arrives whole (head, two members, two macro links) in one undo step",
             Box::new(|c, _| {
                 let head = device_where(c, |d| d.label.as_deref() == Some("Bus Glue")).ok_or("no Bus Glue head")?;
-                let members = c.project().tracks[track_of(c, TrackKind::Audio).unwrap()].devices.iter().filter(|d| d.chain == Some(head.id)).count();
+                let members =
+                    c.project().tracks[track_of(c, TrackKind::Audio).unwrap()].devices.iter().filter(|d| d.chain == Some(head.id)).count();
                 let last = c.doc.history_labels().last().cloned().unwrap_or_default();
                 (members == 2 && head.links.len() == 2 && last.contains("Add Chain"))
                     .then_some(())
@@ -8134,9 +8135,12 @@ fn modulation_steps() -> Vec<Step> {
             Box::new(|_, a| {
                 let items = devmenu_labels(a);
                 let on = |l: &str| items.iter().find(|r| r.0 == l).map(|r| r.2);
-                (on("Save") == Some(false) && on("Save as…") == Some(true) && on("Unpack chain") == Some(true) && on("Delete saved chain") == Some(false))
-                    .then_some(())
-                    .ok_or(format!("items {items:?}"))
+                (on("Save") == Some(false)
+                    && on("Save as…") == Some(true)
+                    && on("Unpack chain") == Some(true)
+                    && on("Delete saved chain") == Some(false))
+                .then_some(())
+                .ok_or(format!("items {items:?}"))
             }),
         ),
         DoC(
@@ -8156,9 +8160,7 @@ fn modulation_steps() -> Vec<Step> {
             Box::new(|c, _| {
                 let listed = c.devices.chains.in_folder(crate::chain_presets::MY_CHAINS).iter().any(|r| r.name == "My Glue");
                 let head = device_where(c, |d| d.label.as_deref() == Some("My Glue"));
-                (listed && head.is_some_and(|h| h.preset.as_deref() == Some("My Glue")))
-                    .then_some(())
-                    .ok_or(format!("listed {listed}"))
+                (listed && head.is_some_and(|h| h.preset.as_deref() == Some("My Glue"))).then_some(()).ok_or(format!("listed {listed}"))
             }),
         ),
         DoC(
@@ -8190,9 +8192,7 @@ fn modulation_steps() -> Vec<Step> {
         ),
         Check(
             "chains: the track is back to its earlier chain",
-            Box::new(|c, _| {
-                device_where(c, |d| d.plugin.id == "glue-compressor").is_none().then_some(()).ok_or("glue left".into())
-            }),
+            Box::new(|c, _| device_where(c, |d| d.plugin.id == "glue-compressor").is_none().then_some(()).ok_or("glue left".into())),
         ),
         DoC(
             "plugin card: add the CLAP test gain, open + Add",

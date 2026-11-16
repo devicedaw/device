@@ -521,7 +521,9 @@ pub fn build_tree(
         // Saved chains first ("My chains"), then the factory folders. A search opens every
         // folder and keeps the chains whose name (or folder) matches.
         for folder in chains.folders() {
-            let fit = |r: &crate::chain_presets::ChainRef| q.is_empty() || r.name.to_lowercase().contains(&q) || folder.to_lowercase().contains(&q);
+            let fit = |r: &crate::chain_presets::ChainRef| {
+                q.is_empty() || r.name.to_lowercase().contains(&q) || folder.to_lowercase().contains(&q)
+            };
             let list: Vec<_> = chains.in_folder(folder).into_iter().filter(fit).collect();
             if list.is_empty() {
                 continue;
@@ -1025,10 +1027,8 @@ impl Controller {
 
     pub fn tree_click(&mut self, i: usize) {
         let Some(e) = self.devices.entries.get(i).cloned() else { return };
-        if e.folder {
-            if self.devices.search.trim().is_empty() && !self.devices.expanded.remove(&e.key) {
-                self.devices.expanded.insert(e.key.clone());
-            }
+        if e.folder && self.devices.search.trim().is_empty() && !self.devices.expanded.remove(&e.key) {
+            self.devices.expanded.insert(e.key.clone());
         }
         self.devices.selected = Some(e.key);
         self.ui_dirty = true;
@@ -1615,7 +1615,8 @@ impl Controller {
     /// folders, the found plugins) to the UI.
     pub(crate) fn push_devices(&mut self, s: &Studio) {
         // ---- browser tree ----
-        let (entries, mut rows) = build_tree(&self.devices.catalog, &self.devices.chains, self.devices.tab, &self.devices.search, &self.devices.expanded);
+        let (entries, mut rows) =
+            build_tree(&self.devices.catalog, &self.devices.chains, self.devices.tab, &self.devices.search, &self.devices.expanded);
         for (e, r) in entries.iter().zip(rows.iter_mut()) {
             r.selected = self.devices.selected.as_deref() == Some(e.key.as_str());
         }

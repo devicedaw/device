@@ -55,8 +55,7 @@ impl ChainPreset {
     /// The devices with ids `first`, `first + 1`, …: members point at the new
     /// head, links at the new members. The head shows the preset name.
     pub fn instantiate(&self, first: u64) -> Vec<Device> {
-        let map: HashMap<DeviceId, DeviceId> =
-            self.devices.iter().enumerate().map(|(i, d)| (d.id, DeviceId(first + i as u64))).collect();
+        let map: HashMap<DeviceId, DeviceId> = self.devices.iter().enumerate().map(|(i, d)| (d.id, DeviceId(first + i as u64))).collect();
         let head = DeviceId(first);
         self.devices
             .iter()
@@ -98,11 +97,8 @@ impl ChainPreset {
 
 /// A file name for a chain called `name` (no path separators or dots in front).
 pub fn file_name(name: &str) -> String {
-    let base: String = name
-        .trim()
-        .chars()
-        .map(|c| if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '&' | '(' | ')') { c } else { '_' })
-        .collect();
+    let base: String =
+        name.trim().chars().map(|c| if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '&' | '(' | ')') { c } else { '_' }).collect();
     let base = base.trim_matches(|c: char| c == ' ' || c == '_');
     format!("{}.json", if base.is_empty() { "Chain" } else { base })
 }
@@ -411,8 +407,8 @@ pub fn factory() -> Vec<(&'static str, ChainPreset)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Track, TrackId, TrackKind};
     use crate::ColorIndex;
+    use crate::model::{Track, TrackId, TrackKind};
 
     #[test]
     fn factory_chains_are_valid_and_named_uniquely() {
