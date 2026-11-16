@@ -213,6 +213,7 @@ void Recorder::open_take(Slot& s, const Marker& m) {
     for (int k = 2; fs::exists(path, ec) && k < 1000; ++k) path = dir / (base + "_" + std::to_string(k) + ".wav");
     t.info.path = os::path_to_utf8(path);
     auto wav = std::make_unique<WavFloatWriter>();
+    if (const uint64_t cap = max_take_bytes_.load(std::memory_order_relaxed); cap != 0) wav->set_max_data_bytes(cap);
     std::string err;
     if (wav->open(t.info.path.c_str(), s.spec.channels, static_cast<uint32_t>(sample_rate_), err) != SE_OK) {
         t.failed = true;
@@ -250,19 +251,28 @@ void Recorder::close_take(Slot& s) {
 void Recorder::append(Slot& s, const float* data, std::size_t frames) {
     if (s.open_take < 0 || frames == 0) return; // data before the first marker cannot happen; be safe
     const uint32_t ch = s.spec.channels;
-    bool failed = false;
+    bool failed = false, kept = false;
     if (s.wav) {
         std::string err;
+        const uint64_t before = s.wav->frames_written();
         if (s.wav->write(data, frames, err) != SE_OK) {
+            // Size limit or I/O error: finalize the header so the frames
+            // written so far survive; the take ends there (truncated).
             failed = true;
-            s.wav.reset(); // file left with a header for 0 frames; the take is reported failed
+            frames = static_cast<std::size_t>(s.wav->frames_written() - before);
+            kept = s.wav->finish(err) == SE_OK;
+            s.wav.reset();
         }
     }
     std::lock_guard lock(info_mutex_);
     Take& t = takes_[static_cast<std::size_t>(s.open_take)];
-    if (failed && !t.failed) {
-        t.failed = true;
+    if (t.truncated) return; // nothing more reaches its file
+    if (failed) {
         write_errors_.fetch_add(1, std::memory_order_relaxed);
+        if (kept)
+            t.truncated = true;
+        else
+            t.failed = true;
     }
     t.info.frames += frames;
     for (std::size_t i = 0; i < frames; ++i) {

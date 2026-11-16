@@ -77,6 +77,16 @@ TEST_CASE(transport_play_pause_seek_stop) {
     out = render(e, 7, 7);
     CHECK(out[2 * 4] == 0.0f && out[2 * 5] == src[0] && out[2 * 6] == src[1]);
     CHECK_EQ(get(e).position, 2);
+
+    // Seeks past SE_MAX_TIMELINE_FRAME are refused (playing on from near
+    // INT64_MAX would overflow the playhead); the position stays.
+    CHECK_EQ(se_transport_seek(e, INT64_MAX - 10), SE_ERR_INVALID_ARG);
+    CHECK_EQ(se_transport_seek(e, INT64_MIN), SE_ERR_INVALID_ARG);
+    CHECK_EQ(se_transport_seek(e, SE_MAX_TIMELINE_FRAME + 1), SE_ERR_INVALID_ARG);
+    CHECK_EQ(get(e).position, 2);
+    REQUIRE(se_transport_seek(e, SE_MAX_TIMELINE_FRAME) == SE_OK);
+    render(e, 64, 64);
+    CHECK_EQ(get(e).position, SE_MAX_TIMELINE_FRAME + 64);
 }
 
 TEST_CASE(transport_queue_overflow_reports_error) {

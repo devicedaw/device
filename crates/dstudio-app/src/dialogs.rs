@@ -9,12 +9,12 @@ use crate::controller::{Controller, sync_model};
 use crate::resample::Resampler;
 use crate::wavgen;
 use dstudio_core::{Project, Ticks, TrackId};
+use dstudio_engine::offline::{self, OfflineError};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 /// Silence rendered after the last bar so reverb and delay tails ring out.
 pub const TAIL_S: f64 = 2.0;
-const CHUNK: usize = 4096;
 /// Tracks menu rows (window points): item row, separator gap, top/bottom padding.
 const MENU_ROW: f32 = 21.0;
 const MENU_GAP: f32 = 7.0;
@@ -875,7 +875,6 @@ impl Controller {
         }
         let metronome_was = std::mem::replace(&mut self.metronome_on, false);
         self.sync_loop_and_click();
-        let mut out = vec![0f32; frames * 2];
         let mix = self.current_snapshot();
         let written = (|| {
             for pass in passes {
@@ -884,13 +883,11 @@ impl Controller {
                 } else if solo_passes {
                     e.publish(&mix).map_err(|e| e.to_string())?;
                 }
-                e.set_loop(false, 0, 0).map_err(|e| e.to_string())?;
-                e.stop().map_err(|e| e.to_string())?;
-                e.seek(start).map_err(|e| e.to_string())?;
-                e.play().map_err(|e| e.to_string())?;
-                for chunk in out.chunks_mut(CHUNK * 2) {
-                    e.render_offline(chunk).map_err(|e| e.to_string())?;
-                }
+                // Aligned to the timeline: plugin latency would otherwise shift the file late.
+                let out = offline::render_aligned(&e, start, frames, |_| Ok(())).map_err(|e| match e {
+                    OfflineError::Failed(why) => why,
+                    OfflineError::Cancelled => "cancelled".into(),
+                })?;
                 e.stop().map_err(|e| e.to_string())?;
                 let converted = resampler.process(&out, 2);
                 format.write(pass.file, out_rate, &converted).map_err(|e| e.to_string())?;

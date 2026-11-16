@@ -8,7 +8,9 @@ use crate::model::{PPQ, TimeSignature};
 pub fn clip_to_smf(clip: &MidiClip, bpm: f64, sig: TimeSignature) -> Vec<u8> {
     let mut events: Vec<(i64, u8, Vec<u8>)> = Vec::new();
     // (tick, order, bytes): at one tick, meta first, then note-offs, then note-ons.
-    let tempo = (60_000_000.0 / bpm.clamp(1.0, 999.0)).round() as u32;
+    // Microseconds per quarter note: a 24-bit field (slower than about 3.6 BPM doesn't fit).
+    let bpm = if bpm.is_finite() { bpm.clamp(1.0, 999.0) } else { 120.0 };
+    let tempo = ((60_000_000.0 / bpm).round() as u32).min(0xFF_FFFF);
     events.push((0, 0, vec![0xFF, 0x51, 3, (tempo >> 16) as u8, (tempo >> 8) as u8, tempo as u8]));
     let denom_pow = (sig.denominator.max(1) as f64).log2().round() as u8;
     events.push((0, 0, vec![0xFF, 0x58, 4, sig.numerator, denom_pow, 24, 8]));
@@ -106,5 +108,14 @@ mod tests {
         // End of track at the clip end (two more beats).
         assert_eq!(&rest[18..], &[0x8F, 0x00, 0xFF, 0x2F, 0]);
         assert_eq!(f.windows(3).filter(|w| w[0] == 0x90 && w[1] == 48).count(), 0);
+    }
+
+    #[test]
+    fn the_tempo_always_fits_its_24_bit_field() {
+        let clip = MidiClip::empty(0, PPQ);
+        let sig = TimeSignature { numerator: 4, denominator: 4 };
+        let tempo = |bpm: f64| clip_to_smf(&clip, bpm, sig)[22 + 4..22 + 7].to_vec();
+        assert_eq!(tempo(2.0), [0xFF, 0xFF, 0xFF]);
+        assert_eq!(tempo(f64::NAN), tempo(120.0));
     }
 }

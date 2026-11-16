@@ -144,6 +144,29 @@ fn bounce_of_a_midi_clip_plays_that_clip_only_and_rings_into_its_tail() {
 }
 
 #[test]
+fn tempo_synced_devices_follow_the_song_tempo_in_quarters_in_compound_meter() {
+    // 6/8 at 90 BPM: a quarter is 32000 frames, so a 1/16 gate step is 8000 (not 4000 from the
+    // eighth-note click, nor 6000 from a 120 BPM default).
+    let mut r = rig(2.0);
+    let (a, asset) = (r.doc.project().tracks[0].id, r.doc.project().assets[0].id);
+    r.doc.execute(Command::SetTempo { bpm: 90.0 }, Origin::User).unwrap();
+    r.doc.execute(Command::SetTimeSignature { numerator: 6, denominator: 8 }, Origin::User).unwrap();
+    let mut gate = dstudio_core::builtin::find("trance-gate").unwrap().instantiate();
+    for (k, v) in [("p1_steps", 2.0), ("p1_lo", 1.0), ("release", 1.0)] {
+        gate.params.insert(k.into(), v); // pattern "x.", 1 ms release
+    }
+    r.doc.execute(Command::AddDevice { track: a, index: None, device: gate }, Origin::User).unwrap();
+    r.doc.execute(Command::AddClip { track: a, clip: audio_clip(asset, 101, 0, 2.0) }, Origin::User).unwrap();
+    let span = render_plan::consolidate_group(r.doc.project(), ClipId(101)).unwrap();
+    let out = r.render(&span, RenderMode::Bounce, 0.0);
+    let l: Vec<f32> = out.iter().step_by(2).copied().collect();
+    let step = 8000;
+    assert!(peak(&l[200..step - 200]) > 0.1, "open in step 0");
+    assert!(peak(&l[step + 200..2 * step]) < 1e-4, "closed in step 1: {}", peak(&l[step + 200..2 * step]));
+    assert!(peak(&l[2 * step + 200..3 * step - 200]) > 0.1, "open again in step 2");
+}
+
+#[test]
 fn a_finished_render_reports_every_frame_done() {
     let mut r = rig(2.0);
     let (a, asset) = (r.doc.project().tracks[0].id, r.doc.project().assets[0].id);
@@ -288,6 +311,76 @@ fn a_latency_plugin_is_rendered_aligned_to_the_timeline() {
         peak(&dry) > 0.2 && worst < 1e-5,
         "the plugin's {n} frames are compensated: the file equals the dry render, worst difference {worst}"
     );
+}
+
+#[test]
+fn an_export_of_the_live_session_through_a_latent_device_lands_on_the_timeline() {
+    // The export dialog renders the app's own engine with `render_aligned`: a clip whose first
+    // sample is an impulse must come out at the clip's frame, not the Limiter's latency later.
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("impulse.wav");
+    write_sine(&wav, 0.5, 0.0, 0.0);
+    let mut b = std::fs::read(&wav).unwrap();
+    b[44..46].copy_from_slice(&16_384i16.to_le_bytes());
+    std::fs::write(&wav, b).unwrap();
+    let mut doc = Document::new(Project::default());
+    let asset = Asset {
+        id: AssetId(0),
+        relative_path: None,
+        absolute_path: wav.to_string_lossy().into(),
+        sample_rate: RATE,
+        channels: 1,
+        frames: (RATE * 0.5) as u64,
+    };
+    doc.execute(Command::AddAsset { asset }, Origin::User).unwrap();
+    let (a, asset) = (doc.project().tracks[0].id, doc.project().assets[0].id);
+    doc.execute(Command::AddClip { track: a, clip: audio_clip(asset, 101, 1, 0.5) }, Origin::User).unwrap();
+    let limiter = dstudio_core::builtin::find("limiter").unwrap().instantiate();
+    doc.execute(Command::AddDevice { track: a, index: None, device: limiter }, Origin::User).unwrap();
+    let engine = Engine::new(Config { sample_rate: RATE, max_block_size: 512 }).unwrap();
+    let info = engine.load_file(&wav).unwrap();
+    engine.publish(&snapshot::build(doc.project(), RATE, &HashMap::from([(asset, info.asset_id)])).0).unwrap();
+    let lead = engine.latency_report().total_frames as usize;
+    assert!(lead > 0, "the Limiter reports its lookahead");
+    let at = doc.project().ticks_to_frames(PPQ, RATE) as usize;
+    let loudest = |x: &[f32]| x.iter().step_by(2).enumerate().fold((0, 0.0f32), |m, (i, v)| if v.abs() > m.1 { (i, v.abs()) } else { m }).0;
+    let frames = 2 * at;
+    let out = offline::render_aligned(&engine, 0, frames, |_| Ok(())).unwrap();
+    assert_eq!(out.len(), frames * 2, "the whole range, the end not cut by the latency");
+    assert_eq!(loudest(&out), at, "the impulse is at the clip's frame");
+    // Rendering exactly `frames` from the start, as the export did, puts it `lead` frames late.
+    engine.stop().unwrap();
+    engine.seek(0).unwrap();
+    engine.play().unwrap();
+    let mut naive = vec![0f32; frames * 2];
+    for chunk in naive.chunks_mut(offline::CHUNK * 2) {
+        engine.render_offline(chunk).unwrap();
+    }
+    assert_eq!(loudest(&naive), at + lead);
+}
+
+#[test]
+fn a_missing_file_on_another_track_does_not_fail_a_clip_render() {
+    let (mut r, span) = audio_rig(None);
+    let missing = Asset {
+        id: AssetId(0),
+        relative_path: None,
+        absolute_path: "/nonexistent/elsewhere.wav".into(),
+        sample_rate: RATE,
+        channels: 1,
+        frames: RATE as u64,
+    };
+    r.doc.execute(Command::AddAsset { asset: missing }, Origin::User).unwrap();
+    let other = r.doc.project().assets[1].id;
+    let color = r.doc.project().tracks[0].color;
+    let track = Track::new(TrackId(0), TrackKind::Audio, "Other", color);
+    r.doc.execute(Command::AddTrack { index: Some(1), track }, Origin::User).unwrap();
+    let ot = r.doc.project().tracks.iter().find(|t| t.name == "Other").unwrap().id;
+    r.doc.execute(Command::AddClip { track: ot, clip: audio_clip(other, 201, 0, 1.0) }, Origin::User).unwrap();
+    for mode in [RenderMode::Material, RenderMode::Bounce, RenderMode::Stem] {
+        let out = offline::render(r.job(&span, mode, 0.0), &AtomicBool::new(false), &AtomicUsize::new(0));
+        assert!(out.as_ref().is_ok_and(|o| peak(o) > 0.2), "{mode:?}: {:?}", out.map(|o| peak(&o)));
+    }
 }
 
 #[test]

@@ -22,7 +22,7 @@
 //! Plugins run in real-time process mode, like in playback: a plugin that sounds different when
 //! it knows it is offline would make the file differ from what the user hears.
 
-use crate::{Config, Engine, EngineError, MetronomeConfig};
+use crate::{Config, Engine, EngineError};
 use dstudio_core::snapshot;
 use dstudio_core::{AssetId, Device, PPQ, PluginFormat, Project, Transient};
 use std::collections::{HashMap, HashSet};
@@ -163,14 +163,8 @@ impl Session {
         if let Some((_, why)) = engine.plugin_load_errors().first() {
             return Err(OfflineError::Failed(format!("a plugin could not be loaded: {why}")));
         }
-        let tr = &p.transport;
-        let frames_per_beat = p.ticks_to_seconds(PPQ * 4 / tr.time_signature.denominator as i64) * job.rate;
-        engine.set_metronome(MetronomeConfig {
-            enabled: false,
-            gain: 0.5,
-            frames_per_beat,
-            beats_per_bar: tr.time_signature.numerator as u32,
-        })?;
+        // The song tempo for tempo-synced devices and plugins, in quarter notes (no click here).
+        engine.set_tempo(p.ticks_to_seconds(PPQ) * job.rate)?;
         let waited = Instant::now();
         while engine.warp_renders_pending() > 0 {
             check()?;
@@ -180,22 +174,40 @@ impl Session {
             engine.plugin_idle();
             std::thread::sleep(Duration::from_millis(2));
         }
-        // The mix of a chain with plugin latency comes out L frames late (delay compensation
-        // aligns the tracks to each other, not to the timeline): render L more, drop the first L.
-        let lead = engine.latency_report().total_frames as usize;
-        engine.set_loop(false, 0, 0)?;
-        engine.stop()?;
-        engine.seek(job.start)?;
-        engine.play()?;
-        let mut out = vec![0f32; (job.frames + lead) * 2];
-        for (i, chunk) in out.chunks_mut(CHUNK * 2).enumerate() {
+        let out = render_aligned(engine, job.start, job.frames, |done| {
             check()?;
-            engine.render_offline(chunk)?;
-            progress.store(((i * CHUNK + chunk.len() / 2).saturating_sub(lead)).min(job.frames), Ordering::Relaxed);
-        }
-        out.drain(..lead * 2);
+            progress.store(done, Ordering::Relaxed);
+            Ok(())
+        })?;
+        progress.store(job.frames, Ordering::Relaxed);
         Ok(out)
     }
+}
+
+/// Plays `engine`'s published session once from timeline frame `start` (no loop) and returns
+/// `frames` stereo frames of the mix, interleaved, aligned to the timeline. The mix of a chain
+/// with plugin latency comes out L frames late (delay compensation aligns the tracks to each
+/// other, not to the timeline), so this renders L more and drops the first L. `step` is called
+/// before each `render_offline` call with the frames of the result done so far; an error from it
+/// stops the render. The transport is left playing.
+pub fn render_aligned(
+    engine: &Engine,
+    start: i64,
+    frames: usize,
+    mut step: impl FnMut(usize) -> Result<(), OfflineError>,
+) -> Result<Vec<f32>, OfflineError> {
+    let lead = engine.latency_report().total_frames as usize;
+    engine.set_loop(false, 0, 0)?;
+    engine.stop()?;
+    engine.seek(start)?;
+    engine.play()?;
+    let mut out = vec![0f32; (frames + lead) * 2];
+    for (i, chunk) in out.chunks_mut(CHUNK * 2).enumerate() {
+        step((i * CHUNK).saturating_sub(lead).min(frames))?;
+        engine.render_offline(chunk)?;
+    }
+    out.drain(..lead * 2);
+    Ok(out)
 }
 
 /// Renders `job` start to finish on the calling thread: a plugin job has to be called from

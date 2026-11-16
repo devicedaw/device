@@ -1075,9 +1075,9 @@ destroy queued instances when
   wraps (+ CC 123 for AU); notes in progress at a new position are not
   re-triggered. Up to 128 sounding notes and 512 events per segment are
   tracked.
-* **Transport info**: tempo = the metronome grid (`se_metronome_set`
-  `frames_per_beat`, remembered even while the metronome is off; 120 BPM if
-  never set), 4/4, playing flag and position: AU host callbacks
+* **Transport info**: tempo = `se_transport_set_tempo` (frames per quarter
+  note, independent of the metronome's click grid and of whether it is on;
+  120 BPM if never set), 4/4, playing flag and position: AU host callbacks
   (`beatAndTempoProc`, `transportStateProc2`), VST3 `ProcessContext`
   (tempo, project time in samples and quarter notes, playing), CLAP
   `clap_event_transport`.
@@ -1117,7 +1117,7 @@ render with plugins is split:
 
 Plugins run in real-time process mode, as in playback (no VST3 `kOffline` or AU offline flag): a
 plugin that sounds different when it knows it is offline would make the file differ from what the user
-hears. The project's tempo is set on the private engine (metronome off) so tempo-synced plugins see it.
+hears. The project's tempo is set on the private engine (`se_transport_set_tempo`) so tempo-synced plugins see it.
 Limits: a plugin's own restart request (CLAP `request_restart`, VST3 `restartComponent`) is ignored for
 the length of a render (its latency stays as prepared); on Windows and Linux, CLAP `request_callback`
 is only served by `se_plugin_idle`, which a detached engine skips (macOS dispatches it to the main queue).
@@ -1761,7 +1761,8 @@ the timeline, so looped and warped clips fade where they play.
   block boundaries; the loop wrap itself is sample-accurate) are not
   implemented.
 * Loop wraps are hard cuts (no crossfade). Tempo changes are not modelled:
-  the metronome grid is a constant `frames_per_beat` from frame 0.
+  the metronome grid is a constant `frames_per_beat` from frame 0, and the
+  song tempo a constant frames per quarter from frame 0.
 * `se_meters_peek` track windows restart at 0 when a snapshot is published
   (same as `se_meters_read`).
 * The resampler is scalar; large imports at a different rate take noticeably

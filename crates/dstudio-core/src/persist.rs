@@ -32,6 +32,8 @@ pub enum PersistError {
     WrongFormat(String),
     #[error("project schema {found} is newer than supported {supported}")]
     TooNew { found: u32, supported: u32 },
+    #[error("damaged project file: {0}")]
+    Damaged(String),
 }
 
 fn io(path: &Path) -> impl FnOnce(std::io::Error) -> PersistError + '_ {
@@ -57,9 +59,10 @@ pub struct Loaded {
 pub fn save(project: &Project, dir: &Path) -> Result<(), PersistError> {
     fs::create_dir_all(dir).map_err(io(dir))?;
     let mut p = project.clone();
-    let abs_dir = absolute(dir);
+    let abs_dir = resolved(dir);
     for a in &mut p.assets {
-        a.relative_path = relative_to(&abs_dir, Path::new(&a.absolute_path));
+        let target = Path::new(&a.absolute_path);
+        a.relative_path = relative_to(&abs_dir, &fs::canonicalize(target).unwrap_or_else(|_| normalize(target)));
     }
     let env = Envelope {
         format: FORMAT.into(),
@@ -92,24 +95,11 @@ pub fn load(dir: &Path) -> Result<Loaded, PersistError> {
         return Err(PersistError::TooNew { found: env.schema_version, supported: SCHEMA_VERSION });
     }
     let value = migrate(env.schema_version, env.project);
-    let mut project: Project = serde_json::from_value(value)?;
-    project.sanitize_routing();
-    // Instrument tracks saved with the classic synth get the Synth device.
-    crate::builtin::synth_v2::upgrade_project(&mut project);
-    // A step pattern the editor can't hold (hand-edited or damaged file) is dropped: the
-    // notes are the clip's content, so the clip loads as plain MIDI with nothing lost.
-    for c in project.tracks.iter_mut().flat_map(|t| &mut t.midi_clips) {
-        if c.pattern.as_ref().is_some_and(|p| p.validate().is_err()) {
-            c.pattern = None;
-        }
-        // Likewise a pattern list the sidebar can't show: the clip keeps the notes it plays.
-        if c.composer.as_ref().is_some_and(|k| k.validate().is_err()) {
-            c.composer = None;
-        }
-    }
+    let mut project = deserialize(value)?;
+    repair(&mut project)?;
     // Resolve media: prefer the project-relative path (project was moved
     // together with its media), fall back to the absolute path.
-    let abs_dir = absolute(dir);
+    let abs_dir = resolved(dir);
     let mut missing = Vec::new();
     for a in &mut project.assets {
         let rel = a.relative_path.as_ref().map(|r| normalize(&abs_dir.join(r)));
@@ -129,6 +119,131 @@ fn migrate(from: u32, value: serde_json::Value) -> serde_json::Value {
         // v1 is current. Future: `0 => migrate(1, v0_to_v1(value))`.
         _ => value,
     }
+}
+
+/// Deserializes the project. A float that was not finite when saved is written as `null`, which
+/// would make the file unreadable; each such `null` loads as 0 instead (and [repair] then puts
+/// the fields it knows back in range), so a project never becomes unloadable through a bad float.
+fn deserialize(value: serde_json::Value) -> Result<Project, PersistError> {
+    let null_float = |e: &serde_json::Error| e.is_data() && e.to_string().starts_with("invalid type: null, expected f");
+    let first = match Project::deserialize(&value) {
+        Ok(p) => return Ok(p),
+        Err(e) if null_float(&e) => e,
+        Err(e) => return Err(e.into()),
+    };
+    // Compact text (one line), so an error's column is a byte offset into it.
+    let mut text = serde_json::to_string(&value)?;
+    for _ in 0..text.matches("null").count() {
+        match serde_json::from_str(&text) {
+            Ok(p) => return Ok(p),
+            Err(e) if null_float(&e) && e.line() == 1 && text.get(..e.column()).is_some_and(|t| t.ends_with("null")) => {
+                text.replace_range(e.column() - 4..e.column(), "0");
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(first.into())
+}
+
+/// Ids from here on leave too little room to allocate new ones; `repair` moves a `next_id`
+/// beyond it back and refuses a project using such an id.
+const MAX_ID: u64 = u64::MAX / 2;
+/// Latest timeline position a loaded clip, note or loop may have (far beyond any real song), so
+/// positions can be added and converted to frames without overflowing.
+const MAX_TICKS: crate::Ticks = 1 << 40;
+
+/// Repairs what a hand-edited, damaged or older file could hold that the commands would never
+/// produce, so the project opens and every edit (and its undo) works: values out of the ranges
+/// the commands accept are clamped, invalid notes dropped or fixed, and the id allocator moved past
+/// every id in use. Valid projects are unchanged. Fails only when the ids are exhausted.
+fn repair(project: &mut Project) -> Result<(), PersistError> {
+    use crate::command::{MAX_BPM, MAX_GAIN, MIN_BPM};
+    use crate::model::{TimeSignature, Track};
+    let fin = |v: f32, lo: f32, hi: f32, default: f32| if v.is_finite() { v.clamp(lo, hi) } else { default };
+
+    project.sanitize_routing();
+    // Instrument tracks saved with the classic synth get the Synth device.
+    crate::builtin::synth_v2::upgrade_project(project);
+
+    // Transport: the same ranges SetTempo, SetTimeSignature and SetLoop accept, so undoing a
+    // change to them can restore the loaded value.
+    let t = &mut project.transport;
+    t.bpm = if t.bpm.is_finite() && t.bpm > 0.0 { t.bpm.clamp(MIN_BPM, MAX_BPM) } else { 120.0 };
+    let ts = t.time_signature;
+    if ts.numerator == 0 || ts.numerator > 32 || ![1, 2, 4, 8, 16, 32].contains(&ts.denominator) {
+        t.time_signature = TimeSignature { numerator: 4, denominator: 4 };
+    }
+    if t.key.is_some_and(|k| k.root > 11) {
+        t.key = None;
+    }
+    t.loop_start = t.loop_start.clamp(0, MAX_TICKS);
+    if t.loop_end <= t.loop_start || t.loop_end > 2 * MAX_TICKS {
+        let ts = t.time_signature;
+        t.loop_end = t.loop_start + 8 * crate::PPQ * 4 * ts.numerator as i64 / ts.denominator as i64;
+    }
+    project.master_gain = fin(project.master_gain, 0.0, MAX_GAIN, 1.0);
+
+    for track in &mut project.tracks {
+        track.gain = fin(track.gain, 0.0, MAX_GAIN, 1.0);
+        track.pan = fin(track.pan, -1.0, 1.0, 0.0);
+        track.trim_db = fin(track.trim_db, Track::TRIM_RANGE_DB.0, Track::TRIM_RANGE_DB.1, 0.0);
+        track.width = fin(track.width, Track::WIDTH_RANGE.0, Track::WIDTH_RANGE.1, 1.0);
+        track.height = fin(track.height, Track::HEIGHT_RANGE.0, Track::HEIGHT_RANGE.1, 1.0);
+        for c in &mut track.clips {
+            c.start = c.start.clamp(0, MAX_TICKS);
+            c.gain = fin(c.gain, 0.0, MAX_GAIN, 1.0);
+        }
+        for c in &mut track.midi_clips {
+            c.start = c.start.clamp(0, MAX_TICKS);
+            c.length = c.length.clamp(1, MAX_TICKS);
+            // The engine refuses a whole session over one note it can't play, so notes the
+            // commands would refuse are fixed where that keeps the note, and dropped otherwise.
+            if crate::midi::validate_notes(&c.notes).is_err() {
+                let mut ids = std::collections::HashSet::new();
+                let mut next = c.notes.iter().map(|n| n.id).max().map_or(1, |m| m.saturating_add(1));
+                c.notes.retain_mut(|n| {
+                    n.velocity = n.velocity.clamp(1, 127);
+                    n.length = n.length.min(MAX_TICKS);
+                    if !ids.insert(n.id) {
+                        n.id = next;
+                        next = next.saturating_add(1);
+                        ids.insert(n.id);
+                    }
+                    n.pitch <= 127 && (0..=MAX_TICKS).contains(&n.start) && n.length > 0
+                });
+            }
+            // A step pattern the editor can't hold is dropped: the notes are the clip's content,
+            // so the clip loads as plain MIDI with nothing lost.
+            if c.pattern.as_ref().is_some_and(|p| p.validate().is_err()) {
+                c.pattern = None;
+            }
+            // Likewise a pattern list the sidebar can't show: the clip keeps the notes it plays.
+            if c.composer.as_ref().is_some_and(|k| k.validate().is_err()) {
+                c.composer = None;
+            }
+        }
+    }
+
+    // Every id the shared allocator hands out: a stale `next_id` would hand out one in use.
+    let ids = project.tracks.iter().flat_map(|t| {
+        let clips = t.clips.iter().map(|c| c.id.0).chain(t.midi_clips.iter().map(|c| c.id.0));
+        let devices = t.devices.iter().chain(t.instrument_plugin.as_ref()).map(|d| d.id.0);
+        std::iter::once(t.id.0).chain(clips).chain(devices)
+    });
+    let max = ids.chain(project.assets.iter().map(|a| a.id.0)).chain(project.sections.iter().map(|s| s.id.0)).max().unwrap_or(0);
+    if max >= MAX_ID {
+        return Err(PersistError::Damaged(format!("id {max} leaves no room for new ids")));
+    }
+    if project.next_id <= max || project.next_id >= MAX_ID {
+        project.next_id = max + 1;
+    }
+    Ok(())
+}
+
+/// The project folder as an absolute path with symlinks and `..` resolved, the way media paths
+/// are stored at import, so the relative media paths saved and resolved against it agree.
+fn resolved(dir: &Path) -> PathBuf {
+    fs::canonicalize(dir).unwrap_or_else(|_| normalize(&absolute(dir)))
 }
 
 fn absolute(p: &Path) -> PathBuf {

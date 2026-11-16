@@ -29,7 +29,7 @@ use crate::dialogs::{TAIL_S, create_free_file, file_safe};
 use crate::peaks::Pyramid;
 use crate::wavgen;
 use dstudio_core::render_plan::{self, ClipSpan, RenderMode};
-use dstudio_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId, TrackKind};
+use dstudio_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, TrackId, TrackKind};
 use dstudio_engine::offline::{self, OfflineError, OfflineRender, Session};
 use dstudio_engine::{AssetInfo, Engine};
 use std::path::{Path, PathBuf};
@@ -629,10 +629,7 @@ impl Controller {
                 let name =
                     p.clip(*source).map(|c| c.name.clone()).or_else(|| p.midi_clip(*source).map(|c| c.name.clone())).unwrap_or_default();
                 let id = TrackId(alloc());
-                let mut t = Track::new(id, TrackKind::Audio, &format!("{} (Bounce)", src.name.trim()), src.color);
-                // The render is taken before the channel strip, so the new track takes it over.
-                (t.gain, t.pan, t.trim_db, t.width, t.mono) = (src.gain, src.pan, src.trim_db, src.width, src.mono);
-                t.automation = src.automation.iter().filter(|l| l.target.is_channel()).cloned().collect();
+                let mut t = render_plan::bounce_track(src, id);
                 t.clips.push(new_clip(name, span.start));
                 cmds.push(Command::AddTrack { index: Some(index + 1), track: t });
                 cmds.push(Command::SetClipEnabled { clip: *source, enabled: false });

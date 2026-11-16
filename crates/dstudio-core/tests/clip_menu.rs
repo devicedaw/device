@@ -1,4 +1,4 @@
-use dstudio_core::midi::Note;
+use dstudio_core::midi::{ClipLoop, Note};
 use dstudio_core::*;
 use std::collections::HashMap;
 
@@ -248,6 +248,49 @@ fn render_project_keeps_one_track_and_the_chosen_clips() {
 }
 
 #[test]
+fn render_project_takes_consolidate_and_bounce_before_a_muted_master() {
+    let (mut d, track) = overlap_doc();
+    d.execute(Command::SetMasterMute { mute: true }, Origin::User).unwrap();
+    let p = d.project();
+    let s = render_plan::consolidate_group(p, ClipId(101)).unwrap();
+    for mode in [render_plan::RenderMode::Material, render_plan::RenderMode::Bounce] {
+        let r = render_plan::render_project(p, &s, mode);
+        let (snap, _) = snapshot::build(&r, 48_000.0, &HashMap::new());
+        assert!(!r.master_mute && snap.master_gain == 1.0, "{mode:?}: a muted master would render (and replace the clips with) silence");
+    }
+    let stem = render_plan::render_project(p, &s, render_plan::RenderMode::Stem);
+    assert!(stem.master_mute, "an export sounds as the stems export does, through the muted master");
+    assert!(p.master_mute && p.track(track).is_some(), "the project is not touched");
+}
+
+#[test]
+fn render_project_keeps_no_clips_samples_or_lanes_on_the_other_tracks() {
+    let (mut d, track) = overlap_doc();
+    let inst = d.project().tracks[1].id;
+    let mut clip = MidiClip::empty(0, 4 * PPQ);
+    clip.notes = vec![Note { id: 1, pitch: 60, start: 0, length: PPQ, velocity: 100 }];
+    d.execute(Command::AddMidiClip { track: inst, clip }, Origin::User).unwrap();
+    let lane =
+        AutomationLane { target: AutomationTarget::Mute, enabled: true, points: vec![AutoPoint { time: 0, value: 0.0, curve: 0.0 }] };
+    d.execute(Command::SetAutomationLane { track: Some(inst), target: AutomationTarget::Mute, lane: Some(lane) }, Origin::User).unwrap();
+    d.execute(Command::SetInstrumentPlugin { track: inst, device: Some(builtin::find("drum-rack").unwrap().instantiate()) }, Origin::User)
+        .unwrap();
+    let dev = d.project().track(inst).unwrap().instrument_plugin.as_ref().unwrap().id;
+    let asset = d.project().assets[0].id;
+    let sample = DeviceSample { slot: 0, asset, name: "kick".into(), slices: vec![] };
+    d.execute(Command::SetDeviceSample { device: dev, slot: 0, sample: Some(sample) }, Origin::User).unwrap();
+    let s = render_plan::consolidate_group(d.project(), ClipId(101)).unwrap();
+    for mode in [render_plan::RenderMode::Material, render_plan::RenderMode::Bounce, render_plan::RenderMode::Stem] {
+        let r = render_plan::render_project(d.project(), &s, mode);
+        let o = r.track(inst).unwrap();
+        assert!(o.mute && o.clips.is_empty() && o.midi_clips.is_empty(), "{mode:?}: a muted track's clips are not loaded");
+        assert!(o.instrument_plugin.as_ref().is_some_and(|i| i.samples.is_empty()), "{mode:?}: nor its samples");
+        assert!(o.automation.is_empty(), "{mode:?}: no mute lane brings the muted track back");
+        assert_eq!(r.track(track).unwrap().clips.len(), 2, "{mode:?}: the span's clips stay");
+    }
+}
+
+#[test]
 fn render_project_clears_devices_only_for_material() {
     let mut d = Document::new(Project::default());
     let track = d.project().tracks[0].id;
@@ -339,6 +382,32 @@ fn merge_midi_plays_pattern_clips_repeated_and_without_muted_rows() {
 }
 
 #[test]
+fn a_bounce_track_sends_and_is_routed_where_its_source_is() {
+    let (mut d, track) = overlap_doc();
+    let group = Track::new(TrackId(0), TrackKind::Group, "Group", ColorIndex(3));
+    d.execute(Command::AddTrack { index: Some(0), track: group }, Origin::User).unwrap();
+    let ret = Track::new(TrackId(0), TrackKind::Return, "Return A", ColorIndex(9));
+    d.execute(Command::AddTrack { index: None, track: ret }, Origin::User).unwrap();
+    let (g, r) = (d.project().tracks[0].id, d.project().tracks.last().unwrap().id);
+    d.execute(Command::SetTrackOutput { track, output: Some(g) }, Origin::User).unwrap();
+    let sends = vec![TrackSend { level: 0.5, pre_fader: true, ..TrackSend::new(r) }];
+    d.execute(Command::SetSends { track, sends: sends.clone() }, Origin::User).unwrap();
+    d.execute(Command::SetTrackGain { track, gain: 0.5 }, Origin::User).unwrap();
+    let before = d.project().clone();
+    let src = d.project().track(track).unwrap();
+    let id = TrackId(d.project().next_id);
+    let t = render_plan::bounce_track(src, id);
+    assert_eq!((t.name.as_str(), t.kind, t.gain), ("Audio (Bounce)", TrackKind::Audio, 0.5));
+    assert_eq!((&t.sends, t.output), (&sends, Some(g)), "the bounce keeps the source's sends and group");
+    let index = d.project().track_index(track).unwrap() + 1;
+    d.execute(Command::AddTrack { index: Some(index), track: t }, Origin::User).unwrap();
+    let added = d.project().track(id).unwrap();
+    assert_eq!((&added.sends, added.output), (&sends, Some(g)));
+    d.undo().unwrap();
+    assert!(d.project().tracks == before.tracks, "one undo removes it");
+}
+
+#[test]
 fn consolidate_and_bounce_batches_are_one_undo_step() {
     let (mut d, track) = overlap_doc();
     let before = d.project().clone();
@@ -404,4 +473,136 @@ fn consolidate_and_bounce_batches_are_one_undo_step() {
         d.project().tracks == before.tracks && d.project().assets == before.assets,
         "one undo removes the track, the asset and the mute"
     );
+}
+
+#[test]
+fn split_refuses_a_one_frame_audio_clip() {
+    // At 1 Hz one frame lasts two beats, so a cut can fall inside a clip one frame long.
+    let mut d = Document::new(Project::default());
+    let track = d.project().tracks[0].id;
+    let asset = Asset {
+        id: AssetId(0),
+        relative_path: None,
+        absolute_path: "/nonexistent/s.wav".into(),
+        sample_rate: 1.0,
+        channels: 1,
+        frames: 10,
+    };
+    d.execute(Command::AddAsset { asset }, Origin::User).unwrap();
+    let a = d.project().assets[0].id;
+    let clip = Clip {
+        id: ClipId(0),
+        asset: a,
+        name: "s".into(),
+        start: 0,
+        source_offset: 0,
+        source_length: 1,
+        gain: 1.0,
+        warp: Default::default(),
+        disabled: false,
+        clip_loop: None,
+        fades: Default::default(),
+        takes: Vec::new(),
+    };
+    d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
+    let c = d.project().tracks[0].clips[0].id;
+    let before = d.project().clone();
+    assert!(d.execute(Command::SplitClip { clip: c, at: PPQ, new_id: ClipId(0) }, Origin::User).is_err());
+    assert_eq!(d.project(), &before);
+}
+
+/// The source frame an audio clip plays at timeline tick `at`, following its loop.
+fn frame_at(p: &Project, c: &Clip, at: Ticks) -> Option<i64> {
+    let rel = at - c.start;
+    if rel < 0 || rel >= p.clip_length_ticks(c) {
+        return None;
+    }
+    let pos = match c.clip_loop.filter(|l| l.on) {
+        Some(l) => {
+            let le = l.end.min(p.content_length_ticks(c));
+            if rel < le { rel } else { l.start + (rel - le) % (le - l.start) }
+        }
+        None => rel,
+    };
+    Some(p.clip_source_at(c, pos as f64).round() as i64)
+}
+
+#[test]
+fn split_looped_audio_clip_keeps_what_plays() {
+    // 4 beats of audio looping beats 1..3, 16 beats on the timeline: the cuts fall before the
+    // loop, in its first pass, in a later repeat and on a repeat boundary.
+    for cut in [PPQ / 2, 2 * PPQ, 9 * PPQ + PPQ / 3, 7 * PPQ] {
+        let (mut d, _, c) = audio_doc();
+        let l = AudioLoop { on: true, start: PPQ, end: 3 * PPQ, length: 16 * PPQ };
+        d.execute(Command::SetClipLoop { clip: c, clip_loop: Some(l) }, Origin::User).unwrap();
+        let fades = ClipFades { fade_in: PPQ / 4, fade_out: PPQ / 4 };
+        d.execute(Command::SetClipFades { clip: c, fades }, Origin::User).unwrap();
+        let before = d.project().clone();
+        let orig = before.tracks[0].clips[0].clone();
+        let at = orig.start + cut;
+        d.execute(Command::SplitClip { clip: c, at, new_id: ClipId(0) }, Origin::User).unwrap();
+        let p = d.project();
+        let parts = &p.tracks[0].clips;
+        assert!(parts.len() >= 2, "cut {cut}");
+        assert_eq!(parts[0].id, c);
+        assert_eq!(parts[0].start + p.clip_length_ticks(&parts[0]), at, "cut {cut}: left part ends at the cut");
+        assert_eq!(parts[1].start, at);
+        for w in parts.windows(2) {
+            assert_eq!(w[0].start + p.clip_length_ticks(&w[0]), w[1].start, "cut {cut}: parts follow each other");
+        }
+        let last = parts.last().unwrap();
+        assert_eq!(last.start + p.clip_length_ticks(last), orig.start + 16 * PPQ, "cut {cut}: ends where the clip ended");
+        assert_eq!((parts[0].fades.fade_in, last.fades.fade_out), (PPQ / 4, PPQ / 4));
+        for t in (orig.start..orig.start + 16 * PPQ).step_by(PPQ as usize / 8) {
+            let want = frame_at(&before, &orig, t).unwrap();
+            let got = parts.iter().find_map(|cl| frame_at(p, cl, t)).unwrap();
+            assert!((want - got).abs() <= 1, "cut {cut}: at tick {t} plays frame {got}, was {want}");
+        }
+        let n = parts.len();
+        d.undo().unwrap();
+        assert_eq!(d.project().tracks, before.tracks, "cut {cut}");
+        d.redo().unwrap();
+        assert_eq!(d.project().tracks[0].clips.len(), n);
+    }
+}
+
+#[test]
+fn split_looped_midi_clip_keeps_its_repeats() {
+    let mut d = Document::new(Project::default());
+    let inst = d.project().tracks[1].id;
+    let mut clip = MidiClip::empty(PPQ, 4 * PPQ);
+    clip.notes = vec![
+        Note { id: 1, pitch: 60, start: 0, length: PPQ / 2, velocity: 100 },
+        Note { id: 2, pitch: 62, start: PPQ / 2, length: PPQ, velocity: 90 },
+    ];
+    d.execute(Command::AddMidiClip { track: inst, clip }, Origin::User).unwrap();
+    let c = d.project().tracks[1].midi_clips[0].id;
+    // Loop the first beat over four beats: the notes repeat on every beat.
+    let l = ClipLoop { on: true, start: 0, end: PPQ, span: 0 };
+    d.execute(Command::SetMidiLoop { clip: c, clip_loop: Some(l), length: 4 * PPQ }, Origin::User).unwrap();
+    let before = d.project().clone();
+    let playing = |p: &Project| {
+        let mut v: Vec<_> = p.tracks[1]
+            .midi_clips
+            .iter()
+            .flat_map(|cl| cl.tiled_notes().into_iter().map(|n| (cl.start + n.start, n.length, n.pitch)))
+            .collect();
+        v.sort();
+        v
+    };
+    d.execute(Command::SplitClip { clip: c, at: PPQ + 2 * PPQ + PPQ / 4, new_id: ClipId(0) }, Origin::User).unwrap();
+    assert_eq!(d.project().tracks[1].midi_clips.len(), 2);
+    let mut want = playing(&before);
+    // The note that crosses the cut plays as two notes.
+    let crossing = want.iter().position(|&(s, _, pitch)| s == 3 * PPQ && pitch == 60).unwrap();
+    let (s, len, pitch) = want.remove(crossing);
+    let cut = PPQ + 2 * PPQ + PPQ / 4;
+    want.extend([(s, cut - s, pitch), (cut, s + len - cut, pitch)]);
+    want.sort();
+    assert_eq!(playing(d.project()), want);
+    for cl in &d.project().tracks[1].midi_clips {
+        midi::validate_notes(&cl.notes).unwrap();
+    }
+    d.undo().unwrap();
+    assert_eq!(d.project().tracks, before.tracks);
 }

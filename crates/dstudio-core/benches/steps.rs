@@ -63,9 +63,8 @@ fn main() {
             let track = if t == 0 {
                 inst
             } else {
-                let mut tr = d.project().tracks[1].clone();
-                tr.id = TrackId(0);
-                tr.midi_clips.clear();
+                // A copy with fresh ids: AddTrack refuses device ids already in use.
+                let tr = d.project().track_copy(inst, false).unwrap();
                 d.execute(Command::AddTrack { index: None, track: tr }, Origin::User).unwrap();
                 d.project().tracks.last().unwrap().id
             };

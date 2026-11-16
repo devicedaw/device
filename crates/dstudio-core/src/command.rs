@@ -63,6 +63,10 @@ fn invalid(field: &'static str, reason: impl Into<String>) -> EditError {
 pub const MAX_GAIN: f32 = 3.981_071_7; // +12 dB
 pub const MIN_BPM: f64 = 20.0;
 pub const MAX_BPM: f64 = 999.0;
+/// Latest clip start and longest clip length, in ticks: far past any song (over 10 000 hours
+/// at the fastest tempo), and small enough that a clip's end and its position in frames
+/// cannot overflow.
+pub const MAX_TICKS: Ticks = 1 << 40;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -75,6 +79,14 @@ pub enum Command {
     },
     RemoveTrack {
         track: TrackId,
+    },
+    /// The undo of `RemoveTrack`: puts the track back exactly as it was, at `index`, without
+    /// the Synth `AddTrack` gives an instrument track that has no instrument. Not accepted from
+    /// outside.
+    #[serde(skip_deserializing)]
+    RestoreTrack {
+        index: usize,
+        track: Track,
     },
     /// A new name, trimmed, 1..=128 characters.
     RenameTrack {
@@ -192,7 +204,11 @@ pub enum Command {
     /// Cut an audio or MIDI clip in two at the absolute timeline position at.
     /// The left part keeps the clip's id; the right part gets new_id (0 means
     /// allocate) and the same name. MIDI notes that cross the cut are cut in
-    /// two. Refused for warped or reversed audio clips and for pattern clips.
+    /// two. A looping clip is cut as it plays: a looping MIDI clip's repeats become notes of
+    /// the parts; an audio clip cut inside its looped range gets a third part (the next free
+    /// id) so that the right part can finish the loop pass and the third loop from the range's
+    /// start. Refused for warped or reversed audio clips, for pattern clips and where a part
+    /// would hold no audio.
     SplitClip {
         clip: ClipId,
         at: Ticks,
@@ -454,7 +470,7 @@ impl Command {
     /// titles the action, e.g. "Undo Shortcut Change").
     pub fn label(&self) -> String {
         match self {
-            Command::AddTrack { track, .. } => format!("Add {} Track", kind_name(track.kind)),
+            Command::AddTrack { track, .. } | Command::RestoreTrack { track, .. } => format!("Add {} Track", kind_name(track.kind)),
             Command::RemoveTrack { .. } => "Delete Track".into(),
             Command::RenameTrack { .. } | Command::RestoreTrackName { .. } => "Rename Track".into(),
             Command::MoveTrack { .. } => "Move Track".into(),
@@ -561,56 +577,8 @@ impl Command {
     /// Validate and apply; returns the inverse command. On error the project is unchanged.
     pub fn apply(self, p: &mut Project) -> Result<Command, EditError> {
         match self {
-            Command::AddTrack { index, mut track } => {
-                if track.id.0 != 0 && p.track(track.id).is_some() {
-                    return Err(EditError::DuplicateId(track.id.0));
-                }
-                validate_gain("gain", track.gain)?;
-                validate_pan(track.pan)?;
-                validate_trim(track.trim_db)?;
-                validate_width(track.width)?;
-                for c in &track.clips {
-                    validate_clip(p, c)?;
-                }
-                // Ordinary tracks come first, then the returns.
-                let ordinary = p.ordinary_track_count();
-                if track.is_bus() {
-                    if !track.clips.is_empty()
-                        || !track.midi_clips.is_empty()
-                        || track.instrument_plugin.is_some()
-                        || track.arm
-                        || track.monitor
-                        || track.input.is_some()
-                    {
-                        return Err(invalid("track", "a return or group track has no clips, instrument or input"));
-                    }
-                    // Returns and groups each take one of the engine's buses.
-                    if p.tracks.iter().filter(|t| t.is_bus()).count() >= MAX_RETURNS {
-                        return Err(invalid("track", format!("at most {MAX_RETURNS} return and group tracks")));
-                    }
-                }
-                let (lo, hi) = if track.is_return() { (ordinary, p.tracks.len()) } else { (0, ordinary) };
-                let idx = index.unwrap_or(hi);
-                if idx < lo || idx > hi {
-                    return Err(invalid("index", format!("{idx} is outside {lo}..={hi}")));
-                }
-                validate_routing(p, track.id, track.kind, &track.sends, track.output)?;
-                if track.id.0 == 0 {
-                    track.id = TrackId(p.alloc_id());
-                }
-                let ids = track
-                    .clips
-                    .iter()
-                    .map(|c| c.id.0)
-                    .chain(track.midi_clips.iter().map(|c| c.id.0))
-                    .chain(track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id.0));
-                p.next_id = ids.chain([track.id.0]).fold(p.next_id, |n, id| n.max(id + 1));
-                let id = track.id;
-                p.tracks.insert(idx, track);
-                // A new instrument track plays the built-in Synth.
-                crate::builtin::synth_v2::upgrade_track(p, idx);
-                Ok(Command::RemoveTrack { track: id })
-            }
+            Command::AddTrack { index, track } => add_track(p, index, track, false),
+            Command::RestoreTrack { index, track } => add_track(p, Some(index), track, true),
             Command::RemoveTrack { track } => {
                 let idx = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
                 // Sends to a removed return go with it, outputs routed to it fall back to the master.
@@ -625,7 +593,7 @@ impl Command {
                     }
                 }
                 let t = p.tracks.remove(idx);
-                let add = Command::AddTrack { index: Some(idx), track: t };
+                let add = Command::RestoreTrack { index: idx, track: t };
                 if restore.is_empty() {
                     return Ok(add);
                 }
@@ -822,9 +790,7 @@ impl Command {
                 Ok(Command::AddClip { track, clip: c })
             }
             Command::MoveClip { clip, track, start } => {
-                if start < 0 {
-                    return Err(invalid("start", "must be >= 0"));
-                }
+                validate_start(start)?;
                 let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let dest = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
                 if p.tracks[dest].kind != p.tracks[ti].kind {
@@ -960,9 +926,7 @@ impl Command {
                 Ok(Command::AddMidiClip { track, clip: c })
             }
             Command::MoveMidiClip { clip, track, start } => {
-                if start < 0 {
-                    return Err(invalid("start", "must be >= 0"));
-                }
+                validate_start(start)?;
                 let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let dest = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
                 if p.tracks[dest].kind != TrackKind::Instrument {
@@ -976,9 +940,7 @@ impl Command {
                 Ok(Command::MoveMidiClip { clip, track: old_track, start: old_start })
             }
             Command::ResizeMidiClip { clip, start, length } => {
-                if start < 0 || length <= 0 {
-                    return Err(invalid("clip", "requires start >= 0 and length > 0"));
-                }
+                validate_span(start, length)?;
                 let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let c = &mut p.tracks[ti].midi_clips[ci];
                 let inv = Command::ResizeMidiClip { clip, start: c.start, length: c.length };
@@ -1022,8 +984,8 @@ impl Command {
                 if let Some(l) = &clip_loop {
                     l.validate().map_err(|r| invalid("loop", r))?;
                 }
-                if length <= 0 {
-                    return Err(invalid("clip", "requires length > 0"));
+                if !(1..=MAX_TICKS).contains(&length) {
+                    return Err(invalid("clip", format!("requires length 1..={MAX_TICKS}")));
                 }
                 let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let c = &mut p.tracks[ti].midi_clips[ci];
@@ -1609,46 +1571,109 @@ fn validate_pan(pan: f32) -> Result<(), EditError> {
     Ok(())
 }
 
+/// Insert a track: `AddTrack`, or with `restore` the undo of `RemoveTrack`, which puts the
+/// track back as it was.
+fn add_track(p: &mut Project, index: Option<usize>, mut track: Track, restore: bool) -> Result<Command, EditError> {
+    if track.id.0 != 0 && p.track(track.id).is_some() {
+        return Err(EditError::DuplicateId(track.id.0));
+    }
+    validate_gain("gain", track.gain)?;
+    validate_pan(track.pan)?;
+    validate_trim(track.trim_db)?;
+    validate_width(track.width)?;
+    for c in &track.clips {
+        validate_clip(p, c)?;
+    }
+    if !restore {
+        validate_new_track_content(p, &track)?;
+    }
+    // Ordinary tracks come first, then the returns.
+    let ordinary = p.ordinary_track_count();
+    if track.is_bus() {
+        if !track.clips.is_empty()
+            || !track.midi_clips.is_empty()
+            || track.instrument_plugin.is_some()
+            || track.arm
+            || track.monitor
+            || track.input.is_some()
+        {
+            return Err(invalid("track", "a return or group track has no clips, instrument or input"));
+        }
+        // Returns and groups each take one of the engine's buses.
+        if p.tracks.iter().filter(|t| t.is_bus()).count() >= MAX_RETURNS {
+            return Err(invalid("track", format!("at most {MAX_RETURNS} return and group tracks")));
+        }
+    }
+    let (lo, hi) = if track.is_return() { (ordinary, p.tracks.len()) } else { (0, ordinary) };
+    let idx = index.unwrap_or(hi);
+    if idx < lo || idx > hi {
+        return Err(invalid("index", format!("{idx} is outside {lo}..={hi}")));
+    }
+    validate_routing(p, track.id, track.kind, &track.sends, track.output)?;
+    if track.id.0 == 0 {
+        track.id = TrackId(p.alloc_id());
+    }
+    let ids = track
+        .clips
+        .iter()
+        .map(|c| c.id.0)
+        .chain(track.midi_clips.iter().map(|c| c.id.0))
+        .chain(track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id.0));
+    p.next_id = ids.chain([track.id.0]).fold(p.next_id, |n, id| n.max(id + 1));
+    let id = track.id;
+    if !restore {
+        // New clips and devices without an id get one (a restored track keeps its own).
+        for c in &mut track.clips {
+            if c.id.0 == 0 {
+                c.id = ClipId(p.alloc_id());
+            }
+        }
+        for c in &mut track.midi_clips {
+            if c.id.0 == 0 {
+                c.id = ClipId(p.alloc_id());
+            }
+        }
+        for d in track.devices.iter_mut().chain(track.instrument_plugin.as_mut()) {
+            if d.id.0 == 0 {
+                d.id = DeviceId(p.alloc_id());
+            }
+        }
+    }
+    p.tracks.insert(idx, track);
+    // A new instrument track plays the built-in Synth.
+    if !restore {
+        crate::builtin::synth_v2::upgrade_track(p, idx);
+    }
+    Ok(Command::RemoveTrack { track: id })
+}
+
+/// A new track's MIDI clips are valid, and its clip and device ids (other than 0, which
+/// means allocate one) are not used anywhere else.
+fn validate_new_track_content(p: &Project, track: &Track) -> Result<(), EditError> {
+    for c in &track.midi_clips {
+        validate_midi_clip(c)?;
+    }
+    let mut clip_ids = std::collections::HashSet::new();
+    for id in track.clips.iter().map(|c| c.id).chain(track.midi_clips.iter().map(|c| c.id)).filter(|id| id.0 != 0) {
+        if p.clip_id_in_use(id) || !clip_ids.insert(id) {
+            return Err(EditError::DuplicateId(id.0));
+        }
+    }
+    let mut device_ids = std::collections::HashSet::new();
+    for id in track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id).filter(|id| id.0 != 0) {
+        if p.find_device(id).is_some() || !device_ids.insert(id) {
+            return Err(EditError::DuplicateId(id.0));
+        }
+    }
+    Ok(())
+}
+
 fn split_clip(p: &mut Project, clip: ClipId, at: Ticks, new_id: ClipId) -> Result<Command, EditError> {
     if new_id.0 != 0 && p.clip_id_in_use(new_id) {
         return Err(EditError::DuplicateId(new_id.0));
     }
     if let Some((ti, ci)) = p.find_clip(clip) {
-        let c = p.tracks[ti].clips[ci].clone();
-        if c.warp.enabled || c.warp.reverse {
-            return Err(invalid("clip", "warped or reversed clips cannot be split"));
-        }
-        if at <= c.start || at >= c.start + p.clip_length_ticks(&c) {
-            return Err(invalid("at", "must fall inside the clip"));
-        }
-        let cut =
-            (p.clip_source_at(&c, (at - c.start) as f64).round() as u64).clamp(c.source_offset + 1, c.source_offset + c.source_length - 1);
-        let new_id = if new_id.0 == 0 { ClipId(p.alloc_id()) } else { new_id };
-        p.next_id = p.next_id.max(new_id.0 + 1);
-        // The left part keeps the fade-in, the right part the fade-out (each within its part).
-        let fades = c.fades.clamped(p.clip_length_ticks(&c));
-        let right_fades = ClipFades { fade_in: 0, fade_out: fades.fade_out };
-        let right = Clip {
-            id: new_id,
-            start: at,
-            source_offset: cut,
-            source_length: c.source_offset + c.source_length - cut,
-            fades: right_fades,
-            ..c.clone()
-        };
-        let t = &mut p.tracks[ti];
-        t.clips[ci].source_length = cut - c.source_offset;
-        t.clips[ci].fades = ClipFades { fade_in: fades.fade_in, fade_out: 0 };
-        t.clips.push(right);
-        t.clips.sort_by_key(|c| (c.start, c.id));
-        return Ok(Command::Batch {
-            label: "Split Clip".into(),
-            commands: vec![
-                Command::RemoveClip { clip: new_id },
-                Command::TrimClip { clip, start: c.start, source_offset: c.source_offset, source_length: c.source_length },
-                Command::SetClipFades { clip, fades: c.fades },
-            ],
-        });
+        return split_audio_clip(p, ti, ci, at, new_id);
     }
     let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
     let c = p.tracks[ti].midi_clips[ci].clone();
@@ -1659,9 +1684,29 @@ fn split_clip(p: &mut Project, clip: ClipId, at: Ticks, new_id: ClipId) -> Resul
         return Err(invalid("at", "must fall inside the clip"));
     }
     let rel = at - c.start;
+    // A looping clip is cut as it plays: its repeats become notes of the parts, which then
+    // loop over themselves as a new clip does. Repeated notes get fresh ids.
+    let looped = c.clip_loop.is_some_and(|l| l.on);
+    let notes = if looped {
+        let mut next = c.next_note_id();
+        let mut seen = std::collections::HashSet::new();
+        c.tiled_notes()
+            .into_iter()
+            .map(|n| {
+                if seen.insert(n.id) {
+                    n
+                } else {
+                    next += 1;
+                    Note { id: next - 1, ..n }
+                }
+            })
+            .collect()
+    } else {
+        c.notes.clone()
+    };
     let mut left_notes = Vec::new();
     let mut right_notes = Vec::new();
-    for n in c.notes.iter().filter(|n| n.start < c.length) {
+    for n in notes.iter().filter(|n| n.start < c.length) {
         let end = (n.start + n.length).min(c.length);
         if end <= rel {
             left_notes.push(*n);
@@ -1672,28 +1717,128 @@ fn split_clip(p: &mut Project, clip: ClipId, at: Ticks, new_id: ClipId) -> Resul
             right_notes.push(Note { start: 0, length: end - rel, ..*n });
         }
     }
+    midi::sort_notes(&mut left_notes);
+    midi::sort_notes(&mut right_notes);
+    let part_loop = |len| if looped { Some(midi::ClipLoop::whole(len)) } else { c.clip_loop };
     let new_id = if new_id.0 == 0 { ClipId(p.alloc_id()) } else { new_id };
     p.next_id = p.next_id.max(new_id.0 + 1);
-    let right = MidiClip { id: new_id, start: at, length: c.length - rel, notes: right_notes, ..c.clone() };
+    let right =
+        MidiClip { id: new_id, start: at, length: c.length - rel, notes: right_notes, clip_loop: part_loop(c.length - rel), ..c.clone() };
+    let track = p.tracks[ti].id;
     let t = &mut p.tracks[ti];
     t.midi_clips[ci].length = rel;
     t.midi_clips[ci].notes = left_notes;
+    t.midi_clips[ci].clip_loop = part_loop(rel);
     t.midi_clips.push(right);
     t.midi_clips.sort_by_key(|c| (c.start, c.id));
     Ok(Command::Batch {
         label: "Split Clip".into(),
-        commands: vec![
-            Command::RemoveMidiClip { clip: new_id },
-            Command::SetMidiContent { clip, notes: c.notes.clone(), pattern: None },
-            Command::ResizeMidiClip { clip, start: c.start, length: c.length },
-        ],
+        commands: vec![Command::RemoveMidiClip { clip: new_id }, Command::RemoveMidiClip { clip }, Command::AddMidiClip { track, clip: c }],
     })
 }
 
-fn validate_midi_clip(c: &MidiClip) -> Result<(), EditError> {
-    if c.start < 0 || c.length <= 0 {
-        return Err(invalid("clip", "requires start >= 0 and length > 0"));
+/// [split_clip] for the audio clip at (ti, ci). A looping clip is cut as it plays: the left
+/// part plays up to the cut, and the rest of the loop pass the cut falls in (when it falls
+/// inside the looped range) becomes a part of its own, followed by a part that loops the range
+/// from its start. That part gets the next free id.
+fn split_audio_clip(p: &mut Project, ti: usize, ci: usize, at: Ticks, new_id: ClipId) -> Result<Command, EditError> {
+    let c = p.tracks[ti].clips[ci].clone();
+    if c.warp.enabled || c.warp.reverse {
+        return Err(invalid("clip", "warped or reversed clips cannot be split"));
     }
+    let len = p.clip_length_ticks(&c);
+    if at <= c.start || at >= c.start + len {
+        return Err(invalid("at", "must fall inside the clip"));
+    }
+    let src_end = c.source_offset + c.source_length;
+    let frame = |ticks: Ticks| (p.clip_source_at(&c, ticks as f64).round() as u64).clamp(c.source_offset, src_end);
+    let too_short = || invalid("at", "the clip is too short to split there");
+    let rel = at - c.start;
+    // (timeline start, first content tick, source end, loop) of each part after the cut.
+    let mut parts: Vec<(Ticks, u64, u64, Option<AudioLoop>)> = Vec::new();
+    let mut left = c.clone();
+    match c.clip_loop.filter(|l| l.on) {
+        None => {
+            if c.source_length < 2 {
+                return Err(too_short());
+            }
+            let cut = frame(rel).clamp(c.source_offset + 1, src_end - 1);
+            left.source_length = cut - c.source_offset;
+            parts.push((at, cut, src_end, c.clip_loop));
+        }
+        Some(l) => {
+            // The loop as it plays: its end is cut at the end of the audio.
+            let le = l.end.min(p.content_length_ticks(&c));
+            if le - l.start <= 0 {
+                return Err(invalid("clip", "the loop lies past the end of the clip's audio"));
+            }
+            left.clip_loop = Some(AudioLoop { length: rel, ..l });
+            // A part that plays the content from `from`, then loops the range, until the end.
+            let looping = |start: Ticks, from: Ticks| {
+                (
+                    start,
+                    frame(from),
+                    src_end,
+                    Some(AudioLoop { on: true, start: l.start - from, end: l.end - from, length: c.start + len - start }),
+                )
+            };
+            let pos = if rel < le { rel } else { l.start + (rel - le) % (le - l.start) };
+            if pos <= l.start {
+                parts.push(looping(at, pos));
+            } else {
+                // The rest of this pass, then the loop from its start.
+                let rest = (le - pos).min(len - rel);
+                parts.push((at, frame(pos), frame(pos + rest), None));
+                if rel + rest < len {
+                    parts.push(looping(at + rest, l.start));
+                }
+            }
+        }
+    }
+    if parts.iter().any(|&(_, from, to, _)| to <= from) {
+        return Err(too_short());
+    }
+    let fades = c.fades.clamped(len);
+    left.fades = ClipFades { fade_in: fades.fade_in, fade_out: 0 };
+    let n = parts.len();
+    let mut ids = Vec::with_capacity(n);
+    let parts: Vec<Clip> = parts
+        .into_iter()
+        .enumerate()
+        .map(|(i, (start, from, to, clip_loop))| {
+            let id = if i == 0 && new_id.0 != 0 { new_id } else { ClipId(p.alloc_id()) };
+            p.next_id = p.next_id.max(id.0 + 1);
+            ids.push(id);
+            let fades = ClipFades { fade_in: 0, fade_out: if i + 1 == n { fades.fade_out } else { 0 } };
+            Clip { id, start, source_offset: from, source_length: to - from, clip_loop, fades, ..c.clone() }
+        })
+        .collect();
+    let track = p.tracks[ti].id;
+    let t = &mut p.tracks[ti];
+    t.clips[ci] = left;
+    t.clips.extend(parts);
+    t.clips.sort_by_key(|c| (c.start, c.id));
+    let mut commands: Vec<Command> = ids.into_iter().rev().map(|clip| Command::RemoveClip { clip }).collect();
+    commands.extend([Command::RemoveClip { clip: c.id }, Command::AddClip { track, clip: c }]);
+    Ok(Command::Batch { label: "Split Clip".into(), commands })
+}
+
+fn validate_start(start: Ticks) -> Result<(), EditError> {
+    if !(0..=MAX_TICKS).contains(&start) {
+        return Err(invalid("start", format!("must be in 0..={MAX_TICKS}")));
+    }
+    Ok(())
+}
+
+fn validate_span(start: Ticks, length: Ticks) -> Result<(), EditError> {
+    if !(0..=MAX_TICKS).contains(&start) || !(1..=MAX_TICKS).contains(&length) {
+        return Err(invalid("clip", format!("requires start 0..={MAX_TICKS} and length 1..={MAX_TICKS}")));
+    }
+    Ok(())
+}
+
+fn validate_midi_clip(c: &MidiClip) -> Result<(), EditError> {
+    validate_span(c.start, c.length)?;
     midi::validate_notes(&c.notes).map_err(|r| invalid("notes", r))?;
     match &c.pattern {
         Some(p) => p.validate().map_err(|r| invalid("pattern", r)),
@@ -1703,9 +1848,7 @@ fn validate_midi_clip(c: &MidiClip) -> Result<(), EditError> {
 
 fn validate_clip(p: &Project, c: &Clip) -> Result<(), EditError> {
     let a = p.asset(c.asset).ok_or(EditError::AssetNotFound(c.asset))?;
-    if c.start < 0 {
-        return Err(invalid("start", "must be >= 0"));
-    }
+    validate_start(c.start)?;
     if c.source_length == 0 {
         return Err(invalid("source_length", "must be > 0"));
     }
