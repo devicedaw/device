@@ -11352,9 +11352,11 @@ fn section_steps() -> Vec<Step> {
             "the marker takes the colour in one undo step",
             Box::new(|c, _| {
                 let s = c.project().sections.first().ok_or("no marker")?;
-                (s.color == crate::sections::PALETTE[12] && c.doc.undo_label() == Some("Section Color"))
-                    .then_some(())
-                    .ok_or(format!("color {:06x} undo {:?}", s.color, c.doc.undo_label()))
+                (s.color == crate::sections::PALETTE[12] && c.doc.undo_label() == Some("Section Color")).then_some(()).ok_or(format!(
+                    "color {:06x} undo {:?}",
+                    s.color,
+                    c.doc.undo_label()
+                ))
             }),
         ),
         DoC(
