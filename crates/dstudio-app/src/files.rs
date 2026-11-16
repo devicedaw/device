@@ -1,4 +1,7 @@
-//! Browser › Files (Projects and Folders) and the browser's Back / Forward history.
+//! Browser › Projects and Browser › Files (Folders), and the browser's Back / Forward history.
+//!
+//! Both are the Files section internally (tabs [TAB_PROJECTS] and [TAB_FOLDERS]); the browser
+//! shows them as two of its five section tabs: Search, Library, Projects, Devices, Files.
 //!
 //! Projects lists the `.dsproj` folders in the projects folder; a project expands to the
 //! tracks, audio files and MIDI clips it held when last saved. Folders lists folders the user
@@ -24,6 +27,11 @@ pub const TAB_FOLDERS: usize = 1;
 /// Panel-relative y of the rule under the tabs (no count row) and under the count row.
 pub const LIST_Y: f32 = 81.0;
 pub const LIST_Y_META: f32 = 96.0;
+/// The same for Projects, which has no sub-tab row under its search field.
+pub const PROJECTS_LIST_Y: f32 = 62.0;
+pub const PROJECTS_LIST_Y_META: f32 = 81.0;
+/// Browser section tabs, left to right.
+pub const TOP_TABS: [&str; 5] = ["Search", "Library", "Projects", "Devices", "Files"];
 /// Row metrics (100%-zoom px × 0.85): 24 px rows 2 px apart, 20 px group labels, 4 px list padding.
 pub const ROW_H: f32 = 20.4;
 pub const GAP: f32 = 1.7;
@@ -518,6 +526,26 @@ impl Controller {
         }
     }
 
+    /// Section tab `i` of [TOP_TABS] (Search and Library have no content yet).
+    pub fn browser_top(&mut self, i: usize) {
+        match i {
+            2 => self.files_tab(TAB_PROJECTS),
+            3 => self.browser_section(SECTION_DEVICES),
+            4 => self.files_tab(TAB_FOLDERS),
+            _ => {}
+        }
+    }
+
+    /// Index into [TOP_TABS] of the section shown.
+    pub fn browser_top_index(&self) -> usize {
+        match (self.files.section, self.files.tab) {
+            (SECTION_FILES, TAB_PROJECTS) => 2,
+            (SECTION_FILES, _) => 4,
+            (SECTION_DEVICES, _) => 3,
+            (s, _) => s,
+        }
+    }
+
     pub fn files_tab(&mut self, tab: usize) {
         self.browser_visit(Loc { section: SECTION_FILES, tab: tab.min(TAB_FOLDERS) });
     }
@@ -655,7 +683,13 @@ impl Controller {
 
     /// Panel-relative y of the rule above the rows.
     pub fn files_list_y(&self) -> f32 {
-        if top_items(&self.files, &self.settings.prefs.browser_folders).is_empty() { LIST_Y } else { LIST_Y_META }
+        let meta = !top_items(&self.files, &self.settings.prefs.browser_folders).is_empty();
+        match (self.files.tab == TAB_PROJECTS, meta) {
+            (true, false) => PROJECTS_LIST_Y,
+            (true, true) => PROJECTS_LIST_Y_META,
+            (false, false) => LIST_Y,
+            (false, true) => LIST_Y_META,
+        }
     }
 
     /// Row drag: phase 0 press, 1 move, 2 release (window coordinates).
@@ -1004,6 +1038,7 @@ impl Controller {
         sync_model(&self.files_model, built.rows);
         sync_model(&self.files_guides_model, built.guides);
         s.set_browser_section(self.files.section as i32);
+        s.set_browser_top(self.browser_top_index() as i32);
         s.set_browser_can_back(self.files.nav.can_back());
         s.set_browser_can_forward(self.files.nav.can_forward());
         s.set_files_tab(self.files.tab as i32);
