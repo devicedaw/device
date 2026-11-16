@@ -30,8 +30,6 @@ pub const LIST_Y_META: f32 = 96.0;
 /// The same for Projects, which has no sub-tab row under its search field.
 pub const PROJECTS_LIST_Y: f32 = 62.0;
 pub const PROJECTS_LIST_Y_META: f32 = 81.0;
-/// Browser section tabs, left to right.
-pub const TOP_TABS: [&str; 5] = ["Search", "Library", "Projects", "Devices", "Files"];
 /// Row metrics (100%-zoom px × 0.85): 24 px rows 2 px apart, 20 px group labels, 4 px list padding.
 pub const ROW_H: f32 = 20.4;
 pub const GAP: f32 = 1.7;
@@ -526,7 +524,8 @@ impl Controller {
         }
     }
 
-    /// Section tab `i` of [TOP_TABS] (Search and Library have no content yet).
+    /// Top tab `i`: 0 Search, 1 Library, 2 Projects, 3 Devices, 4 Files (Search and Library have no
+    /// content yet).
     pub fn browser_top(&mut self, i: usize) {
         match i {
             2 => self.files_tab(TAB_PROJECTS),
@@ -536,7 +535,7 @@ impl Controller {
         }
     }
 
-    /// Index into [TOP_TABS] of the section shown.
+    /// The top tab (as in `browser_top`) of the section shown.
     pub fn browser_top_index(&self) -> usize {
         match (self.files.section, self.files.tab) {
             (SECTION_FILES, TAB_PROJECTS) => 2,

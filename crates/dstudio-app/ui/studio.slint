@@ -530,7 +530,7 @@ export global Studio {
     in property <string> files-empty-hint;
     callback browser-section-select(int);
     callback browser-top-select(int);                         // section tab: 0 Search … 2 Projects, 3 Devices, 4 Files
-    in property <int> browser-top: 3;                        // section tab shown (src/files.rs TOP_TABS)
+    in property <int> browser-top: 3;                        // top tab shown: 0 Search … 4 Files (Controller::browser_top)
     callback browser-back();
     callback browser-forward();
     callback files-tab-select(int);
