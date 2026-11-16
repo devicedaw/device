@@ -180,22 +180,40 @@ impl Session {
             engine.plugin_idle();
             std::thread::sleep(Duration::from_millis(2));
         }
-        // The mix of a chain with plugin latency comes out L frames late (delay compensation
-        // aligns the tracks to each other, not to the timeline): render L more, drop the first L.
-        let lead = engine.latency_report().total_frames as usize;
-        engine.set_loop(false, 0, 0)?;
-        engine.stop()?;
-        engine.seek(job.start)?;
-        engine.play()?;
-        let mut out = vec![0f32; (job.frames + lead) * 2];
-        for (i, chunk) in out.chunks_mut(CHUNK * 2).enumerate() {
+        let out = render_aligned(engine, job.start, job.frames, |done| {
             check()?;
-            engine.render_offline(chunk)?;
-            progress.store(((i * CHUNK + chunk.len() / 2).saturating_sub(lead)).min(job.frames), Ordering::Relaxed);
-        }
-        out.drain(..lead * 2);
+            progress.store(done, Ordering::Relaxed);
+            Ok(())
+        })?;
+        progress.store(job.frames, Ordering::Relaxed);
         Ok(out)
     }
+}
+
+/// Plays `engine`'s published session once from timeline frame `start` (no loop) and returns
+/// `frames` stereo frames of the mix, interleaved, aligned to the timeline. The mix of a chain
+/// with plugin latency comes out L frames late (delay compensation aligns the tracks to each
+/// other, not to the timeline), so this renders L more and drops the first L. `step` is called
+/// before each `render_offline` call with the frames of the result done so far; an error from it
+/// stops the render. The transport is left playing.
+pub fn render_aligned(
+    engine: &Engine,
+    start: i64,
+    frames: usize,
+    mut step: impl FnMut(usize) -> Result<(), OfflineError>,
+) -> Result<Vec<f32>, OfflineError> {
+    let lead = engine.latency_report().total_frames as usize;
+    engine.set_loop(false, 0, 0)?;
+    engine.stop()?;
+    engine.seek(start)?;
+    engine.play()?;
+    let mut out = vec![0f32; (frames + lead) * 2];
+    for (i, chunk) in out.chunks_mut(CHUNK * 2).enumerate() {
+        step((i * CHUNK).saturating_sub(lead).min(frames))?;
+        engine.render_offline(chunk)?;
+    }
+    out.drain(..lead * 2);
+    Ok(out)
 }
 
 /// Renders `job` start to finish on the calling thread: a plugin job has to be called from
