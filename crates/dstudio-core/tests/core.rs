@@ -722,3 +722,30 @@ fn undoing_a_rename_restores_the_old_name_exactly() {
     let json = r#"{"op":"restore_track_name","track":1,"name":""}"#;
     assert!(serde_json::from_str::<Command>(json).is_err(), "a restore is never taken from outside");
 }
+
+#[test]
+fn a_file_with_two_copies_of_a_track_loads_with_unique_ids() {
+    // A merge or hand edit can leave the same track (its id, clips and devices) twice.
+    let p = load_edited(|v| {
+        let copy = v["tracks"][1].clone();
+        v["tracks"].as_array_mut().unwrap().push(copy);
+    })
+    .unwrap()
+    .project;
+    let unique = |ids: Vec<u64>| ids.iter().collect::<std::collections::HashSet<_>>().len() == ids.len();
+    assert!(unique(p.tracks.iter().map(|t| t.id.0).collect()), "track ids");
+    assert!(unique(p.tracks.iter().flat_map(|t| t.midi_clips.iter().map(|c| c.id.0)).collect()), "clip ids");
+    assert!(unique(p.tracks.iter().flat_map(|t| t.devices.iter().chain(&t.instrument_plugin).map(|d| d.id.0)).collect()), "device ids");
+    let (first, last) = (&p.tracks[1], p.tracks.last().unwrap());
+    assert_eq!(first.midi_clips.len(), last.midi_clips.len(), "the copy keeps its content");
+    assert!(p.next_id > last.id.0);
+    // Commands can address the copy on its own: deleting it and undoing leaves the first alone.
+    let mut d = Document::new(p);
+    let n = d.project().tracks.len();
+    let copy = d.project().tracks[n - 1].id;
+    d.execute(Command::RemoveTrack { track: copy }, Origin::User).unwrap();
+    assert_eq!(d.project().tracks.len(), n - 1);
+    assert_eq!(d.project().tracks[1].midi_clips.len(), 1);
+    d.undo().unwrap();
+    assert_eq!(d.project().tracks[n - 1].id, copy);
+}

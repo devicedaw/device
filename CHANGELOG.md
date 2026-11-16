@@ -26,7 +26,9 @@ Fixed or Removed. Write it for people who use Device, not for developers.
   instead of crashing, staying silent or refusing to load. Media paths survive moving a project saved through a
   folder path with `..` or a symlink.
 - Very long recordings are kept: a take that reaches the file size limit is saved up to that point, and takes over
-  2 GB load again.
+  2 GB load again. The status line says when a take was cut short.
+- A project file holding two copies of a track (for example after merging two versions) opens with each copy
+  editable on its own.
 
 ## [0.1.0] - 2026-11-16
 
