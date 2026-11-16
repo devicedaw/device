@@ -132,6 +132,10 @@ pub struct GeneralPrefs {
     pub show_builtin_windows: bool,
     /// Plugin windows: keep plugin windows above the main window.
     pub plugin_windows_on_top: bool,
+    /// Projects › Projects folder: where Save starts and what the browser's Projects tab lists.
+    /// None is the default folder (~/Documents/Device Studio).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projects_folder: Option<std::path::PathBuf>,
 }
 
 impl Default for GeneralPrefs {
@@ -142,6 +146,7 @@ impl Default for GeneralPrefs {
             show_plugin_windows: true,
             show_builtin_windows: false,
             plugin_windows_on_top: true,
+            projects_folder: None,
         }
     }
 }
@@ -220,7 +225,12 @@ mod tests {
             assistant_width: 400.0,
             recent_projects: vec!["/tmp/Song.dsproj".into()],
             recent_resolved: vec!["/private/tmp/Song.dsproj".into()],
-            general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() },
+            general: GeneralPrefs {
+                load_last_session: true,
+                stop_in_place: true,
+                projects_folder: Some("/tmp/My Songs".into()),
+                ..GeneralPrefs::default()
+            },
             midi: MidiPrefs { disabled_inputs: vec!["coremidi:42".into()] },
             hide_returns: true,
             plugin_folders: vec!["/opt/plugins".into()],
@@ -244,6 +254,13 @@ mod tests {
         assert!(loaded.shortcuts.is_empty(), "files without shortcut changes keep the defaults");
         assert!(loaded.shortcut_preset.is_empty(), "files without a preset use Device Studio's keys");
         assert_eq!(loaded.count_in_bars, 0, "files without a count-in record straight away");
+        assert_eq!(loaded.general.projects_folder, None, "files without a projects folder use the default one");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_default_projects_folder_is_not_written() {
+        let json = serde_json::to_string(&GeneralPrefs::default()).unwrap();
+        assert!(!json.contains("projects_folder"), "{json}");
     }
 }

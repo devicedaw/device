@@ -1112,13 +1112,14 @@ fn pick_import() -> Vec<PathBuf> {
     rfd::FileDialog::new().set_title("Import audio").add_filter("Audio", &crate::files::dialog_exts()).pick_files().unwrap_or_default()
 }
 
-fn pick_project_dir(save: bool) -> Option<PathBuf> {
+/// `projects` is the projects folder (Settings › General), where Save starts.
+fn pick_project_dir(save: bool, projects: Option<PathBuf>) -> Option<PathBuf> {
     if save {
         // A project is a directory; ask for its name and create it.
-        // Start in the projects folder Browser › Files › Projects lists.
+        // Start in the projects folder the browser's Projects tab lists.
         let dialog =
             rfd::FileDialog::new().set_title("Save project").set_file_name(format!("Untitled.{}", dstudio_core::persist::EXTENSION));
-        let dialog = match crate::files::FilesUi::default().projects_dir.filter(|d| std::fs::create_dir_all(d).is_ok()) {
+        let dialog = match projects.filter(|d| std::fs::create_dir_all(d).is_ok()) {
             Some(d) => dialog.set_directory(d),
             None => dialog,
         };
@@ -1323,12 +1324,13 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         }
         "file.save" | "file.save_as" => {
             let existing = ctl.borrow().project_dir.clone().filter(|_| action == "file.save");
-            if let Some(dir) = existing.or_else(|| pick_project_dir(true)) {
+            let projects = ctl.borrow().files.projects_dir.clone();
+            if let Some(dir) = existing.or_else(|| pick_project_dir(true, projects)) {
                 ctl.borrow_mut().save_to(&dir);
             }
         }
         "file.open" => {
-            if let Some(dir) = pick_project_dir(false) {
+            if let Some(dir) = pick_project_dir(false, None) {
                 ctl.borrow_mut().open(&dir);
             }
         }
@@ -1585,6 +1587,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.provider = Arc::new(provider);
         c.settings.prefs = saved_prefs;
         c.settings.prefs_path = prefs_path;
+        if std::env::var_os("DSTUDIO_PROJECTS_DIR").is_none()
+            && let Some(dir) = c.settings.prefs.general.projects_folder.clone()
+        {
+            c.files.projects_dir = Some(dir);
+        }
         c.shortcuts_load();
         c.settings.headless = !use_prefs;
         if args.self_test {
@@ -2789,7 +2796,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         studio.on_unsaved_save(move || {
             let existing = ctl.borrow().project_dir.clone();
-            if let Some(dir) = existing.or_else(|| pick_project_dir(true)) {
+            let projects = ctl.borrow().files.projects_dir.clone();
+            if let Some(dir) = existing.or_else(|| pick_project_dir(true, projects)) {
                 let mut c = ctl.borrow_mut();
                 c.save_to(&dir);
                 if !c.doc.is_dirty() {
@@ -2835,6 +2843,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         _ => transport_fields::KeyChoice::Cancel,
     }));
     on!(on_general_toggle, |c, i: i32| c.general_toggle(i));
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_general_choose_projects_folder(move || {
+            let start = ctl.borrow().files.projects_dir.clone();
+            let dialog = rfd::FileDialog::new().set_title("Choose projects folder");
+            let dialog = match start.filter(|d| d.is_dir()) {
+                Some(d) => dialog.set_directory(d),
+                None => dialog,
+            };
+            if let Some(dir) = dialog.pick_folder() {
+                let mut c = ctl.borrow_mut();
+                c.set_projects_folder(dir);
+                if let Some(a) = aw.upgrade() {
+                    c.update_ui(&a);
+                }
+            }
+        });
+    }
     on!(on_general_stop_mode, |c, on: bool| c.general_stop_in_place(on));
     on!(on_undo_history_close, |c| c.dialogs_close());
     on!(on_undo_history_travel, |c, row: i32| c.undo_history_travel(row));

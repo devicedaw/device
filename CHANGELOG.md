@@ -11,6 +11,11 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+### Added
+
+- Settings › General › Projects folder: choose where your projects are saved. Save starts there, and the browser
+  lists the projects in it.
+
 ### Fixed
 
 - Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song
