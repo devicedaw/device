@@ -500,7 +500,7 @@ export global Studio {
     in property <float> sel-meter-l: 1; // 0 (top) .. 1 (bottom = silent)
     in property <float> sel-meter-r: 1;
     in property <string> sel-peak-text: "−∞";
-    // ---- browser Devices tab (src/devices.rs; the Chains sub-tab is PLACEHOLDER data) ----
+    // ---- browser Devices tab (src/devices.rs; Chains: src/chain_presets.rs) ----
     in property <[TreeRow]> tree;
     in property <int> browser-tab;             // 0 Instruments, 1 Effects, 2 Chains
     in-out property <string> browser-search;   // tree filter (transient input)
@@ -1112,7 +1112,10 @@ export global Studio {
     callback device-fold(int);                               // fold / unfold the card (header double-click, minus)
     callback device-collapse(int);                           // chain head: hide / show its members
     callback device-swap-menu(int, length, length);          // "Choose effect plugin" from the card name
-    callback device-rename(int, string);                     // card label (chain group name)
+    callback device-rename(int, string);                     // card label (chain group name); Save as… saves the chain
+    callback device-rename-start(int);                       // double-click on a chain card's name
+    callback device-rename-cancel();                         // Escape in the chain name field
+    in property <int> renaming-device: -1;               // chain card whose name field is open
     callback mod-menu(int, int, length, length);             // right-click on a control: Automate, Modulators, Macros
     callback mod-map(int, int);                              // arm / disarm a source output (LFO 0, macro n) for mapping
     callback mod-add-menu(int, int, length, length);         // + : parameter list of the track to add as targets

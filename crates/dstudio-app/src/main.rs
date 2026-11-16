@@ -42,6 +42,7 @@ mod appmenu;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;
+mod chain_presets;
 mod clip_bench;
 mod clip_render;
 mod clipedit;
@@ -84,7 +85,6 @@ mod panel_graph;
 mod panel_multiband;
 mod peaks;
 mod pianoroll;
-mod placeholder;
 mod pointer;
 mod prefs;
 mod recording;
@@ -273,6 +273,8 @@ struct Args {
     analyzers_review: bool,
     /// reference-lfo / reference-chain: 1 an LFO aimed at a Compressor, 2 a chain head
     /// (macro panel open) holding a Compressor and the CLAP test plugin's card.
+    /// review-chain-presets: 3 the factory chain "Lead Vocal Polish" with its name menu open and
+    /// Browser › Devices › Chains › Vocals; review-chain-add: 4 Add device › Chains › Vocals.
     modulation_state: u8,
     /// review-settings-plugins: Settings open on the Plugins page.
     plugins_page_review: bool,
@@ -671,6 +673,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.modulation_state = 2;
                 }
+                st @ ("review-chain-presets" | "review-chain-add") => {
+                    a.reference_default = true;
+                    a.modulation_state = if st.ends_with("presets") { 3 } else { 4 };
+                }
                 s if s.strip_prefix("reference-").and_then(dstudio_core::builtin::find).is_some() => {
                     a.reference_default = true;
                     a.device_state = s.strip_prefix("reference-").and_then(dstudio_core::builtin::find).map(|d| d.id);
@@ -751,7 +757,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1586,6 +1592,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut c = ctl.borrow_mut();
         c.provider = Arc::new(provider);
         c.settings.prefs = saved_prefs;
+        if let Some(dir) = prefs_path.as_ref().and_then(|p| p.parent()) {
+            c.devices.chains.open(dir.join("Chains"));
+        }
         c.settings.prefs_path = prefs_path;
         if std::env::var_os("DSTUDIO_PROJECTS_DIR").is_none()
             && let Some(dir) = c.settings.prefs.general.projects_folder.clone()
@@ -2476,7 +2485,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Audio).map(|t| t.id) {
             c.select_track(t);
             let comp = dstudio_core::builtin::find("compressor").expect("compressor is registered");
-            if args.modulation_state == 1 {
+            if args.modulation_state >= 3 {
+                c.browser_tab(2);
+                c.devices.expanded.insert("c/Vocals".into());
+                if args.modulation_state == 3 {
+                    let r = chain_presets::ChainRef { user: false, name: "Lead Vocal Polish".into() };
+                    c.add_item_to_track(&devices::Item::Chain(r), t, None);
+                    let head = c.project().track(t).and_then(|t| t.devices.first()).map(|d| d.id);
+                    if let Some(head) = head {
+                        c.chain_card_menu(head, 300.0, 400.0);
+                    }
+                } else {
+                    c.chain_folder_menu(None, "Vocals", 470.0, 540.0);
+                }
+            } else if args.modulation_state == 1 {
                 c.add_item_to_track(&devices::Item::Builtin(comp), t, None);
                 let id = c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id);
                 if let Some(id) = id {
@@ -3299,7 +3321,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         on!(on_device_window_moved, |c, d: i32, x: f32, y: f32| c.device_window_moved(id(d), x, y));
         on!(on_device_collapse, |c, d: i32| c.device_collapse(id(d)));
         on!(on_device_swap_menu, |c, d: i32, x: f32, y: f32| c.device_swap_menu(id(d), x, y));
-        on!(on_device_rename, |c, d: i32, t: slint::SharedString| c.device_rename(id(d), &t));
+        on!(on_device_rename, |c, d: i32, t: slint::SharedString| c.chain_rename_done(id(d), &t));
+        on!(on_device_rename_cancel, |c| c.chain_rename_cancel());
+        on!(on_device_rename_start, |c, d: i32| c.chain_pick(devices::MenuPick::ChainRename(id(d)), (0.0, 0.0)));
         on!(on_mod_menu, |c, d: i32, p: i32, x: f32, y: f32| c.mod_menu(id(d), p, x, y));
         on!(on_mod_map, |c, d: i32, slot: i32| c.mod_map(id(d), slot));
         on!(on_mod_add_menu, |c, d: i32, slot: i32, x: f32, y: f32| c.mod_add_menu(id(d), slot, x, y));
