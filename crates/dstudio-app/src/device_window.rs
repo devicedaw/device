@@ -659,7 +659,9 @@ impl Controller {
             _ if def.id == "bitcrusher" => self.crush_window_canvas(d, def, &k, accent),
             _ if def.id == "widener" => self.widener_window_canvas(d, def, &k, accent),
             // The card's tuner at twice its scale, its bar across the middle of the display.
-            _ if def.id == "tuner" => self.tuner_canvas_at(d, def, k.display.2 / 2.0, TUNER_WIN_H, 2.0 * Z, accent),
+            _ if def.id == "tuner" => {
+                PanelCanvas { well: false, ..self.tuner_canvas_at(d, def, k.display.2 / 2.0, TUNER_WIN_H, 2.0 * Z, accent) }
+            }
             Some(View::Custom(_)) if crate::panel_fields::field_name(def).is_some() => self.field_window_display(d, def, &k),
             _ => PanelCanvas::default(),
         };
