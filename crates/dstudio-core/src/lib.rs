@@ -25,6 +25,7 @@ pub mod modulation;
 pub mod persist;
 pub mod render_plan;
 pub mod scale;
+pub mod section_follow;
 pub mod shape;
 pub mod smart_quantize;
 pub mod smf;

@@ -995,7 +995,7 @@ export global Studio {
     in property <bool> unsaved-open;
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show
     // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top.
-    in property <[bool]> general-on: [false, true, false, true];
+    in property <[bool]> general-on: [false, true, false, true, false];
     in property <bool> general-stop-in-place;
     callback general-toggle(int);
     callback general-stop-mode(bool);                       // true = Stop in place

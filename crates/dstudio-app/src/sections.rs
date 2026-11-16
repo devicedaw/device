@@ -1,12 +1,14 @@
 //! Arrangement sections (shown as markers): the lane under the loop strip. A "+" after the last
 //! marker adds eight bars, a marker's body drags to reorder it, its right edge resizes it, and a
-//! double-click renames it. Sections tile the timeline from bar 1 (see `dstudio_core::Section`);
-//! they label ranges and never move clips. Every edit is one Command.
+//! double-click renames it. Sections tile the timeline from bar 1 (see `dstudio_core::Section`).
+//! They only label ranges unless Settings › General › Sections move clips is on; then clips
+//! and automation move with them (`execute_section`). Every edit is one undo step.
 //!
 //! The right-click menu: Cut, Copy, Paste (after this marker), Duplicate, Rename…, Color ›,
 //! Insert › (Marker before / after), Delete marker, Clear all markers.
 
 use crate::controller::{Controller, MenuAction};
+use dstudio_core::section_follow::{self, SectionContent};
 use dstudio_core::{Command, PPQ, Section, SectionId, Ticks};
 
 /// Section lane rows in lane-local points (the ruler's third band, between its rules).
@@ -213,7 +215,7 @@ impl Controller {
             color: self.next_section_color(),
             length: NEW_BARS * self.bar_ticks(),
         };
-        if self.execute(Command::InsertSection { index, section }) {
+        if self.execute_section(Command::InsertSection { index, section }, Vec::new()) {
             self.selected_section = Some(id);
             self.ui_dirty = true;
             return Some(id);
@@ -221,11 +223,31 @@ impl Controller {
         None
     }
 
+    /// Run a marker edit. With Settings › General › Sections move clips on, the clips and
+    /// automation follow the markers in the same undo step (`section_follow`), and `pastes`
+    /// fill new markers with copied contents.
+    pub fn execute_section(&mut self, cmd: Command, pastes: Vec<(SectionId, SectionContent)>) -> bool {
+        if !self.settings.prefs.general.sections_move_clips {
+            return self.execute(cmd);
+        }
+        let before = self.project();
+        let mut after = before.clone();
+        let label = cmd.label();
+        if cmd.clone().apply(&mut after).is_err() {
+            return self.execute(cmd);
+        }
+        let follow = section_follow::follow_sections(before, &after, &pastes);
+        if follow.is_empty() {
+            return self.execute(cmd);
+        }
+        self.execute(Command::Batch { label, commands: std::iter::once(cmd).chain(follow).collect() })
+    }
+
     pub fn delete_section(&mut self, id: SectionId) {
         if self.selected_section == Some(id) {
             self.selected_section = None;
         }
-        self.execute(Command::RemoveSection { section: id });
+        self.execute_section(Command::RemoveSection { section: id }, Vec::new());
     }
 
     pub fn clear_sections(&mut self) {
@@ -242,7 +264,8 @@ impl Controller {
         let Some(i) = p.section_index(id) else { return };
         let new_id = SectionId(p.next_id);
         let section = Section { id: new_id, ..p.sections[i].clone() };
-        if self.execute(Command::InsertSection { index: Some(i + 1), section }) {
+        let content = section_follow::capture(p, id).unwrap_or_default();
+        if self.execute_section(Command::InsertSection { index: Some(i + 1), section }, vec![(new_id, content)]) {
             self.selected_section = Some(new_id);
         }
     }
@@ -322,12 +345,12 @@ impl Controller {
                 let Some(drag) = self.section_drag.take() else { return false };
                 match drag {
                     SectionDrag::Move { id, from, to } if from != to => {
-                        self.execute(Command::MoveSection { section: id, index: to });
+                        self.execute_section(Command::MoveSection { section: id, index: to }, Vec::new());
                     }
                     SectionDrag::Resize { id, len }
                         if self.project().section_index(id).is_some_and(|i| self.project().sections[i].length != len) =>
                     {
-                        self.execute(Command::SetSectionLength { section: id, length: len });
+                        self.execute_section(Command::SetSectionLength { section: id, length: len }, Vec::new());
                     }
                     _ => {}
                 }
@@ -446,28 +469,28 @@ impl Controller {
         self.selected_section.filter(|s| self.project().section_index(*s).is_some())
     }
 
-    /// Copy a marker (name, colour and length) for Paste.
+    /// Copy a marker (name, colour and length, and what is in it) for Paste.
     pub fn copy_section(&mut self, id: SectionId) {
         let p = self.project();
-        if let Some(i) = p.section_index(id) {
-            self.section_clipboard = Some(p.sections[i].clone());
+        if let (Some(i), Some(content)) = (p.section_index(id), section_follow::capture(p, id)) {
+            self.section_clipboard = Some((p.sections[i].clone(), content));
         }
     }
 
     pub fn cut_section(&mut self, id: SectionId) {
         self.copy_section(id);
-        if self.section_clipboard.as_ref().is_some_and(|s| s.id == id) {
+        if self.section_clipboard.as_ref().is_some_and(|(s, _)| s.id == id) {
             self.delete_section(id);
         }
     }
 
     /// Paste the copied marker after `after` (the end when None). Selects the copy.
     pub fn paste_section(&mut self, after: Option<SectionId>) {
-        let Some(copy) = self.section_clipboard.clone() else { return };
+        let Some((copy, content)) = self.section_clipboard.clone() else { return };
         let p = self.project();
         let index = after.and_then(|a| p.section_index(a)).map(|i| i + 1);
         let id = SectionId(p.next_id);
-        if self.execute(Command::InsertSection { index, section: Section { id, ..copy } }) {
+        if self.execute_section(Command::InsertSection { index, section: Section { id, ..copy } }, vec![(id, content)]) {
             self.selected_section = Some(id);
             self.ui_dirty = true;
         }

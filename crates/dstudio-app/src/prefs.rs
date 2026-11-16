@@ -132,6 +132,9 @@ pub struct GeneralPrefs {
     pub show_builtin_windows: bool,
     /// Plugin windows: keep plugin windows above the main window.
     pub plugin_windows_on_top: bool,
+    /// Timeline annotations: moving, resizing, adding or deleting a marker moves the clips and
+    /// automation in and after it.
+    pub sections_move_clips: bool,
 }
 
 impl Default for GeneralPrefs {
@@ -142,6 +145,7 @@ impl Default for GeneralPrefs {
             show_plugin_windows: true,
             show_builtin_windows: false,
             plugin_windows_on_top: true,
+            sections_move_clips: false,
         }
     }
 }
