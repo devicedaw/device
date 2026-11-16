@@ -235,7 +235,7 @@ fn save_and_reopen_project() {
     std::fs::remove_file(&wav).unwrap();
     let l2 = persist::load(&moved_proj).unwrap();
     assert!(l2.missing_media.is_empty());
-    assert!(l2.project.assets[0].absolute_path.starts_with(&*moved.path().to_string_lossy()));
+    assert!(std::path::Path::new(&l2.project.assets[0].absolute_path).starts_with(std::fs::canonicalize(moved.path()).unwrap()));
 }
 
 #[test]
@@ -249,6 +249,108 @@ fn load_rejects_newer_schema_and_foreign_files() {
     assert!(matches!(persist::load(dir.path()), Err(persist::PersistError::TooNew { .. })));
     std::fs::write(dir.path().join("project.json"), r#"{"format":"other","schema_version":1,"saved_with":"x","project":{}}"#).unwrap();
     assert!(matches!(persist::load(dir.path()), Err(persist::PersistError::WrongFormat(_))));
+}
+
+/// Saves the default project with one MIDI clip, lets `edit` change the file's JSON and loads it.
+fn load_edited(edit: impl FnOnce(&mut serde_json::Value)) -> Result<persist::Loaded, persist::PersistError> {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = Document::new(Project::default());
+    let track = d.project().tracks[1].id;
+    let mut c = MidiClip::empty(0, 4 * PPQ);
+    c.notes = (1..=4).map(|id| Note { id, pitch: 60, start: id as i64 * 10, length: PPQ, velocity: 100 }).collect();
+    d.execute(Command::AddMidiClip { track, clip: c }, Origin::User).unwrap();
+    persist::save(d.project(), dir.path()).unwrap();
+    let file = dir.path().join(persist::PROJECT_FILE);
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    edit(&mut v["project"]);
+    std::fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
+    persist::load(dir.path())
+}
+
+#[test]
+fn load_repairs_values_the_commands_would_refuse() {
+    let p = load_edited(|p| {
+        p["transport"]["time_signature"]["denominator"] = 0.into();
+        p["transport"]["bpm"] = 1e300.into();
+        p["transport"]["loop_end"] = (-5).into();
+        p["next_id"] = 0.into();
+        let notes = &mut p["tracks"][1]["midi_clips"][0]["notes"];
+        notes[0]["pitch"] = 200.into();
+        notes[1]["velocity"] = 0.into();
+        notes[2]["id"] = 4.into();
+    })
+    .unwrap()
+    .project;
+    assert_eq!(p.transport.time_signature, TimeSignature { numerator: 4, denominator: 4 });
+    assert_eq!(p.ticks_per_bar(), 4 * PPQ);
+    assert_eq!(p.transport.bpm, 999.0);
+    assert!(p.transport.loop_end > p.transport.loop_start);
+    // The note the engine can't play is dropped, the others are fixed, so the session plays.
+    let notes = &p.tracks[1].midi_clips[0].notes;
+    assert_eq!(notes.len(), 3);
+    midi::validate_notes(notes).unwrap();
+    assert_eq!(notes[0].velocity, 1);
+    // New ids don't collide with any in use.
+    let mut d = Document::new(p);
+    let used: Vec<u64> = d.project().tracks.iter().map(|t| t.id.0).chain(d.project().tracks[1].midi_clips.iter().map(|c| c.id.0)).collect();
+    d.execute(Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Audio, "New", ColorIndex(1)) }, Origin::User)
+        .unwrap();
+    assert!(!used.contains(&d.project().tracks.last().unwrap().id.0));
+
+    // Out-of-range transport values in the file: changing them can be undone.
+    let p = load_edited(|p| {
+        p["transport"]["time_signature"]["numerator"] = 35.into();
+        p["transport"]["bpm"] = 10.0.into();
+    })
+    .unwrap()
+    .project;
+    let mut d = Document::new(p);
+    let (sig, bpm) = (d.project().transport.time_signature, d.project().transport.bpm);
+    d.execute(Command::SetTimeSignature { numerator: 3, denominator: 4 }, Origin::User).unwrap();
+    d.execute(Command::SetTempo { bpm: 120.0 }, Origin::User).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
+    assert_eq!((d.project().transport.time_signature, d.project().transport.bpm), (sig, bpm));
+
+    // A stale next_id beyond any use is pulled back; ids that leave no room are refused.
+    assert_eq!(load_edited(|p| p["next_id"] = u64::MAX.into()).unwrap().project.next_id, 5);
+    assert!(matches!(load_edited(|p| p["tracks"][0]["id"] = u64::MAX.into()), Err(persist::PersistError::Damaged(_))));
+}
+
+#[test]
+fn non_finite_values_never_make_a_project_unloadable() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = Project::default();
+    p.transport.bpm = f64::NAN;
+    p.tracks[0].gain = f32::INFINITY;
+    p.tracks[0].pan = f32::NAN;
+    let synth = p.tracks[1].instrument_plugin.as_mut().unwrap();
+    let param = synth.params.keys().next().cloned().unwrap_or_else(|| "x".into());
+    synth.params.insert(param.clone(), f32::NAN);
+    persist::save(&p, dir.path()).unwrap();
+    let l = persist::load(dir.path()).unwrap().project;
+    assert_eq!(l.transport.bpm, 120.0);
+    assert_eq!((l.tracks[0].gain, l.tracks[0].pan), (0.0, 0.0));
+    assert_eq!(l.tracks[1].instrument_plugin.as_ref().unwrap().params[&param], 0.0);
+    assert_eq!(l.tracks[1].name, p.tracks[1].name);
+}
+
+#[test]
+fn media_paths_survive_a_project_path_with_dot_dot() {
+    let root = tempfile::tempdir().unwrap();
+    let r = root.path();
+    std::fs::create_dir_all(r.join("songs/sub")).unwrap();
+    std::fs::create_dir_all(r.join("songs/media")).unwrap();
+    let wav = std::fs::canonicalize(r.join("songs/media")).unwrap().join("k.wav");
+    std::fs::write(&wav, b"x").unwrap();
+    let mut p = Project::default();
+    p.assets.push(Asset { absolute_path: wav.to_string_lossy().into(), ..asset(10, 48_000.0) });
+    // Saved through a path with `..` (opened from a sibling folder), then moved with its media.
+    persist::save(&p, &r.join("songs/sub/../Song.dsproj")).unwrap();
+    std::fs::rename(r.join("songs"), r.join("moved")).unwrap();
+    let l = persist::load(&r.join("moved/Song.dsproj")).unwrap();
+    assert_eq!(l.project.assets[0].relative_path.as_deref(), Some("../media/k.wav"));
+    assert!(l.missing_media.is_empty());
 }
 
 #[test]
