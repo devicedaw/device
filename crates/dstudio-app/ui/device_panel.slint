@@ -1547,9 +1547,10 @@ export component CardHeader inherits Rectangle {
     property <bool> fx: root.card.builtin && root.card.modv.kind == 0 && !root.card.sampler.visible;
     // Cards up to 256 pt show the preset icon instead of the label and the step arrows.
     property <bool> narrow: root.card.width < 256px * zm;
-    // Every card folds (instruments too); built-in instruments have no device window.
+    // Every card folds (instruments too). Built-ins show the window button only when they have
+    // an expanded window (src/device_window.rs has_window); instruments and racks have none.
     property <bool> fold: true;
-    property <bool> window: (root.fx && !root.card.instrument) || (!root.card.builtin && root.card.has-editor);
+    property <bool> window: root.card.has-editor && !(root.card.builtin && root.card.instrument);
     property <length> remove-x: root.width - 23px * zm;
     property <length> fold-x: root.remove-x - 18px * zm;
     property <length> end-x: root.fold ? root.fold-x : root.remove-x;
