@@ -3317,6 +3317,20 @@ mod tests {
         v.knobs.iter().map(|k| k.label.to_string()).collect()
     }
 
+    /// Every built-in effect opens an expanded window; instruments (Synth, Sampler, Drum Rack,
+    /// Pad Sampler) and the Rack keep everything in their card and have no window button.
+    #[test]
+    fn every_effect_has_a_window_and_no_instrument_does() {
+        use dstudio_core::device::PluginKind;
+        for def in dstudio_core::builtin::all() {
+            match def.kind {
+                PluginKind::Effect if def.id == "device-rack" => assert!(!has_window(def)),
+                PluginKind::Effect => assert!(has_window(def), "{} has no window", def.id),
+                PluginKind::Instrument => assert!(!has_window(def), "{} should have no window", def.id),
+            }
+        }
+    }
+
     /// The three windowed devices lay every control inside the window, one control per
     /// parameter, with the display and both meters.
     #[test]

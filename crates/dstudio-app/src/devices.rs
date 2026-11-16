@@ -1179,6 +1179,8 @@ impl Controller {
         self.card_common(d, &mut card);
         if card.builtin {
             card.editor_open = self.devices.windows.contains(&d.id);
+            // Built-ins: only devices with an expanded window show the window button.
+            card.has_editor = dstudio_core::builtin::def_of(d).is_some_and(crate::device_window::has_window);
         }
         card.accent_light = crate::device_mod::is_light(card.accent);
         card.accent_text = crate::device_mod::accent_text(card.accent);
@@ -1878,6 +1880,23 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Built-in cards show the window button exactly when the device has an expanded window:
+    /// effects (the LFO included) do, the Rack does not.
+    #[test]
+    fn builtin_cards_offer_the_window_only_when_there_is_one() {
+        for (id, want) in [("delay", true), ("lfo", true), ("trance-gate", true), ("device-rack", false)] {
+            let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+            let mut c = Controller::new(engine, dstudio_core::Project::default());
+            let def = dstudio_core::builtin::find(id).unwrap();
+            let track = c.project().tracks[0].id;
+            assert!(c.execute(Command::AddDevice { track, index: None, device: def.instantiate() }), "{id}");
+            let d = c.project().tracks[0].devices.last().unwrap().clone();
+            let card = c.card_for(&d, false);
+            assert!(card.builtin, "{id}");
+            assert_eq!(card.has_editor, want, "{id}");
+        }
+    }
 
     #[test]
     fn custom_plugin_folders_are_added_once_and_never_shadow_a_standard_one() {

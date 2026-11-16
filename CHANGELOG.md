@@ -29,6 +29,7 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
   will land, and it lands there (it used to land to the right of the pointer). Drop a sample on a track, below the tracks for a new audio track, or on a Sampler or
   Pad Sampler to load it. Drop an instrument on an instrument track to swap its instrument, or below the tracks
   for a new instrument track; double-clicking an instrument with no instrument track selected adds one.
+- The window button shows on every built-in effect with an expanded window, the LFO included, and no longer on cards without one.
 - Expanded windows for Auto Filter, Channel EQ and Character EQ, with a large display, a live analyser (Pre, Post or
   Off, and Hold view), In and Out meters and every control laid out in rows, including Character EQ's band Drive.
 - Expanded windows for Tremolo, Auto-Panner, Chorus, Flanger, Phaser and Ring Mod: a large plot of the effect's
