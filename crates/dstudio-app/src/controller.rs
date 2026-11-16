@@ -588,6 +588,8 @@ pub struct Controller {
     pub(crate) midi_inputs_model: Rc<VecModel<crate::MidiInputRow>>,
     // ---- plugin devices (src/devices.rs) ----
     pub devices: crate::devices::DevicesUi,
+    /// Chain card whose open name field saves the chain ("Save as…", src/chain_presets.rs).
+    pub(crate) chain_save_as: Option<dstudio_core::DeviceId>,
     pub(crate) tree_model: Rc<VecModel<TreeRow>>,
     // ---- browser Files section and Back / Forward (src/files.rs) ----
     pub files: crate::files::FilesUi,
@@ -739,6 +741,7 @@ impl Controller {
             midi_in: Default::default(),
             midi_inputs_model: Rc::new(VecModel::default()),
             devices: Default::default(),
+            chain_save_as: None,
             tree_model: Rc::new(VecModel::default()),
             files: Default::default(),
             files_model: Rc::new(VecModel::default()),

@@ -1541,8 +1541,10 @@ component HeadButton inherits Rectangle {
 export component CardHeader inherits Rectangle {
     in property <DeviceCard> card;
     property <float> zm: PanelStyle.z;
-    property <bool> renaming;
     property <bool> chain: root.card.modv.kind == 2;
+    // Chain cards rename in place (double-click, Rename…, Save as…; src/chain_presets.rs).
+    property <bool> renaming: Studio.renaming-device == root.card.id;
+    property <bool> menu: root.card.swappable || root.chain;
     // Effect cards carry the preset nav and the assistant spark; the rule follows them.
     property <bool> fx: root.card.builtin && root.card.modv.kind == 0 && !root.card.sampler.visible;
     // Cards up to 256 pt show the preset icon instead of the label and the step arrows.
@@ -1600,35 +1602,35 @@ export component CardHeader inherits Rectangle {
     }
     name := Rectangle {
         x: 44px * zm; y: 0; height: root.height;
-        width: min(name-text.preferred-width + (root.card.swappable ? 20px * zm : 0px), root.lead-right - self.x);
-        accessible-role: button; accessible-label: !root.card.swappable ? root.card.name : root.card.instrument ? "Choose instrument" : "Choose effect plugin";
+        width: min(name-text.preferred-width + (root.menu ? 20px * zm : 0px), root.lead-right - self.x);
+        accessible-role: button; accessible-label: root.chain ? root.card.name + " chain menu" : !root.card.swappable ? root.card.name : root.card.instrument ? "Choose instrument" : "Choose effect plugin";
         name-text := Text {
-            x: 0; width: parent.width - (root.card.swappable ? 20px * zm : 0px); visible: !root.renaming;
+            x: 0; width: parent.width - (root.menu ? 20px * zm : 0px); visible: !root.renaming;
             text: root.card.name; color: !root.card.enabled ? #ffffff99 : root.chain && !name-ta.has-hover ? #81838a : #ffffff;
             font-size: 12px * zm; font-weight: 700; letter-spacing: -0.04 * 12px * zm; vertical-alignment: center; overflow: elide;
         }
-        if root.card.swappable && !root.renaming: Icon {
+        if root.menu && !root.renaming: Icon {
             x: parent.width - 16px * zm + 3px * zm; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm;
             d: Icons.chevron-down; ink: name-ta.has-hover ? #ffffff : #81838a; stroke-width: 1.04px * zm;
         }
         name-ta := TouchArea {
             enabled: !root.renaming;
             clicked => {
-                if (!root.card.swappable) { return; }
-                if (root.card.instrument) { Studio.open-inst-menu(self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height); }
+                if (!root.menu) { return; }
+                if (root.card.instrument && !root.chain) { Studio.open-inst-menu(self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height); }
                 else { Studio.device-swap-menu(root.card.id, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height); }
             }
-            double-clicked => { if (root.chain) { root.renaming = true; } }
+            double-clicked => { if (root.chain) { Studio.device-rename-start(root.card.id); } }
         }
         if root.renaming: Rectangle {
             x: -4px; y: (parent.height - 18px * zm) / 2; height: 18px * zm; width: max(parent.width + 8px, 120px); border-radius: 4px; background: PanelStyle.pill-hot; border-width: 1px; border-color: Tokens.accent;
             FocusScope {
-                key-pressed(e) => { if (e.text == Key.Escape) { root.renaming = false; return accept; } reject }
+                key-pressed(e) => { if (e.text == Key.Escape) { Studio.device-rename-cancel(); return accept; } reject }
                 TextInput {
                     x: 4px; width: parent.width - 8px; text: root.card.name; color: #ffffff; font-size: 12px * zm; font-weight: 700; vertical-alignment: center; single-line: true;
                     init => { self.focus(); self.select-all(); }
-                    accepted => { Studio.device-rename(root.card.id, self.text); root.renaming = false; }
-                    changed has-focus => { if (!self.has-focus && root.renaming) { if (self.text != root.card.name) { Studio.device-rename(root.card.id, self.text); } root.renaming = false; } }
+                    accepted => { Studio.device-rename(root.card.id, self.text); }
+                    changed has-focus => { if (!self.has-focus && root.renaming) { Studio.device-rename(root.card.id, self.text); } }
                 }
             }
         }

@@ -10,6 +10,7 @@
 pub mod assistant;
 pub mod automation;
 pub mod builtin;
+pub mod chains;
 pub mod command;
 pub mod device;
 pub mod history;
