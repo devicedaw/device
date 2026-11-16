@@ -132,7 +132,16 @@ pub(crate) fn has_window(def: &DeviceDef) -> bool {
     ) || is_wave_window(def)
         || matches!(
             def.id,
-            "utility" | "widener" | "tuner" | "spectrum" | "trance-gate" | "pitch-shifter" | "grains" | "pitch-corrector" | "shaper"
+            "utility"
+                | "widener"
+                | "tuner"
+                | "spectrum"
+                | "trance-gate"
+                | "pitch-shifter"
+                | "grains"
+                | "pitch-corrector"
+                | "shaper"
+                | "lfo"
         )
         || is_repair_window(def)
         || def.id == "bitcrusher"
@@ -216,6 +225,14 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         "pitch-shifter" => field_kit(1200.0, 514.0, 12.0, 8.0),
         // Shaper: the lane tabs above the display (its canvas starts at the tabs, y 52).
         "shaper" => Kit { w: 1200.0, display: (INSET, 100.0, 1048.0, 466.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: true, meters_h: 0.0 },
+        // LFO: two cycles of the wave across the whole width (it has no meters).
+        "lfo" => Kit {
+            w: 960.0,
+            display: (INSET, 52.0, 960.0 - 2.0 * INSET, 360.0),
+            plot: (12.0, 25.0, 12.0, 25.0),
+            narrow: true,
+            meters_h: 0.0,
+        },
         // Pitch Corrector: the trace fills the display.
         "pitch-corrector" => field_kit(1200.0, 514.0, 12.0, 8.0).with_plot_top(8.0),
         // Grains: the buffer over its time axis, the pitch axis down its right edge.
@@ -754,6 +771,7 @@ impl Controller {
             "pitch-shifter" => self.pitch_shifter_window(d, def, &mut b, dy + dh + 12.0),
             "pitch-corrector" => self.pitch_corrector_window(d, def, &mut b, dy + dh + 12.0),
             "shaper" => self.shaper_lanes_window(d, def, &mut b, dy + dh + 12.0),
+            "lfo" => self.lfo_window(d, def, &mut b, &k, dy + dh + 12.0),
             "grains" => self.grains_window(d, def, &mut b, dy + dh + 12.0),
             _ if is_wave_window(def) || def.id == "bitcrusher" => self.wave_window(d, def, &mut b, dy + dh + 12.0),
             "utility" => self.utility_window(d, def, &mut b),
@@ -765,7 +783,7 @@ impl Controller {
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
         let (mut meters, mut ticks, mut ticks_x) = self.window_meters(d.id, &k);
-        if def.id == "trance-gate" {
+        if def.id == "trance-gate" || def.id == "lfo" {
             meters.clear();
             ticks.clear();
         }
@@ -2345,6 +2363,53 @@ impl Controller {
         row.y + row.h + 16.0
     }
 
+    /// LFO: the wave (two cycles, the live position dotted; drag sideways for Rate, up or
+    /// down for Depth) across the display, captioned with the shape and the cycle length,
+    /// over Shape, Timebase, Rate, Phase and Depth.
+    fn lfo_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, k: &Kit, y: f32) -> f32 {
+        use slint::Model;
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let fmt = |id: &str| def.param(id).map_or_else(String::new, |p| p.format(val(id)));
+        let sync = val("sync") >= 0.5;
+        let rate = if sync { "rateSync" } else { "rate" };
+        let (dx, dy, dw, dh) = k.display;
+        let (l, t, r, bt) = k.plot;
+        let mut wave = self.lfo_window_wave(d, def, (dw - l - r) * Z, (dh - t - bt) * Z, accent_of(b));
+        wave.x = (dx + l) * Z;
+        wave.y = (dy + t) * Z;
+        let cy = -(t - 12.0) * Z;
+        let cycle = if sync { format!("{} per cycle", fmt("rateSync")) } else { fmt("rate") };
+        let mut texts: Vec<PanelText> = wave.texts.iter().collect();
+        texts.push(crate::device_canvas::text(0.0, cy, 60.0 * Z, "Shape", Color::from_argb_u8(0x8c, 0xe5, 0xe5, 0xe8), 12.0 * Z, 0));
+        let shape = fmt("shape");
+        let at = (crate::text_measure::value_width("Shape") + 12.0) * Z;
+        texts.push(crate::device_canvas::text(at, cy, 200.0 * Z, shape.clone(), TEXT, 13.0 * Z, 0));
+        let at = at + (crate::text_measure::value_width(&shape) + 16.0) * Z;
+        texts.push(crate::device_canvas::text(at, cy, 200.0 * Z, cycle, Color::from_argb_u8(0xb3, 0xe5, 0xe5, 0xe8), 11.0 * Z, 0));
+        wave.texts = model(texts);
+        b.square = wave;
+        let row = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (
+                    vec![
+                        Item::Picker(idx("shape"), fmt("shape"), "Shape", 118.0, false),
+                        Item::Pills("sync", vec![("Free", 0.0), ("Sync", 1.0)], "Timebase", 108.0),
+                    ],
+                    14.0,
+                ),
+                (vec![Item::Knob(rate, "Rate", 2, 72.0, false), Item::Knob("phase", "Phase", 2, 72.0, false)], 14.0),
+                (vec![Item::Knob("depth", "Depth", 2, 72.0, false)], 14.0),
+            ],
+        );
+        row.y + row.h + 16.0
+    }
+
     /// Pitch Corrector: Follow, Key and Scale (the Key picker inert while the project's key is
     /// followed), then Speed, Retune Speed and Humanize, then Mix.
     fn pitch_corrector_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
@@ -3917,6 +3982,30 @@ mod tests {
         assert!(v.pills.iter().any(|p| p.label == "1/4" || p.kind == PILL_PICKER), "the lane's Rate picker");
     }
 
+    /// LFO: the wave across the display (a Rate / Depth drag zone), captioned with the shape
+    /// and the cycle; Timebase swaps the Rate knob.
+    #[test]
+    fn lfo_window_draws_the_wave_and_every_control() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("lfo");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 960.0).abs() < 0.5, "{}", v.w / Z);
+        assert_eq!(v.meters.row_count(), 0);
+        assert!(v.square.visible && v.square.paths.row_count() == 5);
+        let zones: Vec<_> = v.square.zones.iter().collect();
+        assert_eq!((zones[0].param_x, zones[0].param_y), (def.index_of("rateSync").unwrap() as i32, def.index_of("depth").unwrap() as i32));
+        let texts: Vec<String> = v.square.texts.iter().map(|t| t.text.to_string()).collect();
+        for t in ["Shape", "Sine", "1/4 per cycle", "1 cycle"] {
+            assert!(texts.iter().any(|x| x == t), "missing {t}: {texts:?}");
+        }
+        assert_eq!(knob_names(&v), ["Rate", "Phase", "Depth"]);
+        c.execute(Command::SetDeviceParam { device: did, param: "sync".into(), value: 0.0 });
+        let v = view(&c, did, def);
+        let rate = v.knobs.iter().find(|k| k.label == "Rate").unwrap();
+        assert_eq!(rate.param, def.index_of("rate").unwrap() as i32);
+    }
+
     /// Spectrum: three views from one history; Reset clears it, Hold view stops taking
     /// frames, the History picker is inert in 2D.
     #[test]
@@ -4003,6 +4092,7 @@ mod tests {
             "grains",
             "pitch-corrector",
             "shaper",
+            "lfo",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =

@@ -67,7 +67,7 @@ flowchart LR
   Flanger, Phaser, Ring Mod and Character Mod; and the dynamics family:
   Compressor, Limiter, Gate, Glue Compressor, Character Compressor and Mastering
   Limiter; Transient Shaper; Multiband Compressor; Delay, Echo and Reverb; Distortion, Tape Saturation,
-  Soft Clipper and Bit Crusher; Utility, Stereo Widener, Tuner and Spectrum; Trance Gate; De-Clipper, De-Esser, De-Hummer and De-Noiser; Pitch Shifter, Grains and Pitch Corrector; Shaper), otherwise the card itself in a window. A
+  Soft Clipper and Bit Crusher; Utility, Stereo Widener, Tuner and Spectrum; Trance Gate; De-Clipper, De-Esser, De-Hummer and De-Noiser; Pitch Shifter, Grains and Pitch Corrector; Shaper; LFO), otherwise the card itself in a window. A
   window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same

@@ -373,6 +373,78 @@ impl Controller {
         };
     }
 
+    /// The LFO window's wave (w x h px): two cycles over phase quarters and a centre line,
+    /// the live position dotted on the first; drag sideways for Rate, up or down for Depth.
+    pub(crate) fn lfo_window_wave(&self, d: &Device, def: &'static DeviceDef, w: f32, h: f32, accent: slint::Color) -> PanelCanvas {
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let val = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value_of(d, def, p));
+        let sync = val("sync") >= 0.5;
+        let depth = val("depth");
+        let phase = val("phase") as f64 / 100.0;
+        let (wave, wave_fill) = wave_paths(val("shape").round() as usize, phase, depth / 100.0, w, h);
+        let (cyc, pos) = self.devices.modu.lfo.get(&d.id).map_or((phase as f32, 0.5), |r| (r.2, r.0));
+        let dot_x = ((cyc as f64 - phase).rem_euclid(1.0) as f32) * w / 2.0;
+        let dot_y = h / 2.0 - (h / 2.0 - 3.0) * (depth / 100.0).max(0.04) * (pos * 2.0 - 1.0);
+        let clear = slint::Color::from_argb_u8(0, 0, 0, 0);
+        let path = |commands: String, stroke: slint::Color, width: f32, fill: slint::Color| PanelPath {
+            commands: s(commands),
+            stroke,
+            width,
+            fill,
+            fill2: fill,
+        };
+        let mut grid = format!("M0 {:.1} L{w:.1} {:.1} ", h / 2.0, h / 2.0);
+        let mut quarters = String::new();
+        for q in 0..=8 {
+            let x = w * q as f32 / 8.0;
+            let line = format!("M{x:.1} 0 L{x:.1} {h:.1} ");
+            if q % 4 == 0 { grid.push_str(&line) } else { quarters.push_str(&line) }
+        }
+        let r = 4.5 * Z;
+        let label = |x: f32, text: &str, align: i32| PanelText {
+            x: x - if align == 1 { 30.0 * Z } else { 0.0 },
+            y: h + 4.0 * Z,
+            w: 60.0 * Z,
+            h: 14.0 * Z,
+            text: s(text),
+            color: slint::Color::from_argb_u8(0x73, 255, 255, 255),
+            size: 9.5 * Z,
+            weight: 600,
+            align,
+        };
+        let texts = vec![label(0.0, "0", 0), label(w / 2.0, "1 cycle", 1), label(w - 60.0 * Z, "2", 2)];
+        PanelCanvas {
+            visible: true,
+            well: false,
+            w,
+            h,
+            paths: model(vec![
+                path(quarters, slint::Color::from_argb_u8(0x0d, 255, 255, 255), 1.0, clear),
+                path(grid, slint::Color::from_argb_u8(0x1f, 255, 255, 255), 1.0, clear),
+                path(wave_fill, clear, 0.0, accent.with_alpha(0.18)),
+                path(wave, accent, 2.0 * Z, clear),
+                path(
+                    format!("M{:.1} {dot_y:.1} m-{r} 0 a{r} {r} 0 1 0 {} 0 a{r} {r} 0 1 0 -{} 0", dot_x, 2.0 * r, 2.0 * r),
+                    accent,
+                    1.2,
+                    slint::Color::from_rgb_u8(0xf2, 0xf2, 0xf2),
+                ),
+            ]),
+            texts: model(texts),
+            zones: model(vec![PanelZone {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h,
+                param_x: idx(if sync { "rateSync" } else { "rate" }),
+                param_y: idx("depth"),
+                rate_x: 1.0 / 400.0,
+                rate_y: 1.0 / 400.0,
+            }]),
+            ..Default::default()
+        }
+    }
+
     fn chain_body(&self, d: &Device, def: &'static DeviceDef, card: &mut DeviceCard) {
         let open = self.devices.modu.macro_open.get(&d.id).copied();
         let knobs = def
