@@ -138,6 +138,9 @@ typedef struct se_transport_info {
 int32_t se_transport_play(se_engine* engine);
 int32_t se_transport_pause(se_engine* engine);
 int32_t se_transport_stop(se_engine* engine); /* pause + return to position 0 */
+/* |frame| must be <= SE_MAX_TIMELINE_FRAME (else SE_ERR_INVALID_ARG), so
+ * the playhead cannot overflow while playing. */
+#define SE_MAX_TIMELINE_FRAME (INT64_C(1) << 52)
 int32_t se_transport_seek(se_engine* engine, int64_t frame);
 int32_t se_transport_get(const se_engine* engine, se_transport_info* out_info);
 
@@ -207,7 +210,10 @@ int32_t se_transport_set_loop(se_engine* engine, uint8_t enabled, int64_t start_
  * seeks; they stop on pause/stop/disable. With plugin delay compensation
  * the clicks are delayed by L like the music (heard with the beat they
  * belong to). Excluded from se_export_wav and from the meters. Validation: gain finite and >= 0, frames_per_beat
- * finite and >= 1, beats_per_bar >= 1 (only checked when enabled). */
+ * finite and in [1, SE_MAX_FRAMES_PER_BEAT], beats_per_bar >= 1 (only
+ * checked when enabled). The click grid does not set the tempo devices and
+ * plugins see: that is se_transport_set_tempo (a 6/8 click is an eighth). */
+#define SE_MAX_FRAMES_PER_BEAT 1.0e9
 typedef struct se_metronome_desc {
     uint8_t enabled;
     uint8_t _pad[3];
@@ -218,6 +224,14 @@ typedef struct se_metronome_desc {
 } se_metronome_desc;
 
 int32_t se_metronome_set(se_engine* engine, const se_metronome_desc* desc);
+
+/* Song tempo as frames per QUARTER note (60 * rate / bpm), whatever the
+ * time signature. Drives tempo-synced built-in devices and the plugin host
+ * tempo and song position (in quarter notes from frame 0), live and in
+ * se_render_offline / se_export_wav. Until it is called the tempo is 120
+ * BPM. frames_per_quarter must be finite and in [1, SE_MAX_FRAMES_PER_BEAT]
+ * (else SE_ERR_INVALID_ARG). A transport command (see above). */
+int32_t se_transport_set_tempo(se_engine* engine, double frames_per_quarter);
 
 /* ---- MIDI notes + built-in instrument (ABI v1 addition) -----------------
  * se_session_publish_v2 is a superset of se_session_publish: every v2 track
@@ -505,7 +519,12 @@ int32_t se_input_set_muted(se_engine* engine, uint8_t muted);
  *
  * se_record_stop: stops capturing (the transport keeps its state), waits
  * for the writer, finalizes every file and returns the number of takes,
- * readable with se_record_get_take until the next se_record_start.
+ * readable with se_record_get_take until the next se_record_start. A take
+ * whose file cannot grow (the 4 GiB WAV limit, about 3 h of stereo at 48
+ * kHz, or a write error) is finalized with what was written and returned
+ * with those frames (it is truncated, and counted in write_errors); later
+ * audio of that take is not recorded. A take whose file cannot be created
+ * or finalized is not returned.
  * Errors: start while recording / stop while not, no armed track with an
  * input, or a running device without an open input -> SE_ERR_STATE; dir not
  * creatable -> SE_ERR_IO; non-integer engine rate -> SE_ERR_UNSUPPORTED_FORMAT. */
@@ -545,7 +564,7 @@ int32_t se_record_peaks(se_engine* engine, uint64_t track_id, uint32_t frames_pe
 typedef struct se_record_stats {
     uint64_t overruns;       /* blocks dropped because a ring was full (all tracks) */
     uint64_t dropped_frames; /* frames lost to overruns (sum over tracks) */
-    uint64_t write_errors;   /* takes that could not be written completely */
+    uint64_t write_errors;   /* takes that could not be written completely (truncated or lost) */
     uint64_t takes;          /* takes started so far */
 } se_record_stats; /* 32 bytes */
 

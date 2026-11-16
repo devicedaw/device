@@ -1004,8 +1004,8 @@ impl Controller {
         self.sync_loop_and_click();
     }
 
-    /// Push loop region and metronome grid (both derived from the project
-    /// transport) to the engine. Cheap; called after every publish.
+    /// Push loop region, tempo and metronome grid (all derived from the
+    /// project transport) to the engine. Cheap; called after every publish.
     pub(crate) fn sync_loop_and_click(&mut self) {
         let p = self.doc.project();
         let tr = &p.transport;
@@ -1015,7 +1015,13 @@ impl Controller {
         // A count-in clicks whether the metronome is on or not.
         let enabled = self.metronome_on || self.rec.count_in.is_some();
         let cfg = MetronomeConfig { enabled, gain: 0.5, frames_per_beat, beats_per_bar: tr.time_signature.numerator as u32 };
-        let r = self.engine.set_loop(tr.loop_enabled, start, end).and_then(|_| self.engine.set_metronome(cfg));
+        // Devices and plugins count quarter notes, whatever the click grid (6/8 clicks eighths).
+        let frames_per_quarter = p.ticks_to_seconds(PPQ) * self.rate;
+        let r = self
+            .engine
+            .set_loop(tr.loop_enabled, start, end)
+            .and_then(|_| self.engine.set_tempo(frames_per_quarter))
+            .and_then(|_| self.engine.set_metronome(cfg));
         if let Err(e) = r {
             self.set_status(format!("Engine: {e}"), 4);
         }

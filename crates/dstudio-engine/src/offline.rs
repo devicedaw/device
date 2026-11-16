@@ -22,7 +22,7 @@
 //! Plugins run in real-time process mode, like in playback: a plugin that sounds different when
 //! it knows it is offline would make the file differ from what the user hears.
 
-use crate::{Config, Engine, EngineError, MetronomeConfig};
+use crate::{Config, Engine, EngineError};
 use dstudio_core::snapshot;
 use dstudio_core::{AssetId, Device, PPQ, PluginFormat, Project, Transient};
 use std::collections::{HashMap, HashSet};
@@ -163,14 +163,8 @@ impl Session {
         if let Some((_, why)) = engine.plugin_load_errors().first() {
             return Err(OfflineError::Failed(format!("a plugin could not be loaded: {why}")));
         }
-        let tr = &p.transport;
-        let frames_per_beat = p.ticks_to_seconds(PPQ * 4 / tr.time_signature.denominator as i64) * job.rate;
-        engine.set_metronome(MetronomeConfig {
-            enabled: false,
-            gain: 0.5,
-            frames_per_beat,
-            beats_per_bar: tr.time_signature.numerator as u32,
-        })?;
+        // The song tempo for tempo-synced devices and plugins, in quarter notes (no click here).
+        engine.set_tempo(p.ticks_to_seconds(PPQ) * job.rate)?;
         let waited = Instant::now();
         while engine.warp_renders_pending() > 0 {
             check()?;

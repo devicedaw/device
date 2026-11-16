@@ -6,6 +6,8 @@
 use std::ffi::c_char;
 
 pub const SE_ABI_VERSION: u32 = 1;
+pub const SE_MAX_FRAMES_PER_BEAT: f64 = 1.0e9;
+pub const SE_MAX_TIMELINE_FRAME: i64 = 1 << 52;
 
 pub const SE_OK: i32 = 0;
 pub const SE_ERR_INVALID_ARG: i32 = -1;
@@ -888,6 +890,7 @@ unsafe extern "C" {
     pub fn se_meters_peek(engine: *mut se_engine, out: *mut se_meter, capacity: usize, out_count: *mut usize) -> i32;
     pub fn se_transport_set_loop(engine: *mut se_engine, enabled: u8, start_frame: i64, end_frame: i64) -> i32;
     pub fn se_metronome_set(engine: *mut se_engine, desc: *const se_metronome_desc) -> i32;
+    pub fn se_transport_set_tempo(engine: *mut se_engine, frames_per_quarter: f64) -> i32;
     pub fn se_session_publish_v2(engine: *mut se_engine, session: *const se_session_desc_v2) -> i32;
     pub fn se_session_publish_v3(engine: *mut se_engine, session: *const se_session_desc_v3) -> i32;
     pub fn se_synth_params_default(out: *mut se_synth_params);

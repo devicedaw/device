@@ -106,6 +106,11 @@ pub struct Meter {
     pub peak_r: f32,
 }
 
+/// Largest `frames_per_beat` / `frames_per_quarter` the engine accepts.
+pub const MAX_FRAMES_PER_BEAT: f64 = ffi::SE_MAX_FRAMES_PER_BEAT;
+/// Largest `|frame|` [`Engine::seek`] accepts.
+pub const MAX_TIMELINE_FRAME: i64 = ffi::SE_MAX_TIMELINE_FRAME;
+
 /// Metronome settings for [`Engine::set_metronome`]. Beat `k` clicks at
 /// timeline frame `round(k * frames_per_beat)`; every `beats_per_bar`-th
 /// beat (from beat 0 at frame 0) is a downbeat. `gain` is linear and applied
@@ -120,6 +125,10 @@ pub struct MetronomeConfig {
 
 pub struct Engine {
     raw: *mut ffi::se_engine,
+    /// Held from a plugin state save until its bytes are copied out: the
+    /// engine-owned buffer `se_plugin_saved_state` points into is replaced by
+    /// the next save, and `Engine` is `Sync`.
+    saved_state: std::sync::Mutex<()>,
 }
 
 // SAFETY: the C ABI is documented thread-safe for non-RT callers; the handle
@@ -140,7 +149,7 @@ impl Engine {
         if raw.is_null() {
             check(ffi::SE_ERR_STATE)?;
         }
-        Ok(Engine { raw })
+        Ok(Engine { raw, saved_state: std::sync::Mutex::new(()) })
     }
 
     pub fn abi_version() -> u32 {
@@ -500,6 +509,7 @@ impl Engine {
         check(unsafe { ffi::se_transport_stop(self.raw) })
     }
 
+    /// `|frame|` must be at most [`MAX_TIMELINE_FRAME`].
     pub fn seek(&self, frame: i64) -> Result<(), EngineError> {
         check(unsafe { ffi::se_transport_seek(self.raw, frame) })
     }
@@ -538,6 +548,16 @@ impl Engine {
         check(unsafe { ffi::se_transport_set_loop(self.raw, enabled as u8, start, end) })
     }
 
+    /// Song tempo for tempo-synced devices and plugins, in frames per quarter
+    /// note (`60 * rate / bpm`), independent of the metronome's click grid
+    /// (one time-signature denominator note). 120 BPM until set. Must be
+    /// finite and in `1..=MAX_FRAMES_PER_BEAT`.
+    pub fn set_tempo(&self, frames_per_quarter: f64) -> Result<(), EngineError> {
+        // SAFETY: valid handle.
+        check(unsafe { ffi::se_transport_set_tempo(self.raw, frames_per_quarter) })
+    }
+
+    /// The click grid only; the tempo devices see is [`Engine::set_tempo`].
     pub fn set_metronome(&self, cfg: MetronomeConfig) -> Result<(), EngineError> {
         let d = ffi::se_metronome_desc {
             enabled: cfg.enabled as u8,
@@ -1562,6 +1582,7 @@ impl Engine {
     /// CLAP save state on the main thread; safe while audio runs).
     /// Instances whose save fails are left out.
     pub fn plugin_states(&self) -> Vec<(dstudio_core::DeviceId, String)> {
+        let _saved = self.saved_state.lock().unwrap_or_else(|e| e.into_inner());
         let mut n = 0usize;
         // SAFETY: valid handle and out pointer.
         if unsafe { ffi::se_plugin_save_states(self.raw, &mut n) } != ffi::SE_OK {
@@ -1570,7 +1591,8 @@ impl Engine {
         let mut out = Vec::with_capacity(n);
         for i in 0..n {
             let (mut id, mut data, mut len) = (0u64, std::ptr::null::<u8>(), 0usize);
-            // SAFETY: out pointers are valid; the data stays valid until the next save call (we copy it now).
+            // SAFETY: out pointers are valid; the data stays valid until the next save call, which
+            // `saved_state` holds off until we have copied it.
             if unsafe { ffi::se_plugin_saved_state(self.raw, i, &mut id, &mut data, &mut len) } == ffi::SE_OK {
                 let bytes = if len == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(data, len) } };
                 out.push((dstudio_core::DeviceId(id), dstudio_core::device::b64::encode(bytes)));
@@ -1584,13 +1606,15 @@ impl Engine {
     /// An instance that fails to save is an error. MAIN THREAD, like
     /// [`Engine::plugin_states`], but one instance per call.
     pub fn plugin_state_of(&self, device: dstudio_core::DeviceId) -> Result<Option<Vec<u8>>, EngineError> {
+        let _saved = self.saved_state.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: valid handle.
         match unsafe { ffi::se_plugin_save_state(self.raw, device.0) } {
             ffi::SE_ERR_NOT_FOUND => return Ok(None),
             rc => check(rc)?,
         }
         let (mut id, mut data, mut len) = (0u64, std::ptr::null::<u8>(), 0usize);
-        // SAFETY: out pointers are valid; the data stays valid until the next save call (we copy it now).
+        // SAFETY: out pointers are valid; the data stays valid until the next save call, which
+        // `saved_state` holds off until we have copied it.
         check(unsafe { ffi::se_plugin_saved_state(self.raw, 0, &mut id, &mut data, &mut len) })?;
         Ok(Some(if len == 0 { Vec::new() } else { unsafe { std::slice::from_raw_parts(data, len) }.to_vec() }))
     }

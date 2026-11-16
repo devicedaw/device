@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <utility>
 
@@ -245,20 +246,32 @@ int32_t read_file_bytes(const char* utf8_path, std::vector<uint8_t>& bytes, std:
         return SE_ERR_IO;
     }
     bytes.clear();
-    constexpr long kMaxImportBytes = 0x7fffffffL;
-    const long len = std::fseek(f, 0, SEEK_END) == 0 ? std::ftell(f) : -1L;
-    if (len < 0 || std::fseek(f, 0, SEEK_SET) != 0) {
+    // Anything WavFloatWriter writes (and any plain RIFF/AIFF: 32-bit chunk
+    // sizes) fits; the size is read 64-bit (ftell's long is 32-bit on Windows).
+    constexpr uint64_t kMaxImportBytes = (uint64_t{1} << 32) + 8;
+    std::error_code ec;
+    const std::uintmax_t size = std::filesystem::file_size(os::path_from_utf8(utf8_path), ec);
+    if (ec) {
         std::fclose(f);
         err = std::string("cannot read file size: ") + utf8_path;
         return SE_ERR_IO;
     }
-    if (len >= kMaxImportBytes) {
+    if (size > kMaxImportBytes || size > std::numeric_limits<std::size_t>::max()) {
         std::fclose(f);
-        err = std::string("file is larger than 2 GB: ") + utf8_path;
+        err = std::string("file is larger than 4 GB: ") + utf8_path;
         return SE_ERR_IO;
     }
-    if (len > 0) bytes.resize(static_cast<std::size_t>(len));
-    const std::size_t got = bytes.empty() ? 0 : std::fread(bytes.data(), 1, bytes.size(), f);
+    const auto len = static_cast<std::size_t>(size);
+    if (len > 0) bytes.resize(len);
+    // In chunks: some C runtimes mishandle single reads past INT_MAX bytes.
+    constexpr std::size_t kChunk = std::size_t{64} << 20;
+    std::size_t got = 0;
+    while (got < bytes.size()) {
+        const std::size_t want = std::min(kChunk, bytes.size() - got);
+        const std::size_t n = std::fread(bytes.data() + got, 1, want, f);
+        got += n;
+        if (n != want) break;
+    }
     const bool io_error = std::ferror(f) != 0;
     std::fclose(f);
     if (io_error || got != bytes.size()) {
@@ -333,8 +346,12 @@ int32_t WavFloatWriter::write(const float* interleaved, uint64_t frames, std::st
         err = "WAV writer not open";
         return SE_ERR_STATE;
     }
-    const uint64_t max_frames = (std::numeric_limits<uint32_t>::max() - kHeaderSize) / (channels_ * 4u);
+    const uint64_t max_bytes = std::min<uint64_t>(std::numeric_limits<uint32_t>::max() - kHeaderSize, max_data_bytes_);
+    const uint64_t max_frames = max_bytes / (channels_ * 4u);
     if (frames_written_ + frames > max_frames) {
+        // Write what still fits, so the file ends exactly at the limit.
+        const uint64_t room = max_frames > frames_written_ ? max_frames - frames_written_ : 0;
+        if (room > 0 && write(interleaved, room, err) != SE_OK) return SE_ERR_IO;
         err = "WAV output exceeds 4 GiB (RF64 not supported)";
         return SE_ERR_INVALID_ARG;
     }

@@ -144,6 +144,29 @@ fn bounce_of_a_midi_clip_plays_that_clip_only_and_rings_into_its_tail() {
 }
 
 #[test]
+fn tempo_synced_devices_follow_the_song_tempo_in_quarters_in_compound_meter() {
+    // 6/8 at 90 BPM: a quarter is 32000 frames, so a 1/16 gate step is 8000 (not 4000 from the
+    // eighth-note click, nor 6000 from a 120 BPM default).
+    let mut r = rig(2.0);
+    let (a, asset) = (r.doc.project().tracks[0].id, r.doc.project().assets[0].id);
+    r.doc.execute(Command::SetTempo { bpm: 90.0 }, Origin::User).unwrap();
+    r.doc.execute(Command::SetTimeSignature { numerator: 6, denominator: 8 }, Origin::User).unwrap();
+    let mut gate = dstudio_core::builtin::find("trance-gate").unwrap().instantiate();
+    for (k, v) in [("p1_steps", 2.0), ("p1_lo", 1.0), ("release", 1.0)] {
+        gate.params.insert(k.into(), v); // pattern "x.", 1 ms release
+    }
+    r.doc.execute(Command::AddDevice { track: a, index: None, device: gate }, Origin::User).unwrap();
+    r.doc.execute(Command::AddClip { track: a, clip: audio_clip(asset, 101, 0, 2.0) }, Origin::User).unwrap();
+    let span = render_plan::consolidate_group(r.doc.project(), ClipId(101)).unwrap();
+    let out = r.render(&span, RenderMode::Bounce, 0.0);
+    let l: Vec<f32> = out.iter().step_by(2).copied().collect();
+    let step = 8000;
+    assert!(peak(&l[200..step - 200]) > 0.1, "open in step 0");
+    assert!(peak(&l[step + 200..2 * step]) < 1e-4, "closed in step 1: {}", peak(&l[step + 200..2 * step]));
+    assert!(peak(&l[2 * step + 200..3 * step - 200]) > 0.1, "open again in step 2");
+}
+
+#[test]
 fn a_finished_render_reports_every_frame_done() {
     let mut r = rig(2.0);
     let (a, asset) = (r.doc.project().tracks[0].id, r.doc.project().assets[0].id);

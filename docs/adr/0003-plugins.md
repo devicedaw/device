@@ -49,6 +49,7 @@ Details in engine/README.md "Plugins". Where the implementation refines or devia
   `se_plugin_idle` once the audio thread can no longer reach them (no janitor thread).
 - **Editor titles** are just the plugin name for now: `TrackSnapshot` carries no track name (the ABI has a
   `track_name` field ready for it).
-- **Tempo for plugins** comes from the metronome grid (`se_metronome_set`), 120 BPM until one is set.
+- **Tempo for plugins** comes from `se_transport_set_tempo` (frames per quarter note, separate from the
+  metronome's click grid, which is one time-signature denominator note), 120 BPM until one is set.
 - **Export** with plugins uses the live instances and therefore needs the audio device stopped.
 - **Failed instrument plugins** render silence (they do not fall back to the built-in synth).

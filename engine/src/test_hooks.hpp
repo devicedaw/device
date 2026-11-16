@@ -21,6 +21,9 @@ void set_device_factory(se_engine* e, std::function<std::unique_ptr<AudioDevice>
 void set_record_writer_stalled(se_engine* e, bool stalled);
 // Ring size (frames per track) for the next se_record_start; 0 = default (2 s).
 void set_record_ring_frames(se_engine* e, std::size_t frames);
+// Caps each take's WAV data chunk, in bytes, for the next se_record_start
+// (0 = the 4 GiB RIFF limit), so tests can hit the limit cheaply.
+void set_record_max_take_bytes(se_engine* e, uint64_t bytes);
 // Background warp renders on/off (off: warped clips always stretch live).
 void set_warp_renders_enabled(se_engine* e, bool enabled);
 // Plugin instances created so far (successful or not).
