@@ -60,6 +60,8 @@ const BOX_RULE: i32 = 1;
 const BOX_TRACK: i32 = 2;
 const BOX_HEADER_RULE: i32 = 3;
 const BOX_DISPLAY: i32 = 4;
+/// Left edge of the Trance Gate's envelope display and card (its ring panel is left of it).
+const TG_DISPLAY_X: f32 = 304.0;
 
 /// Window actions (Studio.win-action, MenuPick::Window).
 pub(crate) const ACT_SECTION: i32 = 1;
@@ -128,7 +130,7 @@ pub(crate) fn has_window(def: &DeviceDef) -> bool {
         def.id,
         "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb" | "echo"
     ) || is_wave_window(def)
-        || matches!(def.id, "utility" | "widener" | "tuner" | "spectrum")
+        || matches!(def.id, "utility" | "widener" | "tuner" | "spectrum" | "trance-gate")
         || def.id == "bitcrusher"
         || is_field_window(def)
         || is_dynamics_window(def)
@@ -194,6 +196,10 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         // Stereo Widener: the field over the correlation lane.
         // Spectrum: the analyser across the display, one Level meter beside it.
         "spectrum" => Kit { w: 1200.0, display: (INSET, 52.0, 1108.0, 514.0), plot: (36.0, 32.0, 42.0, 34.0), narrow: true, meters_h: 0.0 },
+        // Trance Gate: the envelope across the display right of the ring panel; no meters.
+        "trance-gate" => {
+            Kit { w: 1200.0, display: (TG_DISPLAY_X, 56.0, 880.0, 516.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: true, meters_h: 0.0 }
+        }
         // Tuner: the bar across a tall display, one In meter beside it.
         "tuner" => Kit { w: 1200.0, display: (INSET, 52.0, 1108.0, 550.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: true, meters_h: 0.0 },
         // Its meters run down past the card, as the Bit Crusher's.
@@ -493,6 +499,8 @@ struct Builder {
     accent: Color,
     /// Window content width.
     w: f32,
+    /// Left edge of the control cards (INSET; the Trance Gate's start right of its ring panel).
+    left: f32,
     boxes: Vec<WinBox>,
     pills: Vec<WinPill>,
     knobs: Vec<PanelKnob>,
@@ -506,7 +514,16 @@ fn accent_of(b: &Builder) -> Color {
 
 impl Builder {
     fn new(accent: Color, w: f32) -> Self {
-        Builder { accent, w, boxes: Vec::new(), pills: Vec::new(), knobs: Vec::new(), texts: Vec::new(), square: PanelCanvas::default() }
+        Builder {
+            accent,
+            w,
+            left: INSET,
+            boxes: Vec::new(),
+            pills: Vec::new(),
+            knobs: Vec::new(),
+            texts: Vec::new(),
+            square: PanelCanvas::default(),
+        }
     }
 
     fn rect(&mut self, kind: i32, x: f32, y: f32, w: f32, h: f32) {
@@ -665,6 +682,8 @@ impl Controller {
             _ if def.id == "bitcrusher" => self.crush_window_canvas(d, def, &k, accent),
             _ if def.id == "widener" => self.widener_window_canvas(d, def, &k, accent),
             _ if def.id == "spectrum" => self.spectrum_window_canvas(d, def, &k, accent),
+            // The ring panel and the envelope display share one canvas from the panel's corner.
+            _ if def.id == "trance-gate" => self.trance_gate_window_canvas(d, def, accent, dx + dw - INSET, dh),
             // The card's tuner at twice its scale, its bar across the middle of the display.
             _ if def.id == "tuner" => {
                 PanelCanvas { well: false, ..self.tuner_canvas_at(d, def, k.display.2 / 2.0, TUNER_WIN_H, 2.0 * Z, accent) }
@@ -674,6 +693,9 @@ impl Controller {
         };
         display.x = (dx + k.plot.0) * Z;
         display.y = (dy + k.plot.1) * Z;
+        if def.id == "trance-gate" {
+            display.x = INSET * Z;
+        }
         let height = match def.id {
             "auto-filter" => self.auto_filter_window(d, def, &mut b),
             "channeleq" => self.channel_eq_window(d, def, &mut b),
@@ -689,9 +711,14 @@ impl Controller {
             "widener" => self.widener_window(d, def, &mut b, dy + dh + 12.0),
             "tuner" => self.tuner_window(d, def, &mut b, dy + dh + 14.0),
             "spectrum" => self.spectrum_window(d, def, &mut b, dy + dh + 12.0),
+            "trance-gate" => self.trance_gate_window(d, def, &mut b, dy + dh + 12.0),
             _ => self.field_window(d, def, &mut b, dy + dh + 12.0),
         };
-        let (mut meters, ticks, mut ticks_x) = self.window_meters(d.id, &k);
+        let (mut meters, mut ticks, mut ticks_x) = self.window_meters(d.id, &k);
+        if def.id == "trance-gate" {
+            meters.clear();
+            ticks.clear();
+        }
         // The Tuner meters its input only; the Spectrum its level.
         if matches!(def.id, "tuner" | "spectrum") {
             meters.truncate(1);
@@ -942,12 +969,12 @@ impl Controller {
 
     /// A row of clusters in a card: places every item, the card and its rules.
     fn win_card(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, row: Row, clusters: Vec<(Vec<Item>, f32)>) {
-        b.rect(BOX_CARD, INSET, row.y, b.w - 2.0 * INSET, row.h);
+        b.rect(BOX_CARD, b.left, row.y, b.w - b.left - INSET, row.h);
         let widths: Vec<f32> = clusters
             .iter()
             .map(|(items, gap)| items.iter().map(Item::width).sum::<f32>() + gap * (items.len().saturating_sub(1)) as f32)
             .collect();
-        let (xs, rules) = gutter(INSET, b.w - 2.0 * INSET, &widths);
+        let (xs, rules) = gutter(b.left, b.w - b.left - INSET, &widths);
         let rule_h = row.h - 24.0;
         for rx in rules {
             b.rect(BOX_RULE, rx, row.y + 12.0, 1.0, rule_h);
@@ -1782,6 +1809,28 @@ impl Controller {
                 (vec![Item::ToggleW("mute_output", "Mute Output", 96.0)], 0.0),
             ],
         );
+        row.y + row.h + 16.0
+    }
+
+    /// Trance Gate: the ring panel down the left; under the envelope, one card with the
+    /// envelope's Attack, Decay, Sustain and Release, Swing, and Mix.
+    fn trance_gate_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        let knob = |id, name| Item::Knob(id, name, 1, 62.0, false);
+        let row = Row { y, h: 100.0, dial: 26.0, value: 52.0, pill: 28.0, picker: 44.0 };
+        b.rect(BOX_CARD, INSET, 56.0, TG_DISPLAY_X - INSET - 14.0, row.y + row.h - 56.0);
+        b.left = TG_DISPLAY_X;
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (vec![knob("attack", "Attack"), knob("decay", "Decay"), knob("sustain", "Sustain"), knob("release", "Release")], 0.0),
+                (vec![knob("swing", "Swing")], 0.0),
+                (vec![knob("mix", "Mix")], 0.0),
+            ],
+        );
+        b.left = INSET;
         row.y + row.h + 16.0
     }
 
@@ -3376,6 +3425,39 @@ mod tests {
         }
     }
 
+    /// Trance Gate: the ring panel and envelope share one interactive canvas, no meters, and
+    /// a press on the window's ring toggles the step under it (window geometry, not the card's).
+    #[test]
+    fn trance_gate_window_toggles_steps_on_its_own_ring() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("trance-gate");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 700.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert_eq!(v.meters.row_count(), 0);
+        assert!(v.display.interactive && v.display.paths.row_count() > 10);
+        assert_eq!(knob_names(&v), ["Attack", "Decay", "Sustain", "Release", "Swing", "Mix"]);
+        assert!(v.display.texts.iter().any(|t| t.text == "Envelope"));
+        let bits = |c: &Controller| {
+            let d = c.project().device(did).unwrap();
+            c.panel_value(d, def, def.param("p1_lo").unwrap()).round() as u32
+        };
+        let before = bits(&c);
+        // The middle of step 1 on the window's ring (16 steps), in canvas px.
+        let g = crate::device_editors::TG_WIN;
+        let (r, a) = (0.8 * g.ring_r(), std::f32::consts::TAU * 0.5 / 16.0);
+        let (x, y) = (g.ring_cx() + r * a.sin(), g.ring_cy() - r * a.cos());
+        let ev =
+            |kind| crate::device_editors::CanvasEvent { kind, x: x * Z, y: y * Z, wx: 0.0, wy: 0.0, shift: false, alt: false, wheel: 0.0 };
+        c.panel_editor(did, ev(16));
+        c.panel_editor(did, ev(18));
+        assert_eq!(bits(&c) ^ before, 1, "step 1 toggled");
+        // The same point on the card misses the ring (its ring is smaller and higher).
+        c.panel_editor(did, ev(0));
+        c.panel_editor(did, ev(2));
+        assert_eq!(bits(&c) ^ before, 1, "the card's geometry did not take the window's point");
+    }
+
     /// Spectrum: three views from one history; Reset clears it, Hold view stops taking
     /// frames, the History picker is inert in 2D.
     #[test]
@@ -3453,6 +3535,7 @@ mod tests {
             "widener",
             "tuner",
             "spectrum",
+            "trance-gate",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =
