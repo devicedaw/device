@@ -21,6 +21,11 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 - Settings › General › Projects folder: choose where your projects are saved. Save starts there, and the browser
   lists the projects in it.
 
+### Changed
+
+- Projects has its own tab at the top of the browser, next to Devices and Files, with its own search. The Files tab
+  now only shows your folders.
+
 ### Fixed
 
 - Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song
