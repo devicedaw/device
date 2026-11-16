@@ -131,7 +131,8 @@ gain it applied, and Multiband Compressor, whose window draws each band's level,
 axis with draggable crossovers, and Delay, Echo and Reverb, whose window draws the card's echo train, tail picture or repeat
 EQ at full size with every control in a row below, Distortion, Tape Saturation and Soft Clipper, whose window draws
 the transfer curve beside a sine through the device, Bit Crusher, whose window draws one crushed cycle, Utility, and Stereo Widener, whose window draws the stereo
-field over a live correlation lane, and Tuner; the other devices open their card in a window for now.
+field over a live correlation lane, Tuner, and Spectrum, whose window shows the spectrum flat, as a 3D waterfall of its
+history, or split over a spectrogram; the other devices open their card in a window for now.
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |

@@ -1376,6 +1376,7 @@ impl WindowSignal {
             c.set_status(format!("review-window: {e}"), 10);
             return;
         }
+        c.panel_poll_views_at(at);
         c.poll_window_meters_at(at);
     }
 }
@@ -2396,8 +2397,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.execute(dstudio_core::Command::SetTrackMonitor { track: t, monitor: true });
                 c.set_track_input(t, Some(dstudio_core::InputSource { channel: 0, stereo: false }));
                 let mut sig = WindowSignal::default();
-                let mut at = Instant::now() - Duration::from_millis(990);
-                for _ in 0..33 {
+                // Spectrum renders long enough to fill its window's 128-frame history.
+                let pre = if id == "spectrum" { 160 } else { 33 };
+                let mut at = Instant::now() - Duration::from_millis(30 * pre as u64);
+                for _ in 0..pre {
                     sig.step(&mut c, at);
                     at += Duration::from_millis(30);
                 }

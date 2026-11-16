@@ -153,12 +153,44 @@ impl Plot {
 }
 
 pub(crate) fn path(pts: &[(f32, f32)]) -> String {
-    use std::fmt::Write;
     let mut out = String::with_capacity(pts.len() * 16);
     for (i, (x, y)) in pts.iter().enumerate() {
-        let _ = write!(out, "{}{x:.1} {y:.1}", if i == 0 { "M" } else { " L" });
+        out.push_str(if i == 0 { "M" } else { " L" });
+        push_tenths(&mut out, *x);
+        out.push(' ');
+        push_tenths(&mut out, *y);
     }
     out
+}
+
+/// Appends `v` to one decimal, as `{:.1}` would, without the float formatter: windows
+/// rebuild every frame and their curves hold thousands of coordinates.
+pub(crate) fn push_tenths(out: &mut String, v: f32) {
+    let t = (v * 10.0).round();
+    if !t.is_finite() || t.abs() > 1.0e9 {
+        use std::fmt::Write;
+        let _ = write!(out, "{v:.1}");
+        return;
+    }
+    let t = t as i64;
+    if t < 0 {
+        out.push('-');
+    }
+    let a = t.unsigned_abs();
+    let mut buf = [0u8; 20];
+    let mut i = buf.len();
+    let mut w = a / 10;
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (w % 10) as u8;
+        w /= 10;
+        if w == 0 {
+            break;
+        }
+    }
+    out.push_str(std::str::from_utf8(&buf[i..]).unwrap_or("0"));
+    out.push('.');
+    out.push((b'0' + (a % 10) as u8) as char);
 }
 
 /// Closed area between a curve and the horizontal line at `base`.
@@ -1592,6 +1624,17 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tenths_match_the_float_formatter() {
+        for v in [0.0f32, 0.04, 0.06, -0.06, 1.25, -3.75, 12.34, 999.95, -1234.56, 0.5, 7.0] {
+            let mut s = String::new();
+            push_tenths(&mut s, v);
+            let want = format!("{:.1}", (v * 10.0).round() / 10.0);
+            assert_eq!(s, want, "{v}");
+        }
+        assert_eq!(path(&[(1.0, 2.0), (-3.5, 4.25)]), "M1.0 2.0 L-3.5 4.3");
+    }
 
     #[test]
     fn plot_maps_log_frequency_and_db() {

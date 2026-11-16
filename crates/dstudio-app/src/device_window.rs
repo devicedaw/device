@@ -3400,7 +3400,7 @@ mod tests {
         }
         assert_eq!(h.frames.len(), 128);
         let full_3d = view(&c, did, def).display.paths.row_count();
-        assert!(full_3d >= empty_3d + 2 * 40, "{empty_3d} -> {full_3d}");
+        assert!(full_3d >= empty_3d + 2 * 32, "{empty_3d} -> {full_3d}");
         c.execute(Command::SetDeviceParam { device: did, param: "display_mode".into(), value: 2.0 });
         let split = view(&c, did, def);
         let well = split.boxes.iter().find(|b| b.kind == BOX_DISPLAY).unwrap();

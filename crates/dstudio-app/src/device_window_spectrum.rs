@@ -7,7 +7,7 @@
 use crate::PanelCanvas;
 use crate::analyzer_views::{SPECTRUM_BANDS, spectrum_color};
 use crate::controller::Controller;
-use crate::device_canvas::{dashed, fill, path, rgba, stroke, text, white};
+use crate::device_canvas::{dashed, fill, path, push_tenths, rgba, stroke, text, white};
 use crate::device_panel::Z;
 use crate::device_window::Kit;
 use crate::{PanelPath, PanelText};
@@ -32,7 +32,7 @@ pub(crate) const MODE_SPLIT: i32 = 2;
 const SPLIT_2D_H: f32 = 242.0;
 pub(crate) const SPLIT_GRAM_Y: f32 = 278.0;
 /// Most waterfall lines and spectrogram rows drawn, and points / columns per row.
-const MAX_LINES: usize = 40;
+const MAX_LINES: usize = 32;
 const MAX_ROWS: usize = 64;
 const COLS: usize = 96;
 /// Spectrogram ink steps.
@@ -120,6 +120,7 @@ impl Controller {
         let mut texts: Vec<PanelText> = Vec::new();
         let frame = self.spectrum_frame(d.id);
         let history = self.win_spec_history(d.id);
+        let depth = DEPTHS[(v("history_depth", 3.0).round().max(0.0) as usize).min(DEPTHS.len() - 1)];
 
         // Caption: the loudest peak and the transport; the tilt on the right.
         let cy = -(pt - 18.0) * Z;
@@ -136,7 +137,7 @@ impl Controller {
         texts.push(text(pw, cy, 160.0 * Z, tilt, dim, 10.0 * Z, 2));
 
         if mode == MODE_3D {
-            Self::spectrum_waterfall(history, pw, ph, ceiling, range, color, &mut paths);
+            Self::spectrum_waterfall(history, depth, pw, ph, ceiling, range, color, &mut paths);
         } else {
             let h2 = if mode == MODE_SPLIT { SPLIT_2D_H * Z } else { ph };
             Self::spectrum_2d(frame, pw, h2, ceiling, range, slope, color, &mut paths, &mut texts);
@@ -144,7 +145,7 @@ impl Controller {
                 let (gx, gy) = (-pl * Z, SPLIT_GRAM_Y * Z);
                 let (gw, gh) = (dw * Z, ph + pb * Z - gy);
                 paths.push(fill(format!("M{gx:.1} {gy:.1} h{gw:.1} v{gh:.1} h{:.1} Z", -gw), Color::from_rgb_u8(0, 0, 0)));
-                Self::spectrogram(history, gx, gy, gw, gh, ceiling, range, color, &mut paths);
+                Self::spectrogram(history, depth, gx, gy, gw, gh, ceiling, range, color, &mut paths);
             }
         }
         PanelCanvas {
@@ -218,8 +219,10 @@ impl Controller {
     /// The waterfall: up to MAX_LINES frames from the back (oldest, raised and narrowed)
     /// to the front (newest), each filled with the display so it hides those behind it.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn spectrum_waterfall(
         history: Option<&SpecHistory>,
+        depth_frames: usize,
         w: f32,
         h: f32,
         ceiling: f32,
@@ -242,14 +245,18 @@ impl Controller {
         }
         paths.push(stroke(floor, white(0.08), 1.0));
         let Some(hist) = history.filter(|h| !h.frames.is_empty()) else { return };
+        // Lines sit at their age on the floor: the back is the oldest frame the history keeps,
+        // so a history still filling up starts at the front.
         let n = hist.frames.len();
-        let lines = n.min(MAX_LINES);
+        let full = depth_frames.max(n).max(2);
+        let stride = full.div_ceil(MAX_LINES);
+        let lines = n.div_ceil(stride);
         let bg = Color::from_rgb_u8(0x14, 0x15, 0x17);
-        for li in 0..lines {
-            // Oldest first: li = 0 is the back.
-            let fi = if lines == 1 { n - 1 } else { li * (n - 1) / (lines - 1) };
-            let k = 1.0 - fi as f32 / (n.max(2) - 1) as f32;
-            let k = if n == 1 { 0.0 } else { k };
+        for li in (0..lines).rev() {
+            // Oldest first: the largest age is drawn first, at the back.
+            let age = li * stride;
+            let fi = n - 1 - age;
+            let k = age as f32 / (full - 1) as f32;
             let (l, r) = span(k);
             let y0 = base(k);
             let a = amp * (1.0 - 0.35 * k);
@@ -272,6 +279,7 @@ impl Controller {
     #[allow(clippy::too_many_arguments)]
     fn spectrogram(
         history: Option<&SpecHistory>,
+        depth_frames: usize,
         x0: f32,
         y0: f32,
         w: f32,
@@ -282,14 +290,17 @@ impl Controller {
         paths: &mut Vec<PanelPath>,
     ) {
         let Some(hist) = history.filter(|h| !h.frames.is_empty()) else { return };
+        // Rows are sized for the whole history, so one still filling up grows down from the top.
         let n = hist.frames.len();
-        let rows = n.min(MAX_ROWS);
-        let rh = h / rows as f32;
+        let full = depth_frames.max(n).max(1);
+        let stride = full.div_ceil(MAX_ROWS);
+        let rh = h / full.div_ceil(stride) as f32;
+        let rows = n.div_ceil(stride);
         let cw = w / COLS as f32;
         let mut inks: Vec<String> = vec![String::new(); STEPS];
         for ri in 0..rows {
             // Row 0 (top) is the newest.
-            let fi = n - 1 - ri * n / rows;
+            let fi = n - 1 - ri * stride;
             let vals = decimate(&hist.frames[fi], COLS);
             let y = y0 + ri as f32 * rh;
             let mut c = 0;
@@ -301,13 +312,18 @@ impl Controller {
                     e += 1;
                 }
                 if s > 0 {
-                    let _ = write!(
-                        inks[s - 1],
-                        "M{:.1} {y:.1} h{:.1} v{rh:.1} h{:.1} Z ",
-                        x0 + c as f32 * cw,
-                        (e - c) as f32 * cw,
-                        -((e - c) as f32 * cw)
-                    );
+                    let (o, rw) = (&mut inks[s - 1], (e - c) as f32 * cw);
+                    o.push('M');
+                    push_tenths(o, x0 + c as f32 * cw);
+                    o.push(' ');
+                    push_tenths(o, y);
+                    o.push_str(" h");
+                    push_tenths(o, rw);
+                    o.push_str(" v");
+                    push_tenths(o, rh);
+                    o.push_str(" h");
+                    push_tenths(o, -rw);
+                    o.push_str(" Z ");
                 }
                 c = e;
             }
@@ -334,6 +350,29 @@ mod tests {
         assert_eq!(h.frames.len(), 2);
         assert_eq!(h.frames[0][0], 2.0);
         assert!(!h.take(0, &[4.0; 4], 2));
+    }
+
+    /// A history still filling up keeps its rows and lines at their age: the spectrogram
+    /// grows down from the top and the waterfall starts at the front.
+    #[test]
+    fn a_short_history_sits_at_its_age() {
+        let mut h = SpecHistory::default();
+        for i in 1..=3u64 {
+            h.take(i, &[-10.0; 256], 64);
+        }
+        let mut paths = Vec::new();
+        Controller::spectrogram(Some(&h), 64, 0.0, 0.0, 96.0, 64.0, 0.0, 90.0, Color::from_rgb_u8(255, 0, 0), &mut paths);
+        let ys: Vec<f32> = paths
+            .iter()
+            .flat_map(|p| p.commands.split('M').skip(1).map(|r| r.split_whitespace().nth(1).unwrap().parse::<f32>().unwrap()))
+            .collect();
+        assert!(!ys.is_empty() && ys.iter().all(|y| *y < 3.5), "{ys:?}");
+        let mut lines = Vec::new();
+        Controller::spectrum_waterfall(Some(&h), 32, 400.0, 200.0, 0.0, 90.0, Color::from_rgb_u8(255, 0, 0), &mut lines);
+        // Floor, then a fill and a stroke per line; every line sits near the front edge.
+        assert_eq!(lines.len(), 1 + 2 * 3);
+        let first_x: f32 = lines[1].commands[1..].split_whitespace().next().unwrap().parse().unwrap();
+        assert!(first_x < 5.0, "the oldest of three frames is drawn at the front, not the back: {first_x}");
     }
 
     #[test]
