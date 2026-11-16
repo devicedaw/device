@@ -206,17 +206,17 @@ component Header inherits Rectangle {
 // #63656d details, 11 px #63656d group labels and notes.
 component FilesPane inherits Rectangle {
     property <length> list-y: Studio.files-list-y - 59px;
-    HorizontalLayout {
+    if Studio.files-tab == 1: HorizontalLayout {
         x: 10.2px; y: 0; width: self.preferred-width; height: 16.7px; spacing: 10.2px;
-        for t[i] in ["Projects", "Folders"]: Rectangle {
+        // Projects is its own section tab; Files shows one sub-tab, Folders.
+        for t in ["Folders"]: Rectangle {
             width: label.preferred-width;
-            accessible-role: tab; accessible-label: t; accessible-checked: Studio.files-tab == i;
+            accessible-role: tab; accessible-label: t; accessible-checked: true;
             label := Text {
-                x: 0; y: 0; height: 15px; text: t; color: Studio.files-tab == i ? #ffffff : #63656d;
+                x: 0; y: 0; height: 15px; text: t; color: #ffffff;
                 font-size: 9.35px; font-weight: 600; letter-spacing: -0.28px; vertical-alignment: center;
             }
-            if Studio.files-tab == i: Rectangle { x: 0; y: 15px; width: parent.width; height: 1.7px; background: #ffffff; }
-            TouchArea { clicked => { Studio.files-tab-select(i); } }
+            Rectangle { x: 0; y: 15px; width: parent.width; height: 1.7px; background: #ffffff; }
         }
     }
     // "+ Add folder": 10 px weight 500 #81838a, an 8 px plus 4 px before it, 12 px from the right.
@@ -302,22 +302,22 @@ component FilesPane inherits Rectangle {
 
 
 // ------------------------------------------------------------------ browser
-// Sections Devices and Files are real (src/devices.rs, src/files.rs); Search and Library have no
-// content (PLACEHOLDER: no sample catalog). The preview bar plays the file last clicked in Files
+// Sections Projects, Devices and Files are real (src/files.rs, src/devices.rs); Search and Library
+// have no content (PLACEHOLDER: no sample catalog). The preview bar plays the file last clicked in Files
 // (Link: PLACEHOLDER, it ties catalog loops to the arrangement).
 // Devices › Chains lists saved and factory chains (src/chain_presets.rs). Back / Forward step through visited sections and tabs.
 component Browser inherits Panel {
     // Section tabs: 12 px weight 700, -0.04 em, 8 px apart from 12 px in; rest #63656d, active white.
     HorizontalLayout {
         x: 10.2px; y: 0; width: self.preferred-width; height: 27.2px; spacing: 6.8px;
-        for t[i] in ["Search", "Library", "Devices", "Files"]: Rectangle {
+        for t[i] in ["Search", "Library", "Projects", "Devices", "Files"]: Rectangle {
             width: section-label.preferred-width;
-            accessible-role: tab; accessible-label: t; accessible-checked: Studio.browser-section == i;
+            accessible-role: tab; accessible-label: t; accessible-checked: Studio.browser-top == i;
             section-label := Text {
-                x: 0; height: parent.height; text: t; color: Studio.browser-section == i ? #ffffff : #63656d;
+                x: 0; height: parent.height; text: t; color: Studio.browser-top == i ? #ffffff : #63656d;
                 font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center;
             }
-            TouchArea { clicked => { Studio.browser-section-select(i); } }
+            TouchArea { clicked => { Studio.browser-top-select(i); } }
         }
     }
     // Back / Forward: white when there is somewhere to go, else #63656d.
@@ -337,12 +337,12 @@ component Browser inherits Panel {
     Field {
         x: 8.5px; y: 34px; width: 235px; height: 20px; border-radius: 10px;
         Icon { x: 8px; width: 13px; height: 13px; d: Icons.search; ink: #b0b0b3; }
-        if Studio.browser-search == "": Text { x: 27px; text: Studio.browser-section == 3 ? "Search files" : "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
+        if Studio.browser-search == "": Text { x: 27px; text: Studio.browser-top == 2 ? "Search projects" : Studio.browser-section == 3 ? "Search files" : "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
         TextInput {
             x: 27px; width: parent.width - 34px; height: parent.height;
             text: Studio.browser-search; color: Tokens.text-primary; font-size: 9px; vertical-alignment: center;
             single-line: true;
-            accessible-label: Studio.browser-section == 3 ? "Search files" : "Search devices";
+            accessible-label: Studio.browser-top == 2 ? "Search projects" : Studio.browser-section == 3 ? "Search files" : "Search devices";
             edited => { Studio.browser-search = self.text; Studio.browser-search-edited(self.text); }
             changed has-focus => { Studio.search-focused = self.has-focus; }
         }
