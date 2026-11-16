@@ -130,7 +130,10 @@ pub(crate) fn has_window(def: &DeviceDef) -> bool {
         def.id,
         "auto-filter" | "channeleq" | "character-eq" | "transient-shaper" | "multiband-compressor" | "delay" | "reverb" | "echo"
     ) || is_wave_window(def)
-        || matches!(def.id, "utility" | "widener" | "tuner" | "spectrum" | "trance-gate" | "pitch-shifter" | "grains" | "pitch-corrector")
+        || matches!(
+            def.id,
+            "utility" | "widener" | "tuner" | "spectrum" | "trance-gate" | "pitch-shifter" | "grains" | "pitch-corrector" | "shaper"
+        )
         || is_repair_window(def)
         || def.id == "bitcrusher"
         || is_field_window(def)
@@ -151,6 +154,9 @@ fn is_dynamics_window(def: &DeviceDef) -> bool {
 fn is_wave_window(def: &DeviceDef) -> bool {
     matches!(def.id, "distortion" | "tapesaturation" | "soft-clipper" | "declipper")
 }
+
+/// Height of the Shaper's lane tabs between the top bar and its display.
+const SH_TABS_H: f32 = 48.0;
 
 /// Windows of the plotted-field family (motion and response pictures).
 fn is_field_window(def: &DeviceDef) -> bool {
@@ -208,6 +214,8 @@ pub(crate) fn kit(def: &DeviceDef) -> Kit {
         "multiband-compressor" => field_kit(WIN_W, 336.0, 52.0, 43.0),
         // Pitch Shifter: the semitone field over its axis, the formant strip and legend.
         "pitch-shifter" => field_kit(1200.0, 514.0, 12.0, 8.0),
+        // Shaper: the lane tabs above the display (its canvas starts at the tabs, y 52).
+        "shaper" => Kit { w: 1200.0, display: (INSET, 100.0, 1048.0, 466.0), plot: (0.0, 0.0, 0.0, 0.0), narrow: true, meters_h: 0.0 },
         // Pitch Corrector: the trace fills the display.
         "pitch-corrector" => field_kit(1200.0, 514.0, 12.0, 8.0).with_plot_top(8.0),
         // Grains: the buffer over its time axis, the pitch axis down its right edge.
@@ -710,6 +718,7 @@ impl Controller {
             _ if def.id == "bitcrusher" => self.crush_window_canvas(d, def, &k, accent),
             _ if def.id == "widener" => self.widener_window_canvas(d, def, &k, accent),
             _ if def.id == "spectrum" => self.spectrum_window_canvas(d, def, &k, accent),
+            _ if def.id == "shaper" => self.shaper_editor_window_canvas(d, def, accent, dw, dh + SH_TABS_H),
             _ if def.id == "pitch-corrector" => {
                 let (w, h) = plot_size(def).unwrap_or_default();
                 self.trace_window_canvas(d, def, w, h, accent)
@@ -729,6 +738,9 @@ impl Controller {
         if def.id == "trance-gate" {
             display.x = INSET * Z;
         }
+        if def.id == "shaper" {
+            display.y = (dy - SH_TABS_H) * Z;
+        }
         let height = match def.id {
             "auto-filter" => self.auto_filter_window(d, def, &mut b),
             "channeleq" => self.channel_eq_window(d, def, &mut b),
@@ -741,6 +753,7 @@ impl Controller {
             "echo" => self.echo_window(d, def, &mut b, dy + dh + 12.0),
             "pitch-shifter" => self.pitch_shifter_window(d, def, &mut b, dy + dh + 12.0),
             "pitch-corrector" => self.pitch_corrector_window(d, def, &mut b, dy + dh + 12.0),
+            "shaper" => self.shaper_lanes_window(d, def, &mut b, dy + dh + 12.0),
             "grains" => self.grains_window(d, def, &mut b, dy + dh + 12.0),
             _ if is_wave_window(def) || def.id == "bitcrusher" => self.wave_window(d, def, &mut b, dy + dh + 12.0),
             "utility" => self.utility_window(d, def, &mut b),
@@ -2303,6 +2316,35 @@ impl Controller {
         row.y + row.h + 16.0
     }
 
+    /// Shaper: the shown lane's Rate and Depth, the trigger's Threshold (inert while synced),
+    /// then Mix and Output.
+    fn shaper_lanes_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
+        use dstudio_core::builtin::shaper as sh;
+        let val = |i: usize| def.params.get(i).map_or(0.0, |p| self.panel_value(d, def, p));
+        let base = sh::lane_base(self.shaper_lane(d.id));
+        let rate = &def.params[base + sh::RATE];
+        let synced = val(def.index_of("trigger").unwrap_or(0)) < 0.5;
+        let row = Row::main(y);
+        self.win_card(
+            d,
+            def,
+            b,
+            row,
+            vec![
+                (
+                    vec![
+                        Item::Picker((base + sh::RATE) as i32, rate.format(val(base + sh::RATE)), "Rate", 72.0, false),
+                        Item::Knob(def.params[base + sh::DEPTH].id, "Depth", 2, 72.0, false),
+                    ],
+                    14.0,
+                ),
+                (vec![Item::Knob("threshold", "Threshold", 2, 84.0, synced)], 14.0),
+                (vec![Item::Knob("mix", "Mix", 2, 72.0, false), Item::Knob("output", "Output", 2, 72.0, false)], 14.0),
+            ],
+        );
+        row.y + row.h + 16.0
+    }
+
     /// Pitch Corrector: Follow, Key and Scale (the Key picker inert while the project's key is
     /// followed), then Speed, Retune Speed and Humanize, then Mix.
     fn pitch_corrector_window(&self, d: &Device, def: &'static DeviceDef, b: &mut Builder, y: f32) -> f32 {
@@ -3827,6 +3869,54 @@ mod tests {
         assert_eq!(bits(&c) ^ before, 1, "the card's geometry did not take the window's point");
     }
 
+    /// Shaper: the editor's tabs, strip and curve over the display, Trigger on the caption
+    /// row; a lane tab picked in the window's geometry (the card's tabs sit lower).
+    #[test]
+    fn shaper_window_draws_the_editor_and_picks_lanes_in_its_geometry() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("shaper");
+        assert!(has_window(def));
+        let v = view(&c, did, def);
+        assert!((v.w / Z - 1200.0).abs() < 0.5 && (v.h / Z - 700.0).abs() < 0.5, "{} x {}", v.w / Z, v.h / Z);
+        assert!(v.display.interactive && v.display.paths.row_count() > 10);
+        assert_eq!(knob_names(&v), ["Depth", "Threshold", "Mix", "Output"]);
+        assert!(v.knobs.iter().any(|k| k.label == "Threshold" && k.inert), "Threshold inert while synced");
+        let texts: Vec<String> = v.display.texts.iter().map(|t| t.text.to_string()).collect();
+        for t in ["Volume", "Pitch", "Shape", "Trigger", "Sync"] {
+            assert!(texts.iter().any(|x| x == t), "missing {t}: {texts:?}");
+        }
+        let at = |(x, y): (f32, f32), kind| crate::device_editors::CanvasEvent {
+            kind,
+            x: x * Z,
+            y: y * Z,
+            wx: 0.0,
+            wy: 0.0,
+            shift: false,
+            alt: false,
+            wheel: 0.0,
+        };
+        let points = |c: &Controller| {
+            let d = c.project().device(did).unwrap();
+            c.panel_value(d, def, def.param("vol_points").unwrap()).round() as i32
+        };
+        let before = points(&c);
+        // A point low on the window's curve: below the card's whole editor, so the card's
+        // geometry takes nothing there; the window's adds a point.
+        let low = (300.0, 420.0);
+        c.panel_editor(did, at(low, 0));
+        c.panel_editor(did, at(low, 2));
+        assert_eq!(points(&c), before, "the card's geometry missed");
+        c.panel_editor(did, at(low, 16));
+        c.panel_editor(did, at(low, 18));
+        assert_eq!(points(&c), before + 1, "a point added on the window's curve");
+        let tab = crate::device_editors::SH_WIN.tab_name(2);
+        c.panel_editor(did, at(tab, 16));
+        c.panel_editor(did, at(tab, 18));
+        assert_eq!(c.shaper_lane(did), 2, "Width picked in the window");
+        let v = view(&c, did, def);
+        assert!(v.pills.iter().any(|p| p.label == "1/4" || p.kind == PILL_PICKER), "the lane's Rate picker");
+    }
+
     /// Spectrum: three views from one history; Reset clears it, Hold view stops taking
     /// frames, the History picker is inert in 2D.
     #[test]
@@ -3912,6 +4002,7 @@ mod tests {
             "pitch-shifter",
             "grains",
             "pitch-corrector",
+            "shaper",
         ] {
             let (mut c, did, def) = controller_with(id);
             let h: std::collections::VecDeque<_> =

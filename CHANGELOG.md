@@ -78,3 +78,7 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
   a pitch axis and a time axis, Cloud / Rhythm and Freeze in the header, and two cards of controls that follow the
   mode) and Pitch Corrector (the correction trace over cent rules labelled from +100 to −100, with Follow, Key,
   Scale, Speed, Retune Speed, Humanize and Mix below).
+- An expanded window for Shaper: the lane tabs over the display, the Shape, Band and Trigger strip on its caption row
+  and the curve editor across the rest of it (points, bends and the lane's own pills edited in place), with the
+  lane's Rate and Depth, the trigger's Threshold, Mix and Output below. The editor is the card's, drawn and hit
+  tested in the window's geometry.
