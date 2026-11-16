@@ -516,6 +516,29 @@ TEST_CASE(record_overrun_when_writer_stalls_keeps_takes_aligned_and_valid) {
     CHECK_EQ(st.write_errors, 0u);
 }
 
+// A take that reaches the WAV size limit keeps what was recorded: the file
+// is finalized at the limit (not left with a 0-frame header) and the take
+// is reported with those frames; the write error is counted.
+TEST_CASE(record_take_at_the_size_limit_is_truncated_not_lost) {
+    EngineHandle e(48000, 256);
+    TempDir dir;
+    TrackIn t;
+    t.arm = true;
+    t.mode = SE_INPUT_MONO;
+    REQUIRE(publish_v4(e, {t}) == SE_OK);
+    dstudio::testing::set_record_max_take_bytes(e, 4000 * 4); // 4000 mono frames
+    REQUIRE(se_record_start(e, dir.path.c_str()) == SE_OK);
+    dstudio::testing::set_record_max_take_bytes(e, 0);
+    render_in(e, 1, 10000, 0, {256});
+    const auto takes = stop_takes(e);
+    REQUIRE(takes.size() == 1);
+    CHECK_EQ(takes[0].frames, 4000u);
+    check_take(takes[0], {0}, 0);
+    se_record_stats st{};
+    se_record_stats_get(e, &st);
+    CHECK_EQ(st.write_errors, 1u);
+}
+
 TEST_CASE(record_and_monitor_do_not_allocate_on_the_audio_path) {
     EngineHandle e(48000, 256);
     TempDir dir;

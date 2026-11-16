@@ -116,6 +116,9 @@ public:
     RecordStats stats() const;
     // Test hook: while stalled the writer does not drain (stop still drains).
     void set_writer_stalled(bool stalled) noexcept { stalled_.store(stalled, std::memory_order_release); }
+    // Test hook: caps each take's WAV data chunk (0 = the 4 GiB RIFF limit).
+    // Applies to takes opened afterwards.
+    void set_max_take_bytes(uint64_t bytes) noexcept { max_take_bytes_.store(bytes, std::memory_order_relaxed); }
 
     static constexpr uint32_t kPeakFrames = 64;
 
@@ -130,6 +133,7 @@ private:
         float cur_min = 0.0f, cur_max = 0.0f;
         uint32_t cur_fill = 0;
         bool failed = false;
+        bool truncated = false; // write failed; the file holds info.frames frames
     };
     struct Slot {
         RecordTrackSpec spec;
@@ -156,6 +160,7 @@ private:
     const std::string dir_;
     const double sample_rate_;
     std::string name_prefix_;
+    std::atomic<uint64_t> max_take_bytes_{0};
     std::vector<std::unique_ptr<Slot>> slots_;
 
     // RT continuity tracking

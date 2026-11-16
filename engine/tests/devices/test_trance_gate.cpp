@@ -195,3 +195,42 @@ TEST_CASE(trance_gate_runs_in_the_engine) {
     for (std::size_t i = 2 * (kStep + 200); i < 2 * 2 * kStep; ++i) closed = std::max(closed, static_cast<double>(std::fabs(out[i])));
     CHECK(closed < 1e-6);
 }
+
+// The engine hands devices the song tempo in quarter notes, whatever the
+// click grid: a 6/8 metronome (an eighth per click) at 90 BPM must not make
+// it 180, and the tempo holds with the metronome off (offline renders).
+TEST_CASE(trance_gate_tempo_is_in_quarters_whatever_the_click_grid) {
+    for (const bool click_on : {true, false}) {
+        EngineHandle e(48000, 256);
+        const uint64_t a = load_asset(e, {Signal(96000, 0.5f), Signal(96000, 0.5f)});
+        DeviceSession s;
+        auto& t = s.add_track(1, a, 96000);
+        std::vector<float> v = builtin_defaults("trance-gate");
+        v[8] = 2.f; // p1_steps
+        v[9] = 1.f; // p1_lo: x.
+        v[5] = 1.f; // release
+        DeviceSession::add_device(t, 21, "trance-gate", v);
+        REQUIRE(s.publish(e) == SE_OK);
+        // 90 BPM: a quarter is 32000 frames, the 6/8 click an eighth (16000).
+        CHECK_EQ(se_transport_set_tempo(e, 0.5), SE_ERR_INVALID_ARG);
+        CHECK_EQ(se_transport_set_tempo(e, std::nan("")), SE_ERR_INVALID_ARG);
+        CHECK_EQ(se_transport_set_tempo(e, 2e9), SE_ERR_INVALID_ARG);
+        REQUIRE(se_transport_set_tempo(e, 32000.0) == SE_OK);
+        se_metronome_desc m{};
+        m.enabled = click_on ? 1 : 0;
+        m.gain = 0.0f;
+        m.frames_per_beat = 16000.0;
+        m.beats_per_bar = 6;
+        REQUIRE(se_metronome_set(e, &m) == SE_OK);
+        REQUIRE(se_transport_play(e) == SE_OK);
+        constexpr std::size_t step = 8000; // a 1/16 at 90 BPM
+        const auto out = render(e, 4 * step, 256);
+        // Open through step 0, closed through step 1, open again in step 2.
+        CHECK(std::fabs(out[2 * (step - 200)]) > 0.2f);
+        double closed = 0;
+        for (std::size_t i = 2 * (step + 200); i < 2 * 2 * step; ++i)
+            closed = std::max(closed, static_cast<double>(std::fabs(out[i])));
+        CHECK(closed < 1e-6);
+        CHECK(std::fabs(out[2 * (2 * step + step / 2)]) > 0.2f);
+    }
+}

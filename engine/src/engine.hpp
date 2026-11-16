@@ -30,7 +30,7 @@ namespace dstudio {
 // trivially copyable command (queued while the device runs, applied inline
 // otherwise; see Engine::push_command()).
 struct TransportCommand {
-    enum class Type : uint8_t { Play, Pause, Stop, Seek, SetLoop, SetMetronome, PreviewPlay, PreviewStop, PreviewSet };
+    enum class Type : uint8_t { Play, Pause, Stop, Seek, SetLoop, SetMetronome, PreviewPlay, PreviewStop, PreviewSet, SetTempo };
     Type type = Type::Play;
     bool enabled = false;   // SetLoop, SetMetronome; Preview*: solo
     float gain = 0.0f;      // SetMetronome, PreviewPlay, PreviewSet
@@ -40,7 +40,7 @@ struct TransportCommand {
     uint32_t beats_per_bar = 0; // SetMetronome
     int64_t frame = 0;      // Seek target, SetLoop start
     int64_t frame2 = 0;     // SetLoop end
-    double frames_per_beat = 0.0; // SetMetronome
+    double frames_per_beat = 0.0; // SetMetronome; SetTempo: frames per quarter
 };
 
 class Engine final : private AudioDevice::Callback {
@@ -186,6 +186,7 @@ public:
     // Test hooks.
     void set_record_writer_stalled(bool stalled);
     void set_record_ring_frames(std::size_t frames) { record_ring_frames_ = frames; }
+    void set_record_max_take_bytes(uint64_t bytes) { record_max_take_bytes_ = bytes; }
 
     // ---- offline
     int32_t render_offline(float* out_interleaved, uint32_t frames, std::string& err);
@@ -306,9 +307,10 @@ private:
     // Bumped on seek and stop: delay lines flush lazily when it changes.
     // RT-owned.
     uint64_t rt_pdc_gen_ = 0;
-    // Tempo for plugins: the metronome grid (frames per beat), kept even
-    // while the metronome is disabled; 0 = 120 BPM. RT-owned.
-    double rt_tempo_fpb_ = 0.0;
+    // Song tempo for devices and plugins in frames per quarter note
+    // (se_transport_set_tempo; independent of the click grid); 0 = 120 BPM.
+    // RT-owned.
+    double rt_tempo_fpq_ = 0.0;
     std::atomic<int64_t> pub_position_{0};
     // Timeline frames of recently rendered samples (automation under delay
     // compensation). RT-owned.
@@ -389,6 +391,7 @@ private:
     std::vector<RecordedTakeInfo> last_takes_;
     RecordStats last_stats_;
     std::size_t record_ring_frames_ = 0; // 0 = 2 s at the engine rate
+    uint64_t record_max_take_bytes_ = 0; // test hook; 0 = the 4 GiB RIFF limit
     std::atomic<Recorder*> rec_live_{nullptr};
     std::atomic<bool> rec_in_use_{false};
 

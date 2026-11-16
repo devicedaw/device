@@ -7,6 +7,9 @@ name: Release
 #            Device-<version>-windows-x64.zip          (portable)
 #   Linux    Device-<version>-linux-x86_64.tar.gz
 #            Device-<version>-linux-aarch64.tar.gz
+# A release also carries each package without the version in its name (Device-macos-universal.dmg
+# and so on), so https://github.com/devicedaw/device/releases/latest/download/<name> always
+# downloads the newest release.
 #
 # Releasing (docs/building.md > Versions and releases): a release PR sets `version` in the
 # root Cargo.toml to X.Y.Z (SemVer, 0.x while pre-alpha; X.Y.Z-alpha.N, -beta.N or -rc.N for a
@@ -413,6 +416,19 @@ jobs:
           path: dist
           pattern: package-*
           merge-multiple: true
+      # A copy of each package without the version in its name, so a link to
+      # releases/latest/download/Device-macos-universal.dmg (the website's download buttons)
+      # always gets the newest release.
+      - name: Stable download names
+        working-directory: dist
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for f in "Device-$VERSION-"*; do
+            cp -- "$f" "Device-${f#"Device-$VERSION-"}"
+          done
+          ls -l
       - name: Checksums
         working-directory: dist
         run: |

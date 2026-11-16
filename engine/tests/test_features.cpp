@@ -343,6 +343,9 @@ TEST_CASE(metronome_clicks_at_exact_frames_across_blocks) {
     CHECK_EQ(set_metronome(e, true, 0.5f, fpb, 0), SE_ERR_INVALID_ARG);
     CHECK_EQ(set_metronome(e, true, -1.0f, fpb, 4), SE_ERR_INVALID_ARG);
     CHECK_EQ(set_metronome(e, true, 0.5f, std::nan(""), 4), SE_ERR_INVALID_ARG);
+    // A huge grid would overflow the beat-frame arithmetic (mix_metronome hung).
+    CHECK_EQ(set_metronome(e, true, 0.5f, 1e19, 4), SE_ERR_INVALID_ARG);
+    CHECK_EQ(set_metronome(e, true, 0.5f, SE_MAX_FRAMES_PER_BEAT * 2, 4), SE_ERR_INVALID_ARG);
     CHECK_EQ(se_metronome_set(e, nullptr), SE_ERR_INVALID_ARG);
     REQUIRE(set_metronome(e, true, 0.5f, fpb, 4) == SE_OK);
 

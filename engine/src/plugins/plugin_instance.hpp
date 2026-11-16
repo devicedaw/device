@@ -63,7 +63,7 @@ struct RtTransport {
     int64_t position = 0;     // timeline frame of the segment's first sample
     bool playing = false;
     double sample_rate = 48000.0;
-    double tempo_bpm = 120.0; // from the metronome grid (se_metronome_set), else 120
+    double tempo_bpm = 120.0; // quarter notes per minute (se_transport_set_tempo), else 120
     // Quarter notes since frame 0 at `position` (constant tempo from 0).
     double beats() const noexcept { return static_cast<double>(position) / sample_rate * tempo_bpm / 60.0; }
 };

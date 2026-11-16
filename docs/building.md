@@ -317,6 +317,11 @@ installable packages:
 | Windows x64 | `Device-<version>-windows-x64-setup.exe` (installer) and a portable `.zip` |
 | Linux x86_64, aarch64 | `Device-<version>-linux-<arch>.tar.gz` (run `install.sh`) |
 
+A release also carries each package without the version in its name (`Device-macos-universal.dmg`,
+`Device-windows-x64-setup.exe` and so on), so
+`https://github.com/devicedaw/device/releases/latest/download/<name>` always downloads the newest release. The
+website's download buttons use these links.
+
 The macOS app's two architectures build side by side on separate runners and
 are joined with `lipo` in a third job. Each package carries the plugin scanner next to the app, where the app looks
 for it first, and is smoke-tested on its runner (installed, then started to

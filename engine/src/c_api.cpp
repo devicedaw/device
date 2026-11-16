@@ -336,7 +336,20 @@ int32_t se_transport_play(se_engine* engine) { return push(engine, dstudio::Tran
 int32_t se_transport_pause(se_engine* engine) { return push(engine, dstudio::TransportCommand::Type::Pause, 0); }
 int32_t se_transport_stop(se_engine* engine) { return push(engine, dstudio::TransportCommand::Type::Stop, 0); }
 int32_t se_transport_seek(se_engine* engine, int64_t frame) {
+    SE_REQUIRE_ENGINE(engine);
+    if (frame > SE_MAX_TIMELINE_FRAME || frame < -SE_MAX_TIMELINE_FRAME)
+        return fail(SE_ERR_INVALID_ARG, "seek frame out of range");
     return push(engine, dstudio::TransportCommand::Type::Seek, frame);
+}
+
+int32_t se_transport_set_tempo(se_engine* engine, double frames_per_quarter) {
+    SE_REQUIRE_ENGINE(engine);
+    if (!std::isfinite(frames_per_quarter) || frames_per_quarter < 1.0 || frames_per_quarter > SE_MAX_FRAMES_PER_BEAT)
+        return fail(SE_ERR_INVALID_ARG, "tempo frames_per_quarter must be finite and in [1, 1e9]");
+    dstudio::TransportCommand cmd;
+    cmd.type = dstudio::TransportCommand::Type::SetTempo;
+    cmd.frames_per_beat = frames_per_quarter;
+    return push_cmd(engine, cmd);
 }
 
 int32_t se_transport_set_loop(se_engine* engine, uint8_t enabled, int64_t start_frame, int64_t end_frame) {
@@ -360,8 +373,9 @@ int32_t se_metronome_set(se_engine* engine, const se_metronome_desc* desc) {
     if (cmd.enabled) {
         if (!std::isfinite(desc->gain) || desc->gain < 0.0f)
             return fail(SE_ERR_INVALID_ARG, "metronome gain must be finite and >= 0");
-        if (!std::isfinite(desc->frames_per_beat) || desc->frames_per_beat < 1.0)
-            return fail(SE_ERR_INVALID_ARG, "metronome frames_per_beat must be finite and >= 1");
+        if (!std::isfinite(desc->frames_per_beat) || desc->frames_per_beat < 1.0 ||
+            desc->frames_per_beat > SE_MAX_FRAMES_PER_BEAT)
+            return fail(SE_ERR_INVALID_ARG, "metronome frames_per_beat must be finite and in [1, 1e9]");
         if (desc->beats_per_bar == 0) return fail(SE_ERR_INVALID_ARG, "metronome beats_per_bar must be >= 1");
         cmd.gain = desc->gain;
         cmd.frames_per_beat = desc->frames_per_beat;
@@ -1148,6 +1162,7 @@ void set_device_factory(se_engine* e, std::function<std::unique_ptr<AudioDevice>
 }
 void set_record_writer_stalled(se_engine* e, bool stalled) { e->impl->set_record_writer_stalled(stalled); }
 void set_record_ring_frames(se_engine* e, std::size_t frames) { e->impl->set_record_ring_frames(frames); }
+void set_record_max_take_bytes(se_engine* e, uint64_t bytes) { e->impl->set_record_max_take_bytes(bytes); }
 uint64_t plugin_instantiations(se_engine* e) { return e->impl->plugin_instantiations(); }
 void set_warp_renders_enabled(se_engine* e, bool enabled) { e->impl->set_warp_renders_enabled(enabled); }
 bool plugin_set_parameter(se_engine* e, uint64_t device_id, uint32_t param_id, double value) {

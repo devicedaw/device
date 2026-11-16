@@ -49,12 +49,18 @@ public:
     int32_t write(const float* interleaved, uint64_t frames, std::string& err);
     // Patches the RIFF/data/fact sizes and closes the file.
     int32_t finish(std::string& err);
+    // Caps the data chunk below the 4 GiB RIFF limit (tests). A write that
+    // would pass the cap writes the frames that fit and fails with
+    // SE_ERR_INVALID_ARG.
+    void set_max_data_bytes(uint64_t bytes) noexcept { max_data_bytes_ = bytes; }
+    uint64_t frames_written() const noexcept { return frames_written_; }
 
 private:
     std::FILE* file_ = nullptr;
     uint32_t channels_ = 0;
     uint32_t sample_rate_ = 0;
     uint64_t frames_written_ = 0;
+    uint64_t max_data_bytes_ = UINT64_MAX;
 };
 
 // Convenience: write a whole interleaved buffer.

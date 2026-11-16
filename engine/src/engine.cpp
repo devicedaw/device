@@ -884,7 +884,8 @@ void Engine::apply_command(const TransportCommand& cmd) noexcept {
         rt_pv_solo_ = cmd.enabled;
         break;
     case TransportCommand::Type::SetMetronome:
-        if (std::isfinite(cmd.frames_per_beat) && cmd.frames_per_beat >= 1.0) rt_tempo_fpb_ = cmd.frames_per_beat;
+        if (cmd.enabled && !(cmd.frames_per_beat >= 1.0 && cmd.frames_per_beat <= SE_MAX_FRAMES_PER_BEAT))
+            break; // se_metronome_set validates; never let a bad grid reach mix_metronome
         rt_metro_enabled_ = cmd.enabled;
         if (cmd.enabled) {
             rt_metro_gain_ = cmd.gain;
@@ -893,6 +894,10 @@ void Engine::apply_command(const TransportCommand& cmd) noexcept {
         } else {
             rt_voice_count_ = 0;
         }
+        break;
+    case TransportCommand::Type::SetTempo:
+        if (cmd.frames_per_beat >= 1.0 && cmd.frames_per_beat <= SE_MAX_FRAMES_PER_BEAT)
+            rt_tempo_fpq_ = cmd.frames_per_beat;
         break;
     }
 }
@@ -1060,7 +1065,7 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
         transport.position = rt_position_;
         transport.playing = rt_playing_;
         transport.sample_rate = sample_rate_;
-        transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
+        transport.tempo_bpm = rt_tempo_fpq_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpq_ : 120.0;
         DelayLine* const* const lines = graph != nullptr && !graph->lines.empty() ? graph->lines.data() : nullptr;
         const MidiBlock midi_block{done == 0 ? rt_midi_.data() : nullptr, done == 0 ? midi_count : 0u, midi.focus()};
         const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr,
@@ -1429,6 +1434,7 @@ int32_t Engine::record_start(const char* dir, std::string& err) {
                                                       : static_cast<std::size_t>(2.0 * sample_rate_);
     auto rec = Recorder::create(dir, std::move(specs), sample_rate_, ring, err);
     if (!rec) return SE_ERR_IO;
+    rec->set_max_take_bytes(record_max_take_bytes_);
     last_takes_.clear();
     last_stats_ = {};
     recorder_ = std::move(rec);
@@ -1577,7 +1583,7 @@ int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_fr
     RtTransport transport;
     transport.sample_rate = sample_rate_;
     transport.playing = true;
-    transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
+    transport.tempo_bpm = rt_tempo_fpq_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpq_ : 120.0;
     // Warped clips: private stretch voices (the live ones keep their state).
     std::vector<std::unique_ptr<WarpVoice>> own_voices;
     std::vector<WarpVoice*> voice_ptrs;

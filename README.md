@@ -35,7 +35,7 @@ interface is written in Rust with Slint, and the timeline, waveforms, piano roll
 wgpu.
 
 > [!WARNING]
-> **Device is pre-alpha.** There are no releases yet, features are missing, and the project format may still
+> **Device is pre-alpha.** The first release, [0.1.0](https://github.com/devicedaw/device/releases/latest), is out to try, but features are missing and the project format may still
 > change. macOS is the platform it's developed and tested on every day; Windows and Linux build, but their audio
 > backends have never run on a physical sound card (Linux runs real PipeWire streams in CI). Keep copies of anything you care about.
 
@@ -211,7 +211,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Export | ✅ | |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
 | Windows and Linux audio | 🚧 | Linux streams run in CI on a headless PipeWire server; neither has run on a physical sound card; no ASIO |
-| Releases and branding | 🚧 | Packages are built and macOS signing is set up; original icons, Windows signing, a first tagged release ([CHANGELOG.md](CHANGELOG.md)) |
+| Releases and branding | 🚧 | 0.1.0 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is not notarised yet and Windows packages are not signed |
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
 
@@ -229,10 +229,18 @@ hardware is tested by hand on a Mac.
 
 ### Download
 
-**No builds have been released yet.** For now, build it from source. Release packages for macOS (`.dmg`), Windows
-(installer and `.zip`) and Linux (`.tar.gz`) are built by the Release workflow and will appear on the
-[releases page](https://github.com/devicedaw/device/releases) once a version is tagged; see
-[Release packages](docs/building.md#release-packages).
+Download the latest release from the [releases page](https://github.com/devicedaw/device/releases/latest):
+
+| System | Package |
+|---|---|
+| macOS (Apple silicon and Intel) | `Device-<version>-macos-universal.dmg` |
+| Windows x64 | `Device-<version>-windows-x64-setup.exe` (installer) or `-windows-x64.zip` (portable) |
+| Linux x86_64 / aarch64 | `Device-<version>-linux-x86_64.tar.gz` / `-linux-aarch64.tar.gz` |
+
+The macOS app is not notarised yet: the first time you open it, macOS refuses; open System Settings › Privacy &
+Security and choose Open Anyway. The Windows packages are not signed yet, so SmartScreen asks you to confirm
+the first run (More info › Run anyway). `SHA256SUMS.txt` on the release lists every package's checksum; see
+[Release packages](docs/building.md#release-packages) for how the packages are made.
 
 ### Build from source
 
