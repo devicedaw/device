@@ -512,6 +512,8 @@ pub struct Controller {
     /// Rename popup open for this clip.
     pub rename: Option<ClipId>,
     pub rename_section: Option<dstudio_core::SectionId>,
+    /// Marker copied with Cut / Copy (src/sections.rs), pasted with Paste.
+    pub section_clipboard: Option<dstudio_core::Section>,
     /// Counts presses on the lanes and the clip editors; the UI moves the keyboard focus back to
     /// the shortcuts on each, so an open name field commits (Studio.press-epoch).
     pub press_epoch: i32,
@@ -684,6 +686,7 @@ impl Controller {
             clipboard_rest: Vec::new(),
             rename: None,
             rename_section: None,
+            section_clipboard: None,
             press_epoch: 0,
             lane_last_down: None,
             lane_playhead_before: None,

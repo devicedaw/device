@@ -49,10 +49,12 @@ wgpu.
   clip's top corners to fade it in and out. Set the tempo in the
   transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
   A new key for a project with MIDI clips offers to transpose them with it.
+  Markers label the parts of a song on the ruler; right-click one to cut, copy, paste, colour or rename it, or to insert
+  a marker before or after it.
   Press W to fit the song (or the selected clips) to the width of the timeline, and H to fit every track into its height.
   Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
   Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected
-  clip or section, ⌘D duplicates the selected clip or section. Settings › Shortcuts lists them all by section; click
+  clip or marker, ⌘D duplicates the selected clip or marker. Settings › Shortcuts lists them all by section; click
   one's keys to record new ones, search by name or key, and reset to the defaults at any time. Its Preset menu swaps in
   the keys of Ableton Live, Logic Pro, GarageBand, FL Studio, Fender Studio Pro, Bitwig, Pro Tools or BandLab. ↑/↓ select the track above
   or below, ⇧↑/⇧↓ (⌘⇧ for an octave) transpose the selected MIDI clips, U folds a group, A shows automation, I

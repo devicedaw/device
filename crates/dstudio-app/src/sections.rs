@@ -1,7 +1,10 @@
-//! Arrangement sections: the lane under the loop strip. A "+" after the last section adds
-//! eight bars, a section's body drags to reorder it, its right edge resizes it, and a
+//! Arrangement sections (shown as markers): the lane under the loop strip. A "+" after the last
+//! marker adds eight bars, a marker's body drags to reorder it, its right edge resizes it, and a
 //! double-click renames it. Sections tile the timeline from bar 1 (see `dstudio_core::Section`);
 //! they label ranges and never move clips. Every edit is one Command.
+//!
+//! The right-click menu: Cut, Copy, Paste (after this marker), Duplicate, Rename…, Color ›,
+//! Insert › (Marker before / after), Delete marker, Clear all markers.
 
 use crate::controller::{Controller, MenuAction};
 use dstudio_core::{Command, PPQ, Section, SectionId, Ticks};
@@ -23,6 +26,11 @@ const NEW_BARS: i64 = 8;
 /// The section palette (vivid enough for a dark label), before display tinting.
 pub const PALETTE: [u32; 13] =
     [0xc86040, 0xd0a050, 0xb8c040, 0xa0d050, 0x60d890, 0x50b8b0, 0x68a8c0, 0x7888c8, 0x9080d0, 0xb068d0, 0xd85088, 0xc07030, 0x30a098];
+/// Names of the [PALETTE] colours in the Color submenu.
+pub const PALETTE_NAMES: [&str; 13] =
+    ["Brick", "Sand", "Olive", "Lime", "Mint", "Teal", "Sky", "Blue", "Lavender", "Violet", "Rose", "Copper", "Sea"];
+/// Insert submenu rows.
+pub const INSERT_ROWS: [&str; 2] = ["Marker before", "Marker after"];
 
 #[derive(Debug, Clone)]
 pub struct SectionVis {
@@ -195,13 +203,13 @@ impl Controller {
             .unwrap_or_else(|| *PALETTE.iter().min_by_key(|&&c| secs.iter().filter(|s| s.color == c).count()).unwrap())
     }
 
-    /// "Section N" at `index` (end when `None`), eight bars long. Selects it.
+    /// "Marker N" at `index` (end when `None`), eight bars long. Selects it.
     pub fn insert_section(&mut self, index: Option<usize>) -> Option<SectionId> {
         let p = self.project();
         let id = SectionId(p.next_id);
         let section = Section {
             id,
-            name: format!("Section {}", p.sections.len() + 1),
+            name: format!("Marker {}", p.sections.len() + 1),
             color: self.next_section_color(),
             length: NEW_BARS * self.bar_ticks(),
         };
@@ -360,16 +368,25 @@ impl Controller {
         self.selected_section = Some(id);
         use MenuAction::*;
         let items = [Cut, Copy, Paste, Duplicate, SectionRename, SectionColor, SectionInsert, SectionDelete, SectionClear];
-        // PLACEHOLDER entries (disabled): Cut, Copy, Paste, Color, Insert.
-        let enabled = |a: MenuAction| matches!(a, Duplicate | SectionRename | SectionDelete | SectionClear);
-        self.open_menu(items.iter().map(|&a| (a, enabled(a))).collect(), wx, wy, win);
+        let can_paste = self.section_clipboard.is_some();
+        self.open_menu(items.iter().map(|&a| (a, a != Paste || can_paste)).collect(), wx, wy, win);
         self.menu.section = Some(id);
         true
     }
 
     pub fn section_menu_activate(&mut self, id: SectionId, action: MenuAction) {
+        if matches!(action, MenuAction::SectionColor | MenuAction::SectionInsert) {
+            self.menu.sub_open = !(self.menu.sub_open && self.menu.sub_for == Some(action));
+            self.menu.sub_for = Some(action);
+            self.menu.section = Some(id);
+            self.ui_dirty = true;
+            return;
+        }
         self.menu_close();
         match action {
+            MenuAction::Cut => self.cut_section(id),
+            MenuAction::Copy => self.copy_section(id),
+            MenuAction::Paste => self.paste_section(Some(id)),
             MenuAction::Duplicate => self.duplicate_section(id),
             MenuAction::SectionRename => {
                 self.rename_section = Some(id);
@@ -379,5 +396,92 @@ impl Controller {
             MenuAction::SectionClear => self.clear_sections(),
             _ => {}
         }
+    }
+
+    /// Submenu pick on a marker: a colour, or a marker before / after it.
+    pub fn section_submenu_activate(&mut self, id: SectionId, index: usize) {
+        let sub = self.menu.sub_for;
+        self.menu_close();
+        let Some(i) = self.project().section_index(id) else { return };
+        match sub {
+            Some(MenuAction::SectionColor) => {
+                let Some(&color) = PALETTE.get(index) else { return };
+                if self.project().sections[i].color != color {
+                    self.execute(Command::SetSectionColor { section: id, color });
+                }
+            }
+            Some(MenuAction::SectionInsert) if index < INSERT_ROWS.len() => {
+                self.insert_section(Some(i + index));
+            }
+            _ => {}
+        }
+    }
+
+    /// Submenu rows for a marker's Color (a swatch per palette colour, the marker's own ticked)
+    /// and Insert entries.
+    pub fn section_submenu_rows(&self) -> (Vec<crate::MenuItem>, f32) {
+        let p = self.project();
+        let cur = self.menu.section.and_then(|id| p.section_index(id)).map(|i| p.sections[i].color);
+        if self.menu.sub_for == Some(MenuAction::SectionColor) {
+            let (mut rows, h) = crate::clipedit::layout_items(
+                PALETTE_NAMES
+                    .iter()
+                    .zip(PALETTE)
+                    .map(|(n, c)| (n.to_string(), if cur == Some(c) { "✓".into() } else { String::new() }, true, false, false)),
+            );
+            for (r, c) in rows.iter_mut().zip(PALETTE) {
+                let rgb = display_rgb(c);
+                r.swatch = slint::Color::from_rgb_f32(rgb[0], rgb[1], rgb[2]);
+            }
+            return (rows, h);
+        }
+        crate::clipedit::layout_items(INSERT_ROWS.iter().map(|l| (l.to_string(), String::new(), true, false, false)))
+    }
+
+    /// ⌘X / ⌘C / ⌘V act on the selected marker when no clip is selected.
+    pub fn marker_shortcut_target(&self) -> Option<SectionId> {
+        if !self.selected_clips().is_empty() {
+            return None;
+        }
+        self.selected_section.filter(|s| self.project().section_index(*s).is_some())
+    }
+
+    /// Copy a marker (name, colour and length) for Paste.
+    pub fn copy_section(&mut self, id: SectionId) {
+        let p = self.project();
+        if let Some(i) = p.section_index(id) {
+            self.section_clipboard = Some(p.sections[i].clone());
+        }
+    }
+
+    pub fn cut_section(&mut self, id: SectionId) {
+        self.copy_section(id);
+        if self.section_clipboard.as_ref().is_some_and(|s| s.id == id) {
+            self.delete_section(id);
+        }
+    }
+
+    /// Paste the copied marker after `after` (the end when None). Selects the copy.
+    pub fn paste_section(&mut self, after: Option<SectionId>) {
+        let Some(copy) = self.section_clipboard.clone() else { return };
+        let p = self.project();
+        let index = after.and_then(|a| p.section_index(a)).map(|i| i + 1);
+        let id = SectionId(p.next_id);
+        if self.execute(Command::InsertSection { index, section: Section { id, ..copy } }) {
+            self.selected_section = Some(id);
+            self.ui_dirty = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+
+    #[test]
+    fn palette_names_match_the_palette() {
+        assert_eq!(PALETTE_NAMES.len(), PALETTE.len());
+        let mut seen = std::collections::HashSet::new();
+        assert!(PALETTE_NAMES.iter().all(|n| seen.insert(*n)));
     }
 }

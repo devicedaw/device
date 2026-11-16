@@ -11,6 +11,12 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+### Added
+
+- Markers (the labelled ranges on the ruler) have a full right-click menu: Cut, Copy, Paste, Color, and Insert ›
+  Marker before / Marker after. ⌘X, ⌘C and ⌘V work on the selected marker. New markers are named "Marker 1",
+  "Marker 2" and so on.
+
 ### Fixed
 
 - Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song

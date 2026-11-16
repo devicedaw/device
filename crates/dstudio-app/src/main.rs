@@ -1158,16 +1158,34 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "clip.duplicate" => ctl.borrow_mut().duplicate_clip(),
         "clip.split_at_marker" => ctl.borrow_mut().split_clip(),
         "clip.disable" => ctl.borrow_mut().toggle_clip_disabled(),
-        "clip.cut" => ctl.borrow_mut().cut_clip(),
+        "clip.cut" => {
+            let mut c = ctl.borrow_mut();
+            match c.marker_shortcut_target() {
+                Some(s) => c.cut_section(s),
+                None => c.cut_clip(),
+            }
+        }
         "clip.consolidate" | "clip.bounce_to_track" => {
             let mut c = ctl.borrow_mut();
             let Some(id) = c.selected_clip else { return true };
             if action == "clip.consolidate" { c.consolidate_clip(id) } else { c.bounce_clip(id) }
         }
         "edit.copy" => {
-            ctl.borrow_mut().copy_clip();
+            let mut c = ctl.borrow_mut();
+            match c.marker_shortcut_target() {
+                Some(s) => c.copy_section(s),
+                None => {
+                    c.copy_clip();
+                }
+            }
         }
-        "edit.paste" => ctl.borrow_mut().paste_clip(),
+        "edit.paste" => {
+            let mut c = ctl.borrow_mut();
+            match c.marker_shortcut_target().filter(|_| c.section_clipboard.is_some()) {
+                Some(s) => c.paste_section(Some(s)),
+                None => c.paste_clip(),
+            }
+        }
         "midi.paint_pen" => ctl.borrow_mut().pr_action("pen"),
         "midi.delete_notes" => {
             let mut c = ctl.borrow_mut();
