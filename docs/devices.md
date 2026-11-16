@@ -67,7 +67,7 @@ flowchart LR
   Flanger, Phaser, Ring Mod and Character Mod; and the dynamics family:
   Compressor, Limiter, Gate, Glue Compressor, Character Compressor and Mastering
   Limiter; Transient Shaper; Multiband Compressor; Delay, Echo and Reverb; Distortion, Tape Saturation,
-  Soft Clipper and Bit Crusher; Utility, Stereo Widener, Tuner and Spectrum), otherwise the card itself in a window. A
+  Soft Clipper and Bit Crusher; Utility, Stereo Widener, Tuner and Spectrum; Trance Gate), otherwise the card itself in a window. A
   window is a face 960 pt wide (Ring Mod 860): a top bar (power, presets, the device's header pills), a
   large display (the card's canvas drawn at window size with its axis and
   legend), In / Out meters, and rows of controls laid out with the same
@@ -132,7 +132,11 @@ flowchart LR
   its own history of analyser frames (`SpecHistory`, as deep as the History
   picker, frozen by Hold view, cleared by Reset) and draws it as a waterfall
   (up to 32 lines) or a spectrogram (up to 64 rows), each frame placed at its
-  age so a history still filling up starts at the front. The
+  age so a history still filling up starts at the front. The Trance Gate
+  window reuses the card's editor (src/device_editors.rs): `tg_draw` and
+  `tg_hit` read their geometry from `TgScope` (`TG_CARD` or `TG_WIN`), and
+  the window's canvas sends its editor events with kind + 16 so they are hit
+  tested in the window's geometry. The
   meters read `se_builtin_set_metering` / `se_builtin_levels`
   (`Engine::builtin_levels(id, &mut [f32; 4])`): while a window is open the
   audio thread keeps the input and output peak of each block, and the app

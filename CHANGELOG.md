@@ -66,3 +66,6 @@ Nothing has been released yet. The first release, 0.1.0, will cover what is on `
   ladder), 3D (a waterfall of the last 32 to 256 frames) and Split (the spectrum over a spectrogram), with Hold view,
   Reset, History and Color in its top bar and every analyser setting in one card. Curve drawing in every expanded
   window is about three times cheaper (coordinates are written without the float formatter).
+- An expanded window for Trance Gate: the step ring (step count, rate) and the pattern track on a panel down the
+  left, the envelope with its draggable handles across the display, and a card with Attack, Decay, Sustain,
+  Release, Swing and Mix. The ring and envelope are the card's, drawn and hit tested in the window's geometry.

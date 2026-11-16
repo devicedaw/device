@@ -132,7 +132,8 @@ axis with draggable crossovers, and Delay, Echo and Reverb, whose window draws t
 EQ at full size with every control in a row below, Distortion, Tape Saturation and Soft Clipper, whose window draws
 the transfer curve beside a sine through the device, Bit Crusher, whose window draws one crushed cycle, Utility, and Stereo Widener, whose window draws the stereo
 field over a live correlation lane, Tuner, and Spectrum, whose window shows the spectrum flat, as a 3D waterfall of its
-history, or split over a spectrogram; the other devices open their card in a window for now.
+history, or split over a spectrogram, and Trance Gate, whose window draws its step ring and pattern track on a
+panel beside the envelope; the other devices open their card in a window for now.
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |

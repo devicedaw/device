@@ -54,7 +54,7 @@ pub struct CanvasEvent {
 impl CanvasEvent {
     /// Card-relative coordinates (pt at 100%).
     fn pt(&self) -> (f32, f32) {
-        (self.x / Z, (self.y + FIELD_Y) / Z)
+        (self.x / Z, (self.y + tg_geo().origin_y) / Z)
     }
 }
 
@@ -177,7 +177,7 @@ fn fx(x: f32) -> f32 {
     x * Z
 }
 fn fy(y: f32) -> f32 {
-    y * Z - FIELD_Y
+    y * Z - tg_geo().origin_y
 }
 
 /// SVG path data in field px from card coordinates (pt at 100%).
@@ -411,22 +411,116 @@ fn env_span(e: &Adsr, step_ms: f32) -> (f32, f32) {
     (gate, ((raw / grid).ceil() * grid).max(300.0))
 }
 
-// Trance Gate geometry (pt at 100%, card relative).
+// Trance Gate geometry (pt at 100%): the card's, card relative, and the expanded
+// window's, relative to the top left of the window's canvas.
 const TG_W: f32 = 528.0;
-const TG_CX: f32 = 98.0;
-const TG_CY: f32 = 157.5;
-const TG_R: f32 = 83.0;
-const TG_RI: f32 = 0.6 * TG_R;
-const TG_PAT: (f32, f32, f32, f32) = (8.0, 285.0, 180.0, 18.0);
-const TG_ENV: (f32, f32, f32, f32) = (200.0, 85.0, 320.0, 104.0);
-const TG_PLOT: (f32, f32, f32, f32) = (210.0, 95.0, 510.0, 173.0); // x0, y0 (level 1), x1, y1 (level 0)
 const TG_KNOB_X: f32 = 229.0;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TgGeo {
+    /// Ring centre and outer radius; the inner radius is 0.6 of it.
+    cx: f32,
+    cy: f32,
+    r: f32,
+    /// Scale of the ring's centre (step counter, chevrons, rate) and of small text.
+    s: f32,
+    ts: f32,
+    /// Pattern track, and its caption (x, y, h).
+    pat: (f32, f32, f32, f32),
+    pat_label: (f32, f32, f32),
+    /// Envelope well and its fill, its caption (x, y), and the plot: x0, y0 (level 1), x1, y1 (level 0).
+    env: (f32, f32, f32, f32),
+    env_fill: bool,
+    env_label: (f32, f32),
+    plot: (f32, f32, f32, f32),
+    /// Field y (px) of y = 0: the card's canvas starts below its header.
+    origin_y: f32,
+}
+
+const TG_CARD: TgGeo = TgGeo {
+    cx: 98.0,
+    cy: 157.5,
+    r: 83.0,
+    s: 1.0,
+    ts: 1.0,
+    pat: (8.0, 285.0, 180.0, 18.0),
+    pat_label: (8.0, 266.0, 19.0),
+    env: (200.0, 85.0, 320.0, 104.0),
+    env_fill: true,
+    env_label: (200.0, 66.0),
+    plot: (210.0, 95.0, 510.0, 173.0),
+    origin_y: FIELD_Y,
+};
+
+/// The window: the ring and pattern track on the left panel, the envelope across the display.
+pub(crate) const TG_WIN: TgGeo = TgGeo {
+    cx: 137.0,
+    cy: 128.0,
+    r: 127.0,
+    s: 1.53,
+    ts: 1.1,
+    pat: (60.0, 278.0, 204.0, 26.0),
+    pat_label: (10.0, 278.0, 26.0),
+    env: (288.0, 0.0, 880.0, 516.0),
+    env_fill: false,
+    env_label: (303.0, 3.0),
+    plot: (303.0, 25.0, 1152.0, 488.0),
+    origin_y: 0.0,
+};
+
+#[cfg(test)]
+impl TgGeo {
+    pub(crate) fn ring_cx(&self) -> f32 {
+        self.cx
+    }
+    pub(crate) fn ring_cy(&self) -> f32 {
+        self.cy
+    }
+    pub(crate) fn ring_r(&self) -> f32 {
+        self.r
+    }
+}
+
+thread_local! {
+    static TG_GEO: std::cell::Cell<TgGeo> = const { std::cell::Cell::new(TG_CARD) };
+}
+
+/// The Trance Gate geometry being drawn or hit tested.
+fn tg_geo() -> TgGeo {
+    TG_GEO.with(|g| g.get())
+}
+
+/// Draws and hit tests with `g` until dropped.
+pub(crate) struct TgScope(TgGeo);
+
+impl TgScope {
+    pub(crate) fn new(g: TgGeo) -> Self {
+        Self(TG_GEO.with(|c| c.replace(g)))
+    }
+}
+
+impl Drop for TgScope {
+    fn drop(&mut self) {
+        TG_GEO.with(|c| c.set(self.0));
+    }
+}
+
+fn tg_cursor(hit: Hit) -> i32 {
+    match hit {
+        Hit::Step(_) | Hit::Pattern(_) | Hit::StepMore | Hit::StepFewer | Hit::Rate => CURSOR_POINTER,
+        Hit::StepCount => CURSOR_NS,
+        Hit::EnvA | Hit::EnvR => CURSOR_EW,
+        Hit::EnvD => CURSOR_MOVE,
+        _ => 0,
+    }
+}
 
 fn step_angle(i: f32, steps: u32) -> f32 {
     std::f32::consts::TAU * i / steps.max(1) as f32
 }
 fn polar(r: f32, a: f32) -> (f32, f32) {
-    (TG_CX + r * a.sin(), TG_CY - r * a.cos())
+    let g = tg_geo();
+    (g.cx + r * a.sin(), g.cy - r * a.cos())
 }
 fn sector(r0: f32, r1: f32, a0: f32, a1: f32) -> PathData {
     let (o0, o1, i1, i0) = (polar(r1, a0), polar(r1, a1), polar(r0, a1), polar(r0, a0));
@@ -580,17 +674,47 @@ impl Controller {
     }
 
     fn trance_gate_card(&self, d: &Device, def: &'static DeviceDef, card: &mut DeviceCard) {
-        let accent = card.accent;
+        let (hit, _) = self.hover_of(d.id);
+        let mut c = Canvas::default();
+        self.tg_draw(d, def, card.accent, &mut c);
+        // Knobs: Attack, Decay, Sustain, Release, Swing, Mix (cells 50 wide, gap 4).
+        let knobs: Vec<PanelKnob> = (2..8).map(|i| knob(def, self.fv(d, def, i), i, TG_KNOB_X + 54.0 * (i - 2) as f32)).collect();
+        card.knobs = ModelRc::from(Rc::new(VecModel::from(knobs)));
+        card.canvas = c.into_canvas(TG_W, tg_cursor(hit));
+    }
+
+    /// The Trance Gate's expanded window picture (src/device_window.rs places it): the ring
+    /// and pattern track on the left panel, the envelope across the display. `w` x `h` pt.
+    pub(crate) fn trance_gate_window_canvas(&self, d: &Device, def: &'static DeviceDef, accent: Color, w: f32, h: f32) -> PanelCanvas {
+        let _g = TgScope::new(TG_WIN);
+        let (hit, _) = self.hover_of(d.id);
+        let mut c = Canvas::default();
+        self.tg_draw(d, def, accent, &mut c);
+        PanelCanvas {
+            visible: true,
+            w: w * Z,
+            h: h * Z,
+            paths: ModelRc::from(Rc::new(VecModel::from(c.paths))),
+            texts: ModelRc::from(Rc::new(VecModel::from(c.texts))),
+            interactive: true,
+            cursor: tg_cursor(hit),
+            ..Default::default()
+        }
+    }
+
+    /// The ring, pattern track and envelope in the current geometry ([`TgScope`]).
+    fn tg_draw(&self, d: &Device, def: &'static DeviceDef, accent: Color, c: &mut Canvas) {
+        let g = tg_geo();
+        let (s, ri) = (g.s, 0.6 * g.r);
         let (hit, _) = self.hover_of(d.id);
         let (pattern, steps, mask) = self.tg_pattern(d, def);
         let rate = (self.fv(d, def, 1).round() as usize).min(tg::RATES.len() - 1);
         let swing = self.fv(d, def, 6) / 100.0;
         let env = self.adsr(d, def);
         let step_ms = self.step_ms(rate);
-        let mut c = Canvas::default();
 
         // Ring: one annular sector per step (swing-warped), then the gate-shape preview.
-        let gap = 0.6 / TG_R;
+        let gap = 0.6 / g.r;
         for i in 0..steps as usize {
             let a0 = step_angle(step_start(i, swing), steps) + gap;
             let a1 = step_angle(if i + 1 == steps as usize { steps as f32 } else { step_start(i + 1, swing) }, steps) - gap;
@@ -600,7 +724,7 @@ impl Controller {
             let on = mask >> i & 1 == 1;
             let hot = hit == Hit::Step(i);
             let fill = if on { alpha(accent, if hot { 0.16 } else { 0.08 }) } else { ink(if hot { 0.10 } else { 0.045 }) };
-            c.fill(sector(TG_RI, TG_R, a0, a1), fill);
+            c.fill(sector(ri, g.r, a0, a1), fill);
         }
         let levels = ring_levels(&env, steps, mask, swing, step_ms);
         let n = levels.len();
@@ -613,7 +737,7 @@ impl Controller {
             let j0 = ((a0 / std::f32::consts::TAU) * n as f32).ceil() as usize;
             let j1 = (((a1 / std::f32::consts::TAU) * n as f32).floor() as usize).min(n - 1);
             let mut outer: Vec<(f32, f32)> = Vec::new();
-            let r_of = |lv: f32| TG_RI + (TG_R - TG_RI) * lv;
+            let r_of = |lv: f32| ri + (g.r - ri) * lv;
             outer.push(polar(r_of(levels[j0.min(n - 1)]), a0));
             for (j, lv) in levels.iter().enumerate().take(j1 + 1).skip(j0) {
                 outer.push(polar(r_of(*lv), std::f32::consts::TAU * j as f32 / n as f32));
@@ -622,19 +746,19 @@ impl Controller {
             if levels[j0.min(n - 1)..=j1].iter().all(|l| *l < 0.004) {
                 continue;
             }
-            let (i1, i0) = (polar(TG_RI, a1), polar(TG_RI, a0));
-            let shape = PathData::default().poly(&outer).l(i1.0, i1.1).a(TG_RI, a1 - a0 > std::f32::consts::PI, false, i0.0, i0.1).z();
+            let (i1, i0) = (polar(ri, a1), polar(ri, a0));
+            let shape = PathData::default().poly(&outer).l(i1.0, i1.1).a(ri, a1 - a0 > std::f32::consts::PI, false, i0.0, i0.1).z();
             c.fill(shape, alpha(accent, 0.34));
             c.stroke(PathData::default().poly(&outer), accent, 1.5);
         }
-        c.stroke(PathData::default().circle(TG_CX, TG_CY, TG_RI - 4.2), ink(0.05), 1.0);
+        c.stroke(PathData::default().circle(g.cx, g.cy, ri - 4.2), ink(0.05), 1.0);
         // Playhead while the transport plays.
         if self.engine.transport().playing {
             let beats = self.playhead_ticks() as f64 / PPQ as f64;
             let pos = (beats / tg::RATE_QUARTERS[rate]).rem_euclid(steps as f64) as f32;
             if pos > 0.01 {
                 let a1 = step_angle(pos, steps);
-                let r = TG_RI - 4.2;
+                let r = ri - 4.2;
                 let (sx, sy) = polar(r, 0.0);
                 let (ex, ey) = polar(r, a1);
                 c.stroke(PathData::default().m(sx, sy).a(r, a1 > std::f32::consts::PI, true, ex, ey), alpha(accent, 0.7), 2.0);
@@ -642,12 +766,22 @@ impl Controller {
         }
         // Centre: step counter with chevrons, rate pill.
         let count_hot = matches!(hit, Hit::StepCount);
-        c.text(TG_CX - 32.0, TG_CY - 26.0, 48.0, 28.0, steps.to_string(), ink(if count_hot { 1.0 } else { 0.92 }), 28.0, 600, 1);
+        c.text(
+            g.cx - 32.0 * s,
+            g.cy - 26.0 * s,
+            48.0 * s,
+            28.0 * s,
+            steps.to_string(),
+            ink(if count_hot { 1.0 } else { 0.92 }),
+            28.0 * s,
+            600,
+            1,
+        );
         for (k, h) in [(0, Hit::StepMore), (1, Hit::StepFewer)] {
             let enabled = if k == 0 { steps < tg::MAX_STEPS } else { steps > 1 };
-            let cy = TG_CY - 18.0 + 14.0 * k as f32;
+            let cy = g.cy + (-18.0 + 14.0 * k as f32) * s;
             c.chevron(
-                TG_CX + 19.0,
+                g.cx + 19.0 * s,
                 cy,
                 k == 1,
                 ink(if !enabled {
@@ -661,29 +795,29 @@ impl Controller {
         }
         let rate_hot = hit == Hit::Rate;
         c.text(
-            TG_CX - 26.0,
-            TG_CY + 5.0,
-            44.0,
-            18.0,
+            g.cx - 26.0 * s,
+            g.cy + 5.0 * s,
+            44.0 * s,
+            18.0 * s,
             tg::RATES[rate],
             if rate_hot { Color::from_rgb_u8(255, 255, 255) } else { accent.brighter(0.2) },
-            13.0,
+            13.0 * g.ts,
             600,
             2,
         );
-        c.chevron(TG_CX + 23.0, TG_CY + 14.0, true, rgba(0xa6, 0xa8, 0xad, 1.0));
+        c.chevron(g.cx + 23.0 * s, g.cy + 14.0 * s, true, rgba(0xa6, 0xa8, 0xad, 1.0));
 
         // Pattern choice track.
-        c.text(TG_PAT.0, TG_PAT.1 - 19.0, 80.0, 19.0, "Pattern", ink(0.4), 12.0, 600, 0);
-        c.fill(PathData::default().rrect(TG_PAT.0, TG_PAT.1, TG_PAT.2, TG_PAT.3, TG_PAT.3 / 2.0), rgba(0x29, 0x2a, 0x2f, 1.0));
-        let cell = TG_PAT.2 / tg::PATTERN_COUNT as f32;
+        c.text(g.pat_label.0, g.pat_label.1, 80.0, g.pat_label.2, "Pattern", ink(0.4), 12.0, 600, 0);
+        c.fill(PathData::default().rrect(g.pat.0, g.pat.1, g.pat.2, g.pat.3, g.pat.3 / 2.0), rgba(0x29, 0x2a, 0x2f, 1.0));
+        let cell = g.pat.2 / tg::PATTERN_COUNT as f32;
         for i in 0..tg::PATTERN_COUNT {
-            let x = TG_PAT.0 + cell * i as f32;
+            let x = g.pat.0 + cell * i as f32;
             let sel = i == pattern;
             if sel {
-                c.fill(PathData::default().rrect(x + 2.0, TG_PAT.1 + 2.0, cell - 4.0, TG_PAT.3 - 4.0, (TG_PAT.3 - 4.0) / 2.0), accent);
+                c.fill(PathData::default().rrect(x + 2.0, g.pat.1 + 2.0, cell - 4.0, g.pat.3 - 4.0, (g.pat.3 - 4.0) / 2.0), accent);
             } else if hit == Hit::Pattern(i) {
-                c.fill(PathData::default().rrect(x + 2.0, TG_PAT.1 + 2.0, cell - 4.0, TG_PAT.3 - 4.0, (TG_PAT.3 - 4.0) / 2.0), ink(0.04));
+                c.fill(PathData::default().rrect(x + 2.0, g.pat.1 + 2.0, cell - 4.0, g.pat.3 - 4.0, (g.pat.3 - 4.0) / 2.0), ink(0.04));
             }
             let col = if sel {
                 rgba(0x17, 0x18, 0x1b, 1.0)
@@ -692,17 +826,19 @@ impl Controller {
             } else {
                 ink(0.7)
             };
-            c.text(x, TG_PAT.1, cell, TG_PAT.3, (i + 1).to_string(), col, 11.0, 600, 1);
+            c.text(x, g.pat.1, cell, g.pat.3, (i + 1).to_string(), col, 11.0 * g.ts, 600, 1);
         }
 
         // Envelope.
-        c.text(TG_ENV.0, TG_ENV.1 - 19.0, 120.0, 19.0, "Envelope", ink(0.4), 12.0, 600, 0);
-        c.fill(PathData::default().rrect(TG_ENV.0, TG_ENV.1, TG_ENV.2, TG_ENV.3, 6.0), rgba(0, 0, 0, 0.26));
+        c.text(g.env_label.0, g.env_label.1, 120.0, 19.0, "Envelope", ink(0.4), 12.0, 600, 0);
+        if g.env_fill {
+            c.fill(PathData::default().rrect(g.env.0, g.env.1, g.env.2, g.env.3, 6.0), rgba(0, 0, 0, 0.26));
+        }
         let (gate_ms, span) = match &self.devices.panel.editors.gesture {
             Some(Gesture::Env { device, span, gate_ms, .. }) if *device == d.id => (*gate_ms, *span),
             _ => env_span(&env, step_ms),
         };
-        let (x0, y0, x1, y1) = TG_PLOT;
+        let (x0, y0, x1, y1) = g.plot;
         let tx = |t: f32| x0 + (t / span).clamp(0.0, 1.0) * (x1 - x0);
         let ly = |l: f32| y1 - l.clamp(0.0, 1.0) * (y1 - y0);
         let mut grid = PathData::default();
@@ -758,54 +894,44 @@ impl Controller {
         }
         c.text(x0, y1 + 1.0, 80.0, 15.0, "Gate", ink(0.55), 10.5, 600, 0);
         c.text(x1 - 100.0, y1 + 1.0, 100.0, 15.0, format!("{} ms", span.round()), ink(0.55), 10.5, 600, 2);
-
-        // Knobs: Attack, Decay, Sustain, Release, Swing, Mix (cells 50 wide, gap 4).
-        let knobs: Vec<PanelKnob> = (2..8).map(|i| knob(def, self.fv(d, def, i), i, TG_KNOB_X + 54.0 * (i - 2) as f32)).collect();
-        card.knobs = ModelRc::from(Rc::new(VecModel::from(knobs)));
-        let cursor = match hit {
-            Hit::Step(_) | Hit::Pattern(_) | Hit::StepMore | Hit::StepFewer | Hit::Rate => CURSOR_POINTER,
-            Hit::StepCount => CURSOR_NS,
-            Hit::EnvA | Hit::EnvR => CURSOR_EW,
-            Hit::EnvD => CURSOR_MOVE,
-            _ => 0,
-        };
-        card.canvas = c.into_canvas(TG_W, cursor);
     }
 
     fn tg_hit(&self, d: &Device, def: &DeviceDef, p: (f32, f32)) -> Hit {
         let (_, steps, _) = self.tg_pattern(d, def);
         let swing = self.fv(d, def, 6) / 100.0;
-        let (dx, dy) = (p.0 - TG_CX, p.1 - TG_CY);
+        let g = tg_geo();
+        let (s, ri) = (g.s, 0.6 * g.r);
+        let (dx, dy) = (p.0 - g.cx, p.1 - g.cy);
         let dist = (dx * dx + dy * dy).sqrt();
-        if in_rect(p, TG_CX + 11.0, TG_CY - 25.0, 16.0, 13.0) {
+        if in_rect(p, g.cx + 11.0 * s, g.cy - 25.0 * s, 16.0 * s, 13.0 * s) {
             return Hit::StepMore;
         }
-        if in_rect(p, TG_CX + 11.0, TG_CY - 11.0, 16.0, 13.0) {
+        if in_rect(p, g.cx + 11.0 * s, g.cy - 11.0 * s, 16.0 * s, 13.0 * s) {
             return Hit::StepFewer;
         }
-        if in_rect(p, TG_CX - 32.0, TG_CY - 26.0, 43.0, 28.0) {
+        if in_rect(p, g.cx - 32.0 * s, g.cy - 26.0 * s, 43.0 * s, 28.0 * s) {
             return Hit::StepCount;
         }
-        if in_rect(p, TG_CX - 26.0, TG_CY + 5.0, 54.0, 18.0) {
+        if in_rect(p, g.cx - 26.0 * s, g.cy + 5.0 * s, 54.0 * s, 18.0 * s) {
             return Hit::Rate;
         }
-        if (TG_RI - 4.0..=TG_R + 6.0).contains(&dist) {
+        if (ri - 4.0..=g.r + 6.0).contains(&dist) {
             let a = dx.atan2(-dy).rem_euclid(std::f32::consts::TAU);
             let u = a / std::f32::consts::TAU * steps as f32;
             let k = swung_step(u as f64, swing as f64).rem_euclid(steps as i64) as usize;
             return Hit::Step(k);
         }
-        if dist < TG_RI - 4.0 {
+        if dist < ri - 4.0 {
             return Hit::Hole;
         }
-        if in_rect(p, TG_PAT.0, TG_PAT.1, TG_PAT.2, TG_PAT.3) {
-            return Hit::Pattern((((p.0 - TG_PAT.0) / (TG_PAT.2 / 8.0)) as usize).min(7));
+        if in_rect(p, g.pat.0, g.pat.1, g.pat.2, g.pat.3) {
+            return Hit::Pattern((((p.0 - g.pat.0) / (g.pat.2 / 8.0)) as usize).min(7));
         }
-        if in_rect(p, TG_ENV.0, TG_ENV.1, TG_ENV.2, TG_ENV.3) {
+        if in_rect(p, g.env.0, g.env.1, g.env.2, g.env.3) {
             let env = self.adsr(d, def);
             let rate = (self.fv(d, def, 1).round() as usize).min(tg::RATES.len() - 1);
             let (gate, span) = env_span(&env, self.step_ms(rate));
-            let (x0, y0, x1, y1) = TG_PLOT;
+            let (x0, y0, x1, y1) = g.plot;
             let tx = |t: f32| x0 + (t / span).clamp(0.0, 1.0) * (x1 - x0);
             let ly = |l: f32| y1 - l * (y1 - y0);
             let mut best = (Hit::None, 12.0f32);
@@ -1287,12 +1413,16 @@ impl Controller {
 
     // ---------------------------------------------------------------- events
 
-    pub fn panel_editor(&mut self, device: DeviceId, e: CanvasEvent) {
+    pub fn panel_editor(&mut self, device: DeviceId, mut e: CanvasEvent) {
+        // Kind + 16: the event comes from the device's expanded window, drawn in its geometry.
+        let win = e.kind >= 16;
+        e.kind %= 16;
         let Some((d, def)) = self.panel_def(device) else { return };
         let name = match def.layout.view {
             Some(dstudio_core::builtin::View::Custom(n)) => n,
             _ => return,
         };
+        let _geo = (win && name == "trance-gate").then(|| TgScope::new(TG_WIN));
         let p = e.pt();
         let hit = match name {
             "trance-gate" => self.tg_hit(d, def, p),
@@ -1350,7 +1480,7 @@ impl Controller {
                 self.devices.panel.editors.gesture = Some(Gesture::Paint { device, on, last: k });
             }
             Gesture::Env { device, handle, span, gate_ms } => {
-                let (x0, y0, x1, y1) = TG_PLOT;
+                let (x0, y0, x1, y1) = tg_geo().plot;
                 let t = ((p.0 - x0) / (x1 - x0)).clamp(0.0, 1.0) * span;
                 let Some((d, _)) = self.panel_def(device) else { return };
                 let attack = self.fv(d, def, 2);
