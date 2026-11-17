@@ -58,6 +58,20 @@ pub struct RecState {
     /// The loop (frames) that was on when the pass started, while it stays unchanged: each
     /// time round it makes one take (src/takes.rs).
     pub rec_loop: Option<(i64, i64)>,
+    /// The engine's write-error count when the pass started (it counts across passes).
+    pub write_errors_at_start: u64,
+    /// Takes of the last stopped pass that the engine cut short (file size limit or a
+    /// write error): they keep what was written, and the status line says so.
+    pub cut_short: u64,
+}
+
+/// Status suffix for takes the engine had to cut short; empty when there are none.
+pub fn cut_short_note(n: u64) -> String {
+    match n {
+        0 => String::new(),
+        1 => "; 1 take was cut short (file size limit or a disk error), kept up to that point".into(),
+        n => format!("; {n} takes were cut short (file size limit or a disk error), kept up to that point"),
+    }
 }
 
 /// Rows of the "In" selector: "None", then "Input k (Mono)" per device input
@@ -263,7 +277,10 @@ impl Controller {
                 audio_err = Some(format!("{}: {e}", dir.display()));
             } else {
                 match self.engine.start_recording(&dir) {
-                    Ok(()) => audio_started = true,
+                    Ok(()) => {
+                        audio_started = true;
+                        self.rec.write_errors_at_start = self.engine.recording_stats().write_errors;
+                    }
                     Err(e) => audio_err = Some(format!("recording failed: {e}")),
                 }
             }
@@ -311,7 +328,10 @@ impl Controller {
             return;
         }
         let takes = match self.engine.stop_recording() {
-            Ok(t) => t,
+            Ok(t) => {
+                self.rec.cut_short = self.engine.recording_stats().write_errors.saturating_sub(self.rec.write_errors_at_start);
+                t
+            }
             Err(e) => {
                 self.set_status(format!("Stopping the recording failed: {e}"), 6);
                 if !midi.is_empty() {
@@ -477,10 +497,12 @@ impl Controller {
         }
         if cmds.is_empty() {
             if midi.is_empty() {
+                let cut = cut_short_note(std::mem::take(&mut self.rec.cut_short));
                 self.set_status(
                     format!(
-                        "Recording produced no usable takes{}",
-                        if errors.is_empty() { String::new() } else { format!(": {}", errors.join("; ")) }
+                        "Recording produced no usable takes{}{}",
+                        if errors.is_empty() { String::new() } else { format!(": {}", errors.join("; ")) },
+                        cut
                     ),
                     6,
                 );
@@ -505,8 +527,12 @@ impl Controller {
             if passes > 1 {
                 extra += &format!(", {passes} loop takes (clip menu › Takes)");
             }
-            if errors.is_empty() {
+            let cut = std::mem::take(&mut self.rec.cut_short);
+            extra += &cut_short_note(cut);
+            if errors.is_empty() && cut == 0 {
                 self.set_status(format!("Recorded {} take(s){extra}", loaded.len()), 3);
+            } else if errors.is_empty() {
+                self.set_status(format!("Recorded {} take(s){extra}", loaded.len()), 8);
             } else {
                 self.set_status(format!("Recorded {} take(s){extra}; skipped: {}", loaded.len(), errors.join("; ")), 6);
             }
@@ -661,6 +687,12 @@ mod tests {
             is_default_input: false,
             is_default_output: false,
         }
+    }
+    #[test]
+    fn cut_short_takes_are_named_in_the_status() {
+        assert_eq!(cut_short_note(0), "");
+        assert!(cut_short_note(1).contains("1 take was cut short"));
+        assert!(cut_short_note(3).contains("3 takes were cut short"));
     }
     #[test]
     fn choices() {
