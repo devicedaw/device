@@ -441,14 +441,33 @@ pub fn to_slint_image(tex: wgpu::Texture) -> Result<slint::Image, String> {
 /// (`WGPUConfiguration::Manual`), so we control the limits (Slint's automatic
 /// default is downlevel WebGL2 limits). Returns the config and an adapter description.
 pub fn make_wgpu_config() -> Result<(slint::wgpu_30::WGPUConfiguration, String), String> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        force_fallback_adapter: false,
-        compatible_surface: None,
-        ..Default::default()
-    }))
-    .map_err(|e| format!("no wgpu adapter: {e}"))?;
+    let env_backends = wgpu::Backends::from_env();
+    let mut picked: Option<(wgpu::Instance, wgpu::Adapter)> = None;
+    let mut last_err = String::from("no backends to try");
+    for backends in backend_attempts(cfg!(windows), env_backends) {
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+        desc.backends = backends;
+        let instance = wgpu::Instance::new(desc);
+        match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+            ..Default::default()
+        })) {
+            Ok(adapter) => {
+                let hardware = adapter.get_info().device_type != wgpu::DeviceType::Cpu;
+                // A software adapter (WARP) is kept only until a later attempt finds hardware.
+                if picked.is_none() || hardware {
+                    picked = Some((instance, adapter));
+                }
+                if hardware {
+                    break;
+                }
+            }
+            Err(e) => last_err = e.to_string(),
+        }
+    }
+    let (instance, adapter) = picked.ok_or_else(|| format!("no wgpu adapter: {last_err}"))?;
     let info = adapter.get_info();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("dstudio-ui"),
@@ -472,10 +491,48 @@ pub fn make_wgpu_config() -> Result<(slint::wgpu_30::WGPUConfiguration, String),
     ))
 }
 
+/// The backend sets to try, in order. `WGPU_BACKEND` (`env`) always wins. On Windows, Direct3D 12
+/// comes first: it is the API the CI screenshots and self-tests run on (WARP), every Windows 10/11
+/// GPU has it, and with both available wgpu's own order would pick Vulkan, a path CI never runs
+/// (issue #115: a Windows 10 machine drew shapes and icons but no text or timeline). The other
+/// backends stay as the fallback for a machine without a Direct3D 12 GPU. Elsewhere wgpu's default set is used.
+fn backend_attempts(windows: bool, env: Option<wgpu::Backends>) -> Vec<wgpu::Backends> {
+    match env {
+        Some(b) => vec![b],
+        None if windows => vec![wgpu::Backends::DX12, wgpu::Backends::all().difference(wgpu::Backends::DX12)],
+        None => vec![wgpu::Backends::default()],
+    }
+}
+
 /// Run `f` with the device/queue if the notifier's graphics API is wgpu 30.
 pub fn with_wgpu<R>(api: &slint::GraphicsAPI<'_>, f: impl FnOnce(&wgpu::Device, &wgpu::Queue) -> R) -> Option<R> {
     match api {
         slint::GraphicsAPI::WGPU30 { device, queue, .. } => Some(f(device, queue)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::backend_attempts;
+
+    #[test]
+    fn windows_tries_direct3d_12_before_vulkan() {
+        let attempts = backend_attempts(true, None);
+        assert_eq!(attempts[0], wgpu::Backends::DX12);
+        assert!(attempts[1].contains(wgpu::Backends::VULKAN) && !attempts[1].contains(wgpu::Backends::DX12));
+        assert_eq!(attempts.len(), 2);
+    }
+
+    #[test]
+    fn wgpu_backend_env_overrides_the_order() {
+        let env = Some(wgpu::Backends::VULKAN);
+        assert_eq!(backend_attempts(true, env), vec![wgpu::Backends::VULKAN]);
+        assert_eq!(backend_attempts(false, env), vec![wgpu::Backends::VULKAN]);
+    }
+
+    #[test]
+    fn other_systems_keep_the_default_set() {
+        assert_eq!(backend_attempts(false, None), vec![wgpu::Backends::default()]);
     }
 }

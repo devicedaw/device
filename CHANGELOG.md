@@ -37,6 +37,8 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ### Fixed
 
+- Windows: on some PCs every label and the timeline were blank, with only shapes and icons drawn. Device now draws
+  with Direct3D 12 on Windows, and only falls back to Vulkan on a PC without it.
 - Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song
   tempo in time signatures such as 6/8 and 2/2, and in exports and bounces, instead of the wrong speed.
 - Exports (mixdown, stems and Live sets) line up with the timeline when a device adds latency, such as the Limiter,
