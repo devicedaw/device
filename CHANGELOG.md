@@ -37,6 +37,8 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ### Fixed
 
+- Importing MP3, FLAC and Ogg Vorbis files uses newer decoders with fixes for damaged or unusual files: a crash when
+  seeking some FLAC files, MP3 tag-reading errors, and several overflow and memory fixes for Ogg Vorbis.
 - Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song
   tempo in time signatures such as 6/8 and 2/2, and in exports and bounces, instead of the wrong speed.
 - Exports (mixdown, stems and Live sets) line up with the timeline when a device adds latency, such as the Limiter,
