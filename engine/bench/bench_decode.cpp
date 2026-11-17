@@ -1,11 +1,14 @@
 // WAV import benchmark: decode_wav_memory and decode_audio_file on a 60 s stereo 24-bit file
 // written as plain RIFF, RF64 and BW64 (ds64 sizes, data size 0xFFFFFFFF). Prints measurements
-// only; no pass/fail thresholds.
+// only; no pass/fail thresholds. Also times decode_audio_memory on the FLAC, Ogg Vorbis and MP3
+// test fixtures (0.1 s each, tests/decode_fixtures.hpp), 600 decodes per run (60 s of audio), to
+// catch a regression when the third-party decoders are updated.
 //
 // usage: dstudio_decode_bench [reps=20]
 #include "platform/os.hpp"
 #include "dstudio_engine.h"
 #include "wav.hpp"
+#include "../tests/decode_fixtures.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -101,6 +104,39 @@ int main(int argc, char** argv) {
             continue;
         }
         std::printf("| %s | %.2f | %.2f |\n", kind, median(mem), median(file));
+    }
+
+    // Compressed import: the same 0.1 s fixture decoded 600 times per run.
+    struct Fixture {
+        const char* name;
+        const uint8_t* data;
+        std::size_t size;
+    };
+    const Fixture compressed[] = {
+        {"FLAC", fixtures::kToneFlac, sizeof fixtures::kToneFlac},
+        {"Ogg Vorbis", fixtures::kToneOgg, sizeof fixtures::kToneOgg},
+        {"MP3", fixtures::kToneMp3, sizeof fixtures::kToneMp3},
+    };
+    constexpr int kDecodes = 600;
+    std::printf("\nCompressed import, 0.1 s stereo 48 kHz fixture x %d (60 s of audio), median of %d runs\n\n", kDecodes, reps);
+    std::printf("| format | decode_audio_memory ms per 60 s |\n|---|---:|\n");
+    for (const Fixture& fx : compressed) {
+        std::vector<double> runs;
+        bool ok = true;
+        for (int i = 0; i < reps; ++i) {
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int k = 0; k < kDecodes; ++k) {
+                dstudio::DecodedAudio d;
+                std::string err;
+                ok &= dstudio::decode_audio_memory(fx.data, fx.size, d, err) == SE_OK && d.frames > 0;
+            }
+            runs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+        }
+        if (!ok) {
+            std::printf("| %s | failed |\n", fx.name);
+            continue;
+        }
+        std::printf("| %s | %.2f |\n", fx.name, median(runs));
     }
     return 0;
 }
