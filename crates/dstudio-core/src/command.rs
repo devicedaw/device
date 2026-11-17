@@ -122,6 +122,11 @@ pub enum Command {
         section: SectionId,
         name: String,
     },
+    /// A section's colour (0xRRGGBB).
+    SetSectionColor {
+        section: SectionId,
+        color: u32,
+    },
     /// Length in ticks, at least one beat. Later sections move with its end.
     SetSectionLength {
         section: SectionId,
@@ -478,6 +483,7 @@ impl Command {
             Command::InsertSection { .. } => "Add Section".into(),
             Command::RemoveSection { .. } => "Delete Section".into(),
             Command::RenameSection { .. } => "Rename Section".into(),
+            Command::SetSectionColor { .. } => "Section Color".into(),
             Command::SetSectionLength { .. } => "Resize Section".into(),
             Command::MoveSection { .. } => "Move Section".into(),
             Command::SetTrackGain { .. } => "Track Volume Change".into(),
@@ -636,6 +642,14 @@ impl Command {
                 let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
                 let old = std::mem::replace(&mut p.sections[i].name, name);
                 Ok(Command::RenameSection { section, name: old })
+            }
+            Command::SetSectionColor { section, color } => {
+                if color > 0xff_ffff {
+                    return Err(invalid("color", "0xRRGGBB"));
+                }
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                let old = std::mem::replace(&mut p.sections[i].color, color);
+                Ok(Command::SetSectionColor { section, color: old })
             }
             Command::SetSectionLength { section, length } => {
                 if length < PPQ {

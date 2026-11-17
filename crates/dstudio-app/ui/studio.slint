@@ -500,7 +500,7 @@ export global Studio {
     in property <float> sel-meter-l: 1; // 0 (top) .. 1 (bottom = silent)
     in property <float> sel-meter-r: 1;
     in property <string> sel-peak-text: "−∞";
-    // ---- browser Devices tab (src/devices.rs; the Chains sub-tab is PLACEHOLDER data) ----
+    // ---- browser Devices tab (src/devices.rs; Chains: src/chain_presets.rs) ----
     in property <[TreeRow]> tree;
     in property <int> browser-tab;             // 0 Instruments, 1 Effects, 2 Chains
     in-out property <string> browser-search;   // tree filter (transient input)
@@ -529,6 +529,8 @@ export global Studio {
     in property <string> files-empty-title;
     in property <string> files-empty-hint;
     callback browser-section-select(int);
+    callback browser-top-select(int);                         // section tab: 0 Search … 2 Projects, 3 Devices, 4 Files
+    in property <int> browser-top: 3;                        // top tab shown: 0 Search … 4 Files (Controller::browser_top)
     callback browser-back();
     callback browser-forward();
     callback files-tab-select(int);
@@ -995,7 +997,10 @@ export global Studio {
     in property <bool> unsaved-open;
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show
     // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top.
-    in property <[bool]> general-on: [false, true, false, true];
+    in property <[bool]> general-on: [false, true, false, true, false];
+    // Settings › General › Projects folder, shown with ~ for the home folder; Choose… picks another.
+    in property <string> general-projects-folder: "~/Documents/Device Studio";
+    callback general-choose-projects-folder();
     in property <bool> general-stop-in-place;
     callback general-toggle(int);
     callback general-stop-mode(bool);                       // true = Stop in place
@@ -1109,7 +1114,10 @@ export global Studio {
     callback device-fold(int);                               // fold / unfold the card (header double-click, minus)
     callback device-collapse(int);                           // chain head: hide / show its members
     callback device-swap-menu(int, length, length);          // "Choose effect plugin" from the card name
-    callback device-rename(int, string);                     // card label (chain group name)
+    callback device-rename(int, string);                     // card label (chain group name); Save as… saves the chain
+    callback device-rename-start(int);                       // double-click on a chain card's name
+    callback device-rename-cancel();                         // Escape in the chain name field
+    in property <int> renaming-device: -1;               // chain card whose name field is open
     callback mod-menu(int, int, length, length);             // right-click on a control: Automate, Modulators, Macros
     callback mod-map(int, int);                              // arm / disarm a source output (LFO 0, macro n) for mapping
     callback mod-add-menu(int, int, length, length);         // + : parameter list of the track to add as targets

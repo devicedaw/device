@@ -31,20 +31,23 @@
 // are stable across restarts (e.g. "alsa_output.pci-0000_00_1f.3.analog-stereo").
 // Enumeration, validation and the default rate use a short-lived connection
 // (registry + "default" and "settings" metadata, one round trip) and never
-// open a stream. Without a reachable PipeWire server there are no devices:
-// list_audio_devices() returns an empty list and start() fails with
-// SE_ERR_DEVICE.
+// open a stream. Without a reachable PipeWire server there are no PipeWire
+// devices and start() fails with SE_ERR_DEVICE; linux_audio_device.cpp then
+// uses the ALSA backend for the system default.
+//
+// libpipewire is loaded with dlopen (like libasound for MIDI), not linked:
+// the app must start, and play through ALSA, on systems without PipeWire.
+// Only the development headers are needed to build.
 //
 // Rates: the graph runs at clock.rate (default 48 kHz; clock.allowed-rates
 // lets PipeWire switch). Config::device_rate requests a graph rate through
 // node.rate; Config::buffer_size requests a quantum through node.latency.
 // PipeWire may not honour either; status() reports what is in effect.
-#if defined(__linux__)
+#if defined(__linux__) && defined(DSTUDIO_HAVE_PIPEWIRE)
 
 #include "audio_device.hpp"
 #include "dstudio_engine.h"
-
-#if defined(DSTUDIO_HAVE_PIPEWIRE)
+#include "linux_audio.hpp"
 
 #include "frame_ring.hpp"
 
@@ -67,6 +70,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <dlfcn.h>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -77,11 +81,47 @@ namespace {
 constexpr uint32_t kMaxDeviceChannels = 16;
 constexpr uint32_t kMaxCycleFrames = 8192; // largest quantum PipeWire uses
 
-// Initialises libpipewire once per process.
-void init_pipewire() {
-    static std::once_flag once;
-    std::call_once(once, [] { pw_init(nullptr, nullptr); });
+// The libpipewire functions this backend calls, resolved from
+// libpipewire-0.3.so.0. (Everything else it uses, such as the
+// pw_core_add_listener family, is inline in the headers and dispatches
+// through the server objects' method tables.)
+struct PwApi {
+#define DSTUDIO_PW_FNS(X)                                                                                            \
+    X(pw_init) X(pw_main_loop_new) X(pw_main_loop_get_loop) X(pw_main_loop_run) X(pw_main_loop_quit)                \
+    X(pw_main_loop_destroy) X(pw_context_new) X(pw_context_connect) X(pw_context_destroy) X(pw_core_disconnect)     \
+    X(pw_proxy_destroy) X(pw_properties_new) X(pw_properties_set) X(pw_properties_setf) X(pw_stream_new)            \
+    X(pw_stream_add_listener) X(pw_stream_connect) X(pw_stream_dequeue_buffer) X(pw_stream_queue_buffer)            \
+    X(pw_stream_destroy) X(pw_stream_get_time_n) X(pw_thread_loop_new) X(pw_thread_loop_get_loop)                   \
+    X(pw_thread_loop_start) X(pw_thread_loop_stop) X(pw_thread_loop_destroy) X(pw_thread_loop_lock)                 \
+    X(pw_thread_loop_unlock) X(pw_thread_loop_timed_wait) X(pw_thread_loop_signal)
+#define DSTUDIO_PW_FIELD(name) decltype(&::name) name = nullptr;
+    DSTUDIO_PW_FNS(DSTUDIO_PW_FIELD)
+#undef DSTUDIO_PW_FIELD
+};
+
+// Loads libpipewire and calls pw_init once per process. Null when the
+// library (or one of its functions) is missing.
+const PwApi* pw_api() {
+    static const PwApi* const loaded = []() -> const PwApi* {
+        void* lib = dlopen("libpipewire-0.3.so.0", RTLD_NOW | RTLD_LOCAL);
+        if (lib == nullptr) return nullptr;
+        static PwApi a;
+        bool ok = true;
+#define DSTUDIO_PW_LOAD(name)                                                   \
+    a.name = reinterpret_cast<decltype(a.name)>(dlsym(lib, #name));              \
+    ok = ok && a.name != nullptr;
+        DSTUDIO_PW_FNS(DSTUDIO_PW_LOAD)
+#undef DSTUDIO_PW_LOAD
+        if (!ok) return nullptr; // the library stays loaded for the process
+        a.pw_init(nullptr, nullptr);
+        return &a;
+    }();
+    return loaded;
 }
+
+// The loaded API. Only called once pw_api() returned non-null (every entry
+// point checks it first).
+const PwApi& pw() { return *pw_api(); }
 
 // Formats a rate for error messages, e.g. "48000 Hz".
 std::string rate_str(double r) { return std::to_string(static_cast<long>(std::lround(r))) + " Hz"; }
@@ -164,12 +204,12 @@ public:
     // One connection, registry + metadata, two round trips (globals, then
     // the bound nodes' info and metadata properties). ~ms with a server.
     PwSnapshot run() {
-        init_pipewire();
         PwSnapshot snap;
-        loop_ = pw_main_loop_new(nullptr);
+        if (pw_api() == nullptr) return snap;
+        loop_ = pw().pw_main_loop_new(nullptr);
         if (loop_ == nullptr) return snap;
-        context_ = pw_context_new(pw_main_loop_get_loop(loop_), nullptr, 0);
-        if (context_ != nullptr) core_ = pw_context_connect(context_, nullptr, 0);
+        context_ = pw().pw_context_new(pw().pw_main_loop_get_loop(loop_), nullptr, 0);
+        if (context_ != nullptr) core_ = pw().pw_context_connect(context_, nullptr, 0);
         if (core_ != nullptr) {
             snap_ = &snap;
             snap.connected = true;
@@ -180,9 +220,9 @@ public:
             registry_ = pw_core_get_registry(core_, PW_VERSION_REGISTRY, 0);
             if (registry_ == nullptr) {
                 spa_hook_remove(&core_listener_);
-                pw_core_disconnect(core_);
-                pw_context_destroy(context_);
-                pw_main_loop_destroy(loop_);
+                pw().pw_core_disconnect(core_);
+                pw().pw_context_destroy(context_);
+                pw().pw_main_loop_destroy(loop_);
                 snap.connected = false;
                 return snap;
             }
@@ -190,28 +230,28 @@ public:
             registry_events_.global = &Enumerator::on_global;
             pw_registry_add_listener(registry_, &registry_listener_, &registry_events_, this);
             // Watchdog: a server that never answers must not hang the caller.
-            timer_ = pw_loop_add_timer(pw_main_loop_get_loop(loop_), &Enumerator::on_timeout, this);
+            timer_ = pw_loop_add_timer(pw().pw_main_loop_get_loop(loop_), &Enumerator::on_timeout, this);
             timespec value{2, 0}, interval{0, 0};
-            pw_loop_update_timer(pw_main_loop_get_loop(loop_), timer_, &value, &interval, false);
+            pw_loop_update_timer(pw().pw_main_loop_get_loop(loop_), timer_, &value, &interval, false);
             roundtrip(); // globals
             roundtrip(); // node info + metadata properties
             for (auto& n : bound_nodes_) {
                 spa_hook_remove(&n->listener);
-                pw_proxy_destroy(static_cast<pw_proxy*>(n->proxy));
+                pw().pw_proxy_destroy(static_cast<pw_proxy*>(n->proxy));
             }
             bound_nodes_.clear();
             for (auto& m : metadata_) {
                 spa_hook_remove(&m->listener);
-                pw_proxy_destroy(static_cast<pw_proxy*>(m->proxy));
+                pw().pw_proxy_destroy(static_cast<pw_proxy*>(m->proxy));
             }
             metadata_.clear();
             spa_hook_remove(&registry_listener_);
-            pw_proxy_destroy(reinterpret_cast<pw_proxy*>(registry_));
+            pw().pw_proxy_destroy(reinterpret_cast<pw_proxy*>(registry_));
             spa_hook_remove(&core_listener_);
-            pw_core_disconnect(core_);
+            pw().pw_core_disconnect(core_);
         }
-        if (context_ != nullptr) pw_context_destroy(context_);
-        pw_main_loop_destroy(loop_);
+        if (context_ != nullptr) pw().pw_context_destroy(context_);
+        pw().pw_main_loop_destroy(loop_);
         return snap;
     }
 
@@ -242,24 +282,24 @@ private:
     void roundtrip() {
         if (timed_out_) return;
         pending_ = pw_core_sync(core_, PW_ID_CORE, 0);
-        pw_main_loop_run(loop_);
+        pw().pw_main_loop_run(loop_);
     }
 
     // Core "done" event: ends the round trip whose sync sequence matches.
     static void on_done(void* data, uint32_t id, int seq) {
         auto* self = static_cast<Enumerator*>(data);
-        if (id == PW_ID_CORE && seq == self->pending_) pw_main_loop_quit(self->loop_);
+        if (id == PW_ID_CORE && seq == self->pending_) pw().pw_main_loop_quit(self->loop_);
     }
     // Core error: ends the current round trip so the caller does not wait for it.
     static void on_error(void* data, uint32_t id, int, int, const char*) {
         auto* self = static_cast<Enumerator*>(data);
-        if (id == PW_ID_CORE) pw_main_loop_quit(self->loop_);
+        if (id == PW_ID_CORE) pw().pw_main_loop_quit(self->loop_);
     }
     // Watchdog: the server did not answer in time; stop waiting.
     static void on_timeout(void* data, uint64_t) {
         auto* self = static_cast<Enumerator*>(data);
         self->timed_out_ = true;
-        pw_main_loop_quit(self->loop_);
+        pw().pw_main_loop_quit(self->loop_);
     }
 
     // Registry event: records Audio/Sink and Audio/Source nodes (binding those
@@ -416,6 +456,10 @@ public:
             err = "invalid device configuration";
             return SE_ERR_INVALID_ARG;
         }
+        if (pw_api() == nullptr) {
+            err = "PipeWire is not installed (libpipewire-0.3.so.0 not found)";
+            return SE_ERR_DEVICE;
+        }
         const PwSnapshot snap = snapshot();
         if (!snap.connected) {
             err = "cannot connect to the PipeWire server (is pipewire running?)";
@@ -431,15 +475,15 @@ public:
         for (uint32_t c = 0; c < out_channels_; ++c)
             out_ptrs_[c] = out_planar_.data() + static_cast<std::size_t>(c) * kMaxCycleFrames;
 
-        loop_ = pw_thread_loop_new("dstudio-pipewire", nullptr);
+        loop_ = pw().pw_thread_loop_new("dstudio-pipewire", nullptr);
         if (loop_ == nullptr) return fail("pw_thread_loop_new failed", err);
-        context_ = pw_context_new(pw_thread_loop_get_loop(loop_), nullptr, 0);
+        context_ = pw().pw_context_new(pw().pw_thread_loop_get_loop(loop_), nullptr, 0);
         if (context_ == nullptr) return fail("pw_context_new failed", err);
-        if (pw_thread_loop_start(loop_) < 0) return fail("pw_thread_loop_start failed", err);
-        pw_thread_loop_lock(loop_);
-        core_ = pw_context_connect(context_, nullptr, 0);
+        if (pw().pw_thread_loop_start(loop_) < 0) return fail("pw_thread_loop_start failed", err);
+        pw().pw_thread_loop_lock(loop_);
+        core_ = pw().pw_context_connect(context_, nullptr, 0);
         if (core_ == nullptr) {
-            pw_thread_loop_unlock(loop_);
+            pw().pw_thread_loop_unlock(loop_);
             return fail("cannot connect to the PipeWire server", err);
         }
         const PwNode* out_node = find_node(snap, config.output_uid, true);
@@ -463,7 +507,7 @@ public:
         }
         make_stream(true, out_node != nullptr ? out_node->name : std::string(), out_channels_, err);
         if (playback_.stream == nullptr) {
-            pw_thread_loop_unlock(loop_);
+            pw().pw_thread_loop_unlock(loop_);
             teardown();
             return SE_ERR_DEVICE;
         }
@@ -471,11 +515,11 @@ public:
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         while (playback_.state.load() != PW_STREAM_STATE_STREAMING && playback_.state.load() != PW_STREAM_STATE_ERROR &&
                std::chrono::steady_clock::now() < deadline)
-            pw_thread_loop_timed_wait(loop_, 1);
+            pw().pw_thread_loop_timed_wait(loop_, 1);
         if (playback_.state.load() != PW_STREAM_STATE_STREAMING) {
             err = "the PipeWire playback stream did not start" +
                   (playback_.error.empty() ? std::string(" (no output device?)") : ": " + playback_.error);
-            pw_thread_loop_unlock(loop_);
+            pw().pw_thread_loop_unlock(loop_);
             teardown();
             return SE_ERR_DEVICE;
         }
@@ -483,7 +527,7 @@ public:
             const auto in_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
             while (capture_.state.load() != PW_STREAM_STATE_STREAMING && capture_.state.load() != PW_STREAM_STATE_ERROR &&
                    std::chrono::steady_clock::now() < in_deadline)
-                pw_thread_loop_timed_wait(loop_, 1);
+                pw().pw_thread_loop_timed_wait(loop_, 1);
             if (capture_.state.load() != PW_STREAM_STATE_STREAMING) {
                 input_error = "the PipeWire capture stream did not start" +
                               (capture_.error.empty() ? std::string() : ": " + capture_.error);
@@ -493,7 +537,7 @@ public:
             input_error = "the PipeWire capture stream could not be created";
         }
         input_live_.store(capture_.stream != nullptr, std::memory_order_release);
-        pw_thread_loop_unlock(loop_);
+        pw().pw_thread_loop_unlock(loop_);
 
         // Status: graph rate, quantum and delays once timing is valid.
         status_.output_name = out_node != nullptr ? out_node->description : std::string("default output");
@@ -594,19 +638,19 @@ private:
         s.state.store(PW_STREAM_STATE_UNCONNECTED);
         const std::string latency =
             std::to_string(requested_quantum()) + "/" + std::to_string(static_cast<long>(config_.sample_rate));
-        pw_properties* props = pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY,
+        pw_properties* props = pw().pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY,
                                                  playback ? "Playback" : "Capture", PW_KEY_MEDIA_ROLE, "Production",
                                                  PW_KEY_APP_NAME, "Device", PW_KEY_NODE_LATENCY, latency.c_str(),
                                                  nullptr);
-        if (!target.empty()) pw_properties_set(props, PW_KEY_TARGET_OBJECT, target.c_str());
+        if (!target.empty()) pw().pw_properties_set(props, PW_KEY_TARGET_OBJECT, target.c_str());
         // One group for both streams: PipeWire runs them from the same driver
         // (resampling the other device if input and output are different
         // hardware), so the input ring sees one clock and never drifts.
-        pw_properties_setf(props, PW_KEY_NODE_GROUP, "device-studio-%p", static_cast<const void*>(this));
+        pw().pw_properties_setf(props, PW_KEY_NODE_GROUP, "device-studio-%p", static_cast<const void*>(this));
         if (config_.device_rate > 0.0)
-            pw_properties_set(props, PW_KEY_NODE_RATE,
+            pw().pw_properties_set(props, PW_KEY_NODE_RATE,
                               ("1/" + std::to_string(static_cast<long>(std::lround(config_.device_rate)))).c_str());
-        s.stream = pw_stream_new(core_, playback ? "Device output" : "Device input", props);
+        s.stream = pw().pw_stream_new(core_, playback ? "Device output" : "Device input", props);
         if (s.stream == nullptr) {
             err = std::string("pw_stream_new failed: ") + std::strerror(errno);
             return s;
@@ -614,7 +658,7 @@ private:
         s.events.version = PW_VERSION_STREAM_EVENTS;
         s.events.state_changed = &PipeWireDevice::on_state;
         s.events.process = playback ? &PipeWireDevice::on_playback : &PipeWireDevice::on_capture;
-        pw_stream_add_listener(s.stream, &s.listener, &s.events, &s);
+        pw().pw_stream_add_listener(s.stream, &s.listener, &s.events, &s);
 
         uint8_t buffer[1024];
         spa_pod_builder b;
@@ -634,7 +678,7 @@ private:
         const spa_pod* params[1] = {spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &info)};
         const auto flags = static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS |
                                                         PW_STREAM_FLAG_RT_PROCESS);
-        const int r = pw_stream_connect(s.stream, playback ? PW_DIRECTION_OUTPUT : PW_DIRECTION_INPUT, PW_ID_ANY,
+        const int r = pw().pw_stream_connect(s.stream, playback ? PW_DIRECTION_OUTPUT : PW_DIRECTION_INPUT, PW_ID_ANY,
                                         flags, params, 1);
         if (r < 0) {
             err = std::string("pw_stream_connect failed: ") + std::strerror(-r);
@@ -648,7 +692,7 @@ private:
     static void destroy_stream(StreamSlot& s) {
         if (s.stream == nullptr) return;
         spa_hook_remove(&s.listener);
-        pw_stream_destroy(s.stream);
+        pw().pw_stream_destroy(s.stream);
         s.stream = nullptr;
         s.state.store(PW_STREAM_STATE_UNCONNECTED);
     }
@@ -658,17 +702,17 @@ private:
     void teardown() {
         input_live_.store(false, std::memory_order_release);
         if (loop_ != nullptr) {
-            pw_thread_loop_lock(loop_);
+            pw().pw_thread_loop_lock(loop_);
             destroy_stream(capture_);
             destroy_stream(playback_);
-            pw_thread_loop_unlock(loop_);
-            pw_thread_loop_stop(loop_);
+            pw().pw_thread_loop_unlock(loop_);
+            pw().pw_thread_loop_stop(loop_);
         }
-        if (core_ != nullptr) pw_core_disconnect(core_);
+        if (core_ != nullptr) pw().pw_core_disconnect(core_);
         core_ = nullptr;
-        if (context_ != nullptr) pw_context_destroy(context_); // joins the data thread
+        if (context_ != nullptr) pw().pw_context_destroy(context_); // joins the data thread
         context_ = nullptr;
-        if (loop_ != nullptr) pw_thread_loop_destroy(loop_);
+        if (loop_ != nullptr) pw().pw_thread_loop_destroy(loop_);
         loop_ = nullptr;
     }
 
@@ -679,9 +723,9 @@ private:
         pw_time t{};
         bool valid = false;
         for (int i = 0; i < 50 && !valid; ++i) {
-            pw_thread_loop_lock(loop_);
-            valid = pw_stream_get_time_n(playback_.stream, &t, sizeof t) == 0 && t.rate.denom > 0;
-            pw_thread_loop_unlock(loop_);
+            pw().pw_thread_loop_lock(loop_);
+            valid = pw().pw_stream_get_time_n(playback_.stream, &t, sizeof t) == 0 && t.rate.denom > 0;
+            pw().pw_thread_loop_unlock(loop_);
             if (!valid) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         const double graph_rate = valid ? static_cast<double>(t.rate.denom) / std::max<uint32_t>(t.rate.num, 1)
@@ -696,9 +740,9 @@ private:
         if (capture_.stream != nullptr) {
             pw_time ti{};
             int64_t in_delay = 0;
-            pw_thread_loop_lock(loop_);
-            if (pw_stream_get_time_n(capture_.stream, &ti, sizeof ti) == 0) in_delay = std::max<int64_t>(ti.delay, 0);
-            pw_thread_loop_unlock(loop_);
+            pw().pw_thread_loop_lock(loop_);
+            if (pw().pw_stream_get_time_n(capture_.stream, &ti, sizeof ti) == 0) in_delay = std::max<int64_t>(ti.delay, 0);
+            pw().pw_thread_loop_unlock(loop_);
             const double to_dev = graph_rate / config_.sample_rate;
             status_.input_latency =
                 static_cast<uint32_t>(in_delay) + quantum + static_cast<uint32_t>(std::lround(ring_target_ * to_dev));
@@ -710,7 +754,7 @@ private:
         auto* s = static_cast<StreamSlot*>(data);
         if (error != nullptr) s->error = error;
         s->state.store(state);
-        pw_thread_loop_signal(s->owner->loop_, false);
+        pw().pw_thread_loop_signal(s->owner->loop_, false);
     }
 
     // Data thread: the driver cycle being processed, for the input ring
@@ -719,7 +763,7 @@ private:
     // the stream delays. 0 if unknown.
     static uint64_t cycle_of(pw_stream* stream) noexcept {
         pw_time t{};
-        if (pw_stream_get_time_n(stream, &t, sizeof t) != 0 || t.now <= 0) return 0;
+        if (pw().pw_stream_get_time_n(stream, &t, sizeof t) != 0 || t.now <= 0) return 0;
         return static_cast<uint64_t>(t.now);
     }
 
@@ -728,7 +772,7 @@ private:
     static void on_capture(void* data) {
         auto* s = static_cast<StreamSlot*>(data);
         PipeWireDevice* self = s->owner;
-        pw_buffer* b = pw_stream_dequeue_buffer(s->stream);
+        pw_buffer* b = pw().pw_stream_dequeue_buffer(s->stream);
         if (b == nullptr) return;
         spa_buffer* buf = b->buffer;
         if (buf->n_datas > 0 && buf->datas[0].chunk != nullptr) {
@@ -743,7 +787,7 @@ private:
                                          : reinterpret_cast<const float*>(static_cast<const uint8_t*>(d.data) + offset),
                                   frames, cycle_of(s->stream));
         }
-        pw_stream_queue_buffer(s->stream, b);
+        pw().pw_stream_queue_buffer(s->stream, b);
     }
 
     // Data thread: renders the whole requested cycle in chunks of at most
@@ -752,11 +796,11 @@ private:
     static void on_playback(void* data) {
         auto* s = static_cast<StreamSlot*>(data);
         PipeWireDevice* self = s->owner;
-        pw_buffer* b = pw_stream_dequeue_buffer(s->stream);
+        pw_buffer* b = pw().pw_stream_dequeue_buffer(s->stream);
         if (b == nullptr) return;
         spa_buffer* buf = b->buffer;
         if (buf->n_datas == 0 || buf->datas[0].data == nullptr) {
-            pw_stream_queue_buffer(s->stream, b);
+            pw().pw_stream_queue_buffer(s->stream, b);
             return;
         }
         spa_data& d = buf->datas[0];
@@ -788,7 +832,7 @@ private:
         d.chunk->offset = 0;
         d.chunk->stride = static_cast<int32_t>(stride);
         d.chunk->size = frames * stride;
-        pw_stream_queue_buffer(s->stream, b);
+        pw().pw_stream_queue_buffer(s->stream, b);
     }
 
     Callback* callback_ = nullptr;
@@ -810,13 +854,16 @@ private:
 
 } // namespace
 
-// Creates the Linux audio device (PipeWire).
-std::unique_ptr<AudioDevice> create_platform_audio_device() { return std::make_unique<PipeWireDevice>(); }
+namespace linux_audio {
 
-// Lists every PipeWire sink and source as a device (empty without a server).
-int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string&) {
+// A PipeWire stream device (not started).
+std::unique_ptr<AudioDevice> create_pipewire_device() { return std::make_unique<PipeWireDevice>(); }
+
+// Lists every PipeWire sink and source as a device (false without a server).
+bool pipewire_list(std::vector<DeviceInfo>& out, double& clock_rate) {
     out.clear();
     const PwSnapshot s = snapshot();
+    clock_rate = s.connected ? s.clock_rate : 0.0;
     for (const PwNode& n : s.nodes) {
         DeviceInfo d;
         d.uid = n.name;
@@ -832,58 +879,27 @@ int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string&) {
         d.sample_rates = s.allowed_rates;
         out.push_back(std::move(d));
     }
-    return SE_OK;
+    return s.connected;
 }
 
-// The graph's clock rate, or 0 when no PipeWire server is reachable.
-double query_default_output_sample_rate() {
-    const PwSnapshot s = snapshot();
-    return s.connected ? s.clock_rate : 0.0;
+// One short connection; no registry walk.
+bool pipewire_server_up() {
+    if (pw_api() == nullptr) return false;
+    pw_main_loop* loop = pw().pw_main_loop_new(nullptr);
+    if (loop == nullptr) return false;
+    bool up = false;
+    if (pw_context* ctx = pw().pw_context_new(pw().pw_main_loop_get_loop(loop), nullptr, 0)) {
+        if (pw_core* core = pw().pw_context_connect(ctx, nullptr, 0)) {
+            up = true;
+            pw().pw_core_disconnect(core);
+        }
+        pw().pw_context_destroy(ctx);
+    }
+    pw().pw_main_loop_destroy(loop);
+    return up;
 }
 
+} // namespace linux_audio
 } // namespace dstudio
 
-#else // !DSTUDIO_HAVE_PIPEWIRE
-
-// Built without the PipeWire development files: offline rendering only.
-namespace dstudio {
-namespace {
-
-// Stand-in device for builds without libpipewire: every start fails.
-class NoBackendDevice final : public AudioDevice {
-public:
-    // Always fails: there are no devices to validate against.
-    int32_t validate(const Config& c, std::string& err) const override {
-        err = c.output_uid.empty() ? "no default output device (built without PipeWire support)"
-                                   : "output device '" + c.output_uid + "' not found (built without PipeWire support)";
-        return SE_ERR_NOT_FOUND;
-    }
-    // Always fails with SE_ERR_DEVICE.
-    int32_t start(const Config&, Callback*, std::string& err) override {
-        err = "this build has no Linux audio backend (configure with libpipewire-0.3 installed)";
-        return SE_ERR_DEVICE;
-    }
-    // Nothing to stop.
-    int32_t stop() override { return SE_OK; }
-    // Never running.
-    bool is_running() const override { return false; }
-    // Empty status.
-    Status status() const override { return {}; }
-};
-
-} // namespace
-
-// Creates the stand-in device (built without PipeWire).
-std::unique_ptr<AudioDevice> create_platform_audio_device() { return std::make_unique<NoBackendDevice>(); }
-// No devices without PipeWire.
-int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string&) {
-    out.clear();
-    return SE_OK;
-}
-// No default rate without PipeWire.
-double query_default_output_sample_rate() { return 0.0; }
-
-} // namespace dstudio
-
-#endif // DSTUDIO_HAVE_PIPEWIRE
-#endif // __linux__
+#endif // __linux__ && DSTUDIO_HAVE_PIPEWIRE

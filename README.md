@@ -37,7 +37,7 @@ wgpu.
 > [!WARNING]
 > **Device is pre-alpha.** The first release, [0.1.0](https://github.com/devicedaw/device/releases/latest), is out to try, but features are missing and the project format may still
 > change. macOS is the platform it's developed and tested on every day; Windows and Linux build, but their audio
-> backends have never run on a physical sound card (Linux runs real PipeWire streams in CI). Keep copies of anything you care about.
+> backends have never run on a physical sound card (Linux runs real PipeWire and ALSA streams in CI). Keep copies of anything you care about.
 
 ## Features
 
@@ -49,10 +49,13 @@ wgpu.
   clip's top corners to fade it in and out. Set the tempo in the
   transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
   A new key for a project with MIDI clips offers to transpose them with it.
+  Markers label the parts of a song on the ruler; right-click one to cut, copy, paste, colour or rename it, or to insert
+  a marker before or after it. Turn on Settings › General › Sections move clips and moving, resizing, copying or
+  deleting a marker takes its clips and automation with it.
   Press W to fit the song (or the selected clips) to the width of the timeline, and H to fit every track into its height.
   Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
   Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected
-  clip or section, ⌘D duplicates the selected clip or section. Settings › Shortcuts lists them all by section; click
+  clip or marker, ⌘D duplicates the selected clip or marker. Settings › Shortcuts lists them all by section; click
   one's keys to record new ones, search by name or key, and reset to the defaults at any time. Its Preset menu swaps in
   the keys of Ableton Live, Logic Pro, GarageBand, FL Studio, Fender Studio Pro, Bitwig, Pro Tools or BandLab. ↑/↓ select the track above
   or below, ⇧↑/⇧↓ (⌘⇧ for an octave) transpose the selected MIDI clips, U folds a group, A shows automation, I
@@ -86,7 +89,8 @@ wgpu.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
-  macros.
+  macros. Save a chain to reuse it in any project, or start from one of 27 ready-made chains for vocals, drums, bass,
+  guitar, keys, pads, FX and mix bus.
 - **Plugins.** Hosts AU (macOS), VST3 and CLAP plugins. Plugins are scanned in a separate process, so a crashing plugin
   is blocklisted instead of taking the app down, and their editors open in their own windows. Besides the standard
   plugin folders, Settings › Plugins scans any folders you add.
@@ -177,7 +181,7 @@ does not include the audio, so back up the media too. The format is versioned, b
         │  immutable session snapshot over a C ABI
         ▼
  C++23 real-time engine                      engine/
-   Core Audio · WASAPI · PipeWire     AU · VST3 · CLAP hosting
+   Core Audio · WASAPI · PipeWire · ALSA     AU · VST3 · CLAP hosting
 ```
 
 </details>
@@ -210,7 +214,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Delay compensation | ✅ | |
 | Export | ✅ | |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
-| Windows and Linux audio | 🚧 | Linux streams run in CI on a headless PipeWire server; neither has run on a physical sound card; no ASIO |
+| Windows and Linux audio | 🚧 | Linux plays through PipeWire or straight through ALSA; both run in CI on a headless PipeWire server, but neither Windows nor Linux has run on a physical sound card; no ASIO |
 | Releases and branding | 🚧 | 0.1.0 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is not notarised yet and Windows packages are not signed |
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
@@ -221,10 +225,11 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 |---|---|---|---|
 | macOS | Apple silicon | Core Audio | AU, VST3, CLAP |
 | Windows | Windows x64 | WASAPI (shared mode) | VST3, CLAP |
-| Linux | x64, X11 or Wayland | PipeWire | VST3, CLAP |
+| Linux | x64, X11 or Wayland | PipeWire or ALSA (no sound server needed) | VST3, CLAP |
 
 Every change is built and tested on all three systems in CI, on hosted runners without audio hardware. The Linux
-job runs a headless PipeWire server, so playback and recording go through real PipeWire streams there. Real audio
+job runs a headless PipeWire server, so playback and recording go through real PipeWire streams there, and
+through ALSA PCMs routed into it. Real audio
 hardware is tested by hand on a Mac.
 
 ### Download

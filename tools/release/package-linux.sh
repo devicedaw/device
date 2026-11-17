@@ -4,7 +4,9 @@
 #
 # Usage: tools/release/package-linux.sh <version> <arch> <out dir>
 #   after: cargo build --release --locked -p dstudio-app   (target dir: $CARGO_TARGET_DIR or target/)
-# Runtime needs: PipeWire (libpipewire-0.3), a Vulkan or OpenGL driver, and X11 or Wayland.
+# Runtime needs: a Vulkan or OpenGL driver and X11 or Wayland. Audio uses PipeWire when its
+# server runs and ALSA (part of every Linux system) otherwise; both libraries are loaded at run
+# time, so the package works without PipeWire.
 set -euo pipefail
 version="${1:?usage: package-linux.sh <version> <arch> <out dir>}"
 arch="${2:?usage: package-linux.sh <version> <arch> <out dir>}"
@@ -18,6 +20,12 @@ stage="$work/$name"
 mkdir -p "$stage/bin" "$stage/share/applications" "$stage/share/icons/hicolor/256x256/apps" "$out"
 
 install -m 755 "$release/device-studio" "$stage/bin/device-studio"
+# The audio libraries must be loaded at run time, never linked: a hard link to
+# libpipewire would stop the app from starting on systems without PipeWire.
+if readelf -d "$stage/bin/device-studio" | grep -E 'NEEDED.*(libpipewire|libasound)'; then
+  echo "device-studio links an audio library directly; it must be loaded with dlopen" >&2
+  exit 1
+fi
 scanner="$(bash "$root/tools/release/find-scanner.sh" "$release")"
 install -m 755 "$scanner" "$stage/bin/dstudio_plugin_scanner"
 strip --strip-debug "$stage/bin/device-studio" "$stage/bin/dstudio_plugin_scanner"

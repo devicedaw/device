@@ -176,7 +176,7 @@ impl Controller {
 
     /// Settings › General switches, in page order: 0 Always load last session, 1 Auto-show
     /// third-party effect windows, 2 Auto-show built-in effect windows, 3 Keep plugin windows
-    /// on top. Saved at once.
+    /// on top, 4 Sections move clips. Saved at once.
     pub fn general_toggle(&mut self, i: i32) {
         let g = &mut self.settings.prefs.general;
         let flag = match i {
@@ -184,6 +184,7 @@ impl Controller {
             1 => &mut g.show_plugin_windows,
             2 => &mut g.show_builtin_windows,
             3 => &mut g.plugin_windows_on_top,
+            4 => &mut g.sections_move_clips,
             _ => return,
         };
         *flag = !*flag;
@@ -192,6 +193,27 @@ impl Controller {
         }
         self.save_prefs();
         self.ui_dirty = true;
+    }
+
+    /// Settings › General › Projects folder › Choose…: save it, list it in the browser's
+    /// Projects tab and start Save there.
+    pub fn set_projects_folder(&mut self, dir: std::path::PathBuf) {
+        self.settings.prefs.general.projects_folder = Some(dir.clone());
+        self.save_prefs();
+        self.files.projects_dir = Some(dir);
+        self.files_refresh();
+        self.ui_dirty = true;
+    }
+
+    /// The projects folder for display, with ~ for the home folder.
+    pub fn projects_folder_text(&self) -> String {
+        let Some(d) = self.files.projects_dir.as_deref() else { return "Not set".into() };
+        let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default();
+        let s = d.display().to_string();
+        match s.strip_prefix(&home) {
+            Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with(std::path::MAIN_SEPARATOR)) => format!("~{rest}"),
+            _ => s,
+        }
     }
 
     /// Settings › General › Playhead on stop: Return to start (false) or Stop in place (true).
@@ -573,12 +595,13 @@ impl Controller {
             self.push_shortcuts(s);
         }
         let g = &self.settings.prefs.general;
-        let on = [g.load_last_session, g.show_plugin_windows, g.show_builtin_windows, g.plugin_windows_on_top];
+        let on = [g.load_last_session, g.show_plugin_windows, g.show_builtin_windows, g.plugin_windows_on_top, g.sections_move_clips];
         let shown = s.get_general_on();
         if (0..on.len()).any(|i| slint::Model::row_data(&shown, i) != Some(on[i])) {
             s.set_general_on(slint::ModelRc::new(slint::VecModel::from(on.to_vec())));
         }
         s.set_general_stop_in_place(g.stop_in_place);
+        s.set_general_projects_folder(self.projects_folder_text().into());
         s.set_set_latency_text(self.latency_text().into());
         s.set_settings_note(self.settings.note.clone().into());
         match &self.settings.menu {

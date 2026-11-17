@@ -8101,6 +8101,100 @@ fn modulation_steps() -> Vec<Step> {
             }),
         ),
         DoC(
+            "chains: add the factory chain Bus Glue to the audio track",
+            Box::new(|a, ctl| {
+                key(a, Key::Escape, false, false);
+                let mut c = ctl.borrow_mut();
+                let Some(t) = track_of(&c, TrackKind::Audio).map(|i| c.project().tracks[i].id) else { return };
+                let r = crate::chain_presets::ChainRef { user: false, name: "Bus Glue".into() };
+                c.add_item_to_track(&crate::devices::Item::Chain(r), t, None);
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "chains: the chain arrives whole (head, two members, two macro links) in one undo step",
+            Box::new(|c, _| {
+                let head = device_where(c, |d| d.label.as_deref() == Some("Bus Glue")).ok_or("no Bus Glue head")?;
+                let members =
+                    c.project().tracks[track_of(c, TrackKind::Audio).unwrap()].devices.iter().filter(|d| d.chain == Some(head.id)).count();
+                let last = c.doc.history_labels().last().cloned().unwrap_or_default();
+                (members == 2 && head.links.len() == 2 && last.contains("Add Chain"))
+                    .then_some(())
+                    .ok_or(format!("members {members} links {} last {last}", head.links.len()))
+            }),
+        ),
+        DoC(
+            "chains: open the chain card's name menu",
+            Box::new(|a, ctl| {
+                let Some(h) = device_where(&ctl.borrow(), |d| d.label.as_deref() == Some("Bus Glue")) else { return };
+                a.global::<Studio>().invoke_device_swap_menu(h.id.0 as i32, 600.0, 300.0);
+            }),
+        ),
+        Check(
+            "chains: the menu offers Save as…, Rename…, Unpack; Save is off for a factory chain",
+            Box::new(|_, a| {
+                let items = devmenu_labels(a);
+                let on = |l: &str| items.iter().find(|r| r.0 == l).map(|r| r.2);
+                (on("Save") == Some(false)
+                    && on("Save as…") == Some(true)
+                    && on("Unpack chain") == Some(true)
+                    && on("Delete saved chain") == Some(false))
+                .then_some(())
+                .ok_or(format!("items {items:?}"))
+            }),
+        ),
+        DoC(
+            "chains: Save as… \"My Glue\"",
+            Box::new(|a, ctl| {
+                key(a, Key::Escape, false, false);
+                let mut c = ctl.borrow_mut();
+                let Some(h) = device_where(&c, |d| d.label.as_deref() == Some("Bus Glue")) else { return };
+                c.chain_pick(crate::devices::MenuPick::ChainSaveAs(h.id), (0.0, 0.0));
+                c.update_ui(a);
+                c.chain_rename_done(h.id, "My Glue");
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "chains: the saved chain is listed under My chains and the card takes its name",
+            Box::new(|c, _| {
+                let listed = c.devices.chains.in_folder(crate::chain_presets::MY_CHAINS).iter().any(|r| r.name == "My Glue");
+                let head = device_where(c, |d| d.label.as_deref() == Some("My Glue"));
+                (listed && head.is_some_and(|h| h.preset.as_deref() == Some("My Glue"))).then_some(()).ok_or(format!("listed {listed}"))
+            }),
+        ),
+        DoC(
+            "chains: Unpack chain",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                let Some(h) = device_where(&c, |d| d.label.as_deref() == Some("My Glue")) else { return };
+                c.chain_pick(crate::devices::MenuPick::ChainUnpack(h.id), (0.0, 0.0));
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "chains: unpacking keeps the effects in place, outside any chain",
+            Box::new(|c, _| {
+                let glue = device_where(c, |d| d.plugin.id == "glue-compressor").ok_or("glue gone")?;
+                let head = device_where(c, |d| d.label.as_deref() == Some("My Glue"));
+                (head.is_none() && glue.chain.is_none()).then_some(()).ok_or("still chained".into())
+            }),
+        ),
+        DoC(
+            "chains: undo the unpack, the save and the add",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                for _ in 0..3 {
+                    c.undo();
+                }
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "chains: the track is back to its earlier chain",
+            Box::new(|c, _| device_where(c, |d| d.plugin.id == "glue-compressor").is_none().then_some(()).ok_or("glue left".into())),
+        ),
+        DoC(
             "plugin card: add the CLAP test gain, open + Add",
             Box::new(|a, ctl| {
                 key(a, Key::Escape, false, false);
@@ -10438,9 +10532,9 @@ fn files_steps() -> Vec<Step> {
             }),
         ),
         Do("files: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
-        Do("files: click the Files section tab", Box::new(|a| click(a, geo().browser_x + 145.0, geo().browser_y + 13.8))),
+        Do("files: click the Projects tab", Box::new(|a| click(a, geo().browser_x + 112.0, geo().browser_y + 13.8))),
         Check(
-            "files: Files › Projects is empty, Back is enabled",
+            "files: Projects is empty, Back is enabled",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
                 let ok = c.files.section == SECTION_FILES
@@ -10452,7 +10546,7 @@ fn files_steps() -> Vec<Step> {
                 ok.then_some(()).ok_or(format!("section {} tab {} title {:?}", c.files.section, c.files.tab, s.get_files_empty_title()))
             }),
         ),
-        Do("files: click the Folders sub-tab", Box::new(|a| click(a, geo().browser_x + 71.0, geo().browser_y + 66.5))),
+        Do("files: click the Files tab", Box::new(|a| click(a, geo().browser_x + 191.0, geo().browser_y + 13.8))),
         Check(
             "files: Folders is empty with its hint",
             Box::new(|c, a| {
@@ -10928,7 +11022,7 @@ fn general_settings_steps() -> Vec<Step> {
                 let s = a.global::<Studio>();
                 let on: Vec<bool> = s.get_general_on().iter().collect();
                 (s.get_settings_page() == 0
-                    && on == [false, true, false, true]
+                    && on == [false, true, false, true, false]
                     && !s.get_general_stop_in_place()
                     && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
                 .then_some(())
@@ -10937,19 +11031,19 @@ fn general_settings_steps() -> Vec<Step> {
         ),
         Do(
             "general: click Stop in place",
-            Box::new(|a| click(a, page_x() + content_w() - 20.5 - 172.5 + 87.0 + 40.0, set_y() + 143.8 + 8.6)),
+            Box::new(|a| click(a, page_x() + content_w() - 20.5 - 172.5 + 87.0 + 40.0, set_y() + 203.8 + 8.6)),
         ),
         Do(
             "general: click Auto-show built-in effect windows",
             Box::new(move |a| {
-                let (x, y) = switch_xy(331.4);
+                let (x, y) = switch_xy(391.4);
                 click(a, x, y);
             }),
         ),
         Do(
             "general: click the disabled Sample licensing switch",
             Box::new(move |a| {
-                let (x, y) = switch_xy(202.9);
+                let (x, y) = switch_xy(262.9);
                 click(a, x, y);
             }),
         ),
@@ -11149,13 +11243,13 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "+ added \"Section 1\": 8 bars from bar 1, first colour, selected, one undo step",
+            "+ added \"Marker 1\": 8 bars from bar 1, first colour, selected, one undo step",
             Box::new(move |c, _| {
                 let p = c.project();
                 let s = p.sections.first().ok_or("no section")?;
                 f1.set(s.id.0);
                 let ok = p.sections.len() == 1
-                    && s.name == "Section 1"
+                    && s.name == "Marker 1"
                     && s.length == 8 * p.ticks_per_bar()
                     && s.color == crate::sections::PALETTE[6]
                     && c.selected_section == Some(s.id)
@@ -11171,17 +11265,17 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "\"Section 2\" follows at bar 9 in the next colour",
+            "\"Marker 2\" follows at bar 9 in the next colour",
             Box::new(|c, _| {
                 let p = c.project();
-                let ok = names(c) == ["Section 1", "Section 2"]
+                let ok = names(c) == ["Marker 1", "Marker 2"]
                     && p.section_start(1) == 8 * p.ticks_per_bar()
                     && p.sections[1].color == crate::sections::PALETTE[7];
                 ok.then_some(()).ok_or(format!("{:?} {:?}", names(c), bars(c)))
             }),
         ),
         DoC(
-            "drag Section 1's right edge from bar 9 to bar 5",
+            "drag Marker 1's right edge from bar 9 to bar 5",
             Box::new(|a, ctl| {
                 let (x0, x1) = {
                     let c = ctl.borrow();
@@ -11191,7 +11285,7 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "Section 1 is 4 bars and Section 2 moved with its end",
+            "Marker 1 is 4 bars and Marker 2 moved with its end",
             Box::new(|c, _| {
                 let p = c.project();
                 (bars(c) == [4, 8] && p.section_start(1) == 4 * p.ticks_per_bar() && c.doc.undo_label() == Some("Resize Section"))
@@ -11200,7 +11294,7 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         DoC(
-            "drag Section 2 to bar 1",
+            "drag Marker 2 to bar 1",
             Box::new(|a, ctl| {
                 let (x0, x1) = {
                     let c = ctl.borrow();
@@ -11210,15 +11304,15 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "Section 2 now comes first",
+            "Marker 2 now comes first",
             Box::new(|c, _| {
-                (names(c) == ["Section 2", "Section 1"] && c.doc.undo_label() == Some("Move Section"))
+                (names(c) == ["Marker 2", "Marker 1"] && c.doc.undo_label() == Some("Move Section"))
                     .then_some(())
                     .ok_or(format!("{:?}", names(c)))
             }),
         ),
         DoC(
-            "double-click Section 1",
+            "double-click Marker 1",
             Box::new(|a, ctl| {
                 let x = visible_x(&ctl.borrow(), 8.0, 12.0);
                 double_click(a, x, row_y());
@@ -11228,7 +11322,7 @@ fn section_steps() -> Vec<Step> {
             "rename popup open for the section",
             Box::new(move |c, a| {
                 let s = a.global::<Studio>();
-                (s.get_rename_open() && s.get_rename_title() == "Rename section" && c.rename_section == Some(SectionId(f2.get())))
+                (s.get_rename_open() && s.get_rename_title() == "Rename marker" && c.rename_section == Some(SectionId(f2.get())))
                     .then_some(())
                     .ok_or(format!("open {} title {}", s.get_rename_open(), s.get_rename_title()))
             }),
@@ -11244,7 +11338,7 @@ fn section_steps() -> Vec<Step> {
         Check(
             "renamed to Chorus (one undo step)",
             Box::new(|c, _| {
-                (names(c) == ["Section 2", "Chorus"] && c.doc.undo_label() == Some("Rename Section")).then_some(()).ok_or(format!(
+                (names(c) == ["Marker 2", "Chorus"] && c.doc.undo_label() == Some("Rename Section")).then_some(()).ok_or(format!(
                     "{:?} {:?}",
                     names(c),
                     c.doc.undo_label()
@@ -11259,18 +11353,18 @@ fn section_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "section menu: Duplicate, Rename, Delete section, Clear all sections",
+            "section menu: Duplicate, Rename, Delete marker, Clear all markers",
             Box::new(|_, a| {
                 let s = a.global::<Studio>();
                 let ok = s.get_menu_open()
-                    && ["Duplicate", "Rename…", "Delete section", "Clear all sections"].iter().all(|l| menu_row(a, l).is_some());
+                    && ["Duplicate", "Rename…", "Delete marker", "Clear all markers"].iter().all(|l| menu_row(a, l).is_some());
                 ok.then_some(()).ok_or(format!("open {}", s.get_menu_open()))
             }),
         ),
         Do(
-            "choose Delete section",
+            "choose Delete marker",
             Box::new(|a| {
-                if let Some((x, y)) = menu_row(a, "Delete section") {
+                if let Some((x, y)) = menu_row(a, "Delete marker") {
                     click(a, x, y);
                 }
             }),
@@ -11278,12 +11372,12 @@ fn section_steps() -> Vec<Step> {
         Check(
             "Chorus deleted, menu closed",
             Box::new(|c, a| {
-                (names(c) == ["Section 2"] && !a.global::<Studio>().get_menu_open()).then_some(()).ok_or(format!("{:?}", names(c)))
+                (names(c) == ["Marker 2"] && !a.global::<Studio>().get_menu_open()).then_some(()).ok_or(format!("{:?}", names(c)))
             }),
         ),
         Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         DoC(
-            "click Section 2, press Delete",
+            "click Marker 2, press Delete",
             Box::new(|a, ctl| {
                 let x = bar_x(&ctl.borrow(), 2.0);
                 click(a, x, row_y());
@@ -11295,11 +11389,11 @@ fn section_steps() -> Vec<Step> {
             Box::new(|c, _| (names(c) == ["Chorus"]).then_some(()).ok_or(format!("{:?}", names(c)))),
         ),
         DoC(
-            "right-click Chorus, Clear all sections",
+            "right-click Chorus, Clear all markers",
             Box::new(|a, ctl| {
                 let x = bar_x(&ctl.borrow(), 1.0);
                 right_click(a, x, row_y());
-                if let Some((x, y)) = menu_row(a, "Clear all sections") {
+                if let Some((x, y)) = menu_row(a, "Clear all markers") {
                     click(a, x, y);
                 }
             }),
@@ -11311,6 +11405,151 @@ fn section_steps() -> Vec<Step> {
                 (c.project().sections.is_empty() && approx(x, c.view.x_of(0.0) + 8.5, 0.01))
                     .then_some(())
                     .ok_or(format!("{:?} add x {x}", names(c)))
+            }),
+        ),
+        DoC(
+            "click +, right-click the new marker",
+            Box::new(|a, ctl| {
+                let x = lane_x() + ctl.borrow().section_add_x();
+                click(a, x, row_y());
+                let x = bar_x(&ctl.borrow(), 2.0);
+                right_click(a, x, row_y());
+            }),
+        ),
+        Check(
+            "marker menu: Cut, Copy, Color, Insert on; Paste off with nothing copied",
+            Box::new(|c, a| {
+                let on = |l: &str| c.menu.items.iter().find(|(m, _)| m.label() == l).map(|(_, e)| *e);
+                (a.global::<Studio>().get_menu_open()
+                    && on("Cut") == Some(true)
+                    && on("Copy") == Some(true)
+                    && on("Paste") == Some(false)
+                    && on("Color") == Some(true)
+                    && on("Insert") == Some(true))
+                .then_some(())
+                .ok_or(format!("items {:?}", c.menu.items))
+            }),
+        ),
+        DoC(
+            "Color › Sea",
+            Box::new(|a, ctl| {
+                if let Some((x, y)) = menu_row(a, "Color") {
+                    click(a, x, y);
+                }
+                let mut c = ctl.borrow_mut();
+                let i = crate::sections::PALETTE_NAMES.iter().position(|n| *n == "Sea").unwrap();
+                c.submenu_activate(i);
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "the marker takes the colour in one undo step",
+            Box::new(|c, _| {
+                let s = c.project().sections.first().ok_or("no marker")?;
+                (s.color == crate::sections::PALETTE[12] && c.doc.undo_label() == Some("Section Color")).then_some(()).ok_or(format!(
+                    "color {:06x} undo {:?}",
+                    s.color,
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        DoC(
+            "Copy, then Paste after it; Insert › Marker before the first",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                let Some(id) = c.project().sections.first().map(|s| s.id) else { return };
+                c.selected_section = Some(id);
+                c.copy_section(id);
+                c.paste_section(Some(id));
+                let x = bar_x(&c, 2.0);
+                drop(c);
+                right_click(a, x, row_y());
+                if let Some((x, y)) = menu_row(a, "Insert") {
+                    click(a, x, y);
+                }
+                let mut c = ctl.borrow_mut();
+                c.submenu_activate(0);
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "markers: a new one before, the original, then its pasted copy in the same colour",
+            Box::new(|c, _| {
+                let p = c.project();
+                let colors: Vec<u32> = p.sections.iter().map(|s| s.color).collect();
+                let n = names(c);
+                (n.len() == 3 && n[1] == "Marker 1" && n[2] == "Marker 1" && colors[1] == colors[2] && n[0].starts_with("Marker "))
+                    .then_some(())
+                    .ok_or(format!("{n:?} {colors:06x?}"))
+            }),
+        ),
+        DoC(
+            "sections move clips: on; two markers, a MIDI clip in the second, move it to the front",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.clear_sections();
+                c.settings.prefs.general.sections_move_clips = true;
+                c.insert_section(None);
+                let second = c.insert_section(None);
+                let p = c.project();
+                let start = p.section_start(1) + dstudio_core::PPQ;
+                let Some(track) = p.tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) else { return };
+                let clip = dstudio_core::MidiClip { name: "Follow".into(), ..dstudio_core::MidiClip::empty(start, dstudio_core::PPQ) };
+                c.execute(dstudio_core::Command::AddMidiClip { track, clip });
+                if let Some(id) = second {
+                    c.execute_section(dstudio_core::Command::MoveSection { section: id, index: 0 }, Vec::new());
+                }
+            }),
+        ),
+        Check(
+            "sections move clips: the clip moved with its marker, in one Move Section undo step",
+            Box::new(|c, _| {
+                let p = c.project();
+                let clip = p.tracks.iter().flat_map(|t| &t.midi_clips).find(|m| m.name == "Follow");
+                let label = c.doc.undo_label().unwrap_or_default().to_string();
+                (clip.is_some_and(|m| m.start == dstudio_core::PPQ) && label == "Move Section")
+                    .then_some(())
+                    .ok_or(format!("clip {:?} undo {label:?}", clip.map(|m| m.start)))
+            }),
+        ),
+        DoC("sections move clips: undo once", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check(
+            "sections move clips: undo puts the marker and the clip back together",
+            Box::new(|c, _| {
+                let p = c.project();
+                let back = p.sections.len() == 2 && p.sections[0].name == "Marker 1";
+                let clip = p.tracks.iter().flat_map(|t| &t.midi_clips).find(|m| m.name == "Follow");
+                (back && clip.is_some_and(|m| m.start == p.section_start(1) + dstudio_core::PPQ)).then_some(()).ok_or(format!(
+                    "{:?} clip {:?}",
+                    names(c),
+                    clip.map(|m| m.start)
+                ))
+            }),
+        ),
+        DoC(
+            "sections move clips: delete the second marker removes its clip; then off",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if let Some(id) = c.project().sections.get(1).map(|s| s.id) {
+                    c.delete_section(id);
+                }
+                c.settings.prefs.general.sections_move_clips = false;
+            }),
+        ),
+        Check(
+            "sections move clips: the deleted marker took its clip with it",
+            Box::new(|c, _| {
+                let p = c.project();
+                let gone = !p.tracks.iter().flat_map(|t| &t.midi_clips).any(|m| m.name == "Follow");
+                (gone && p.sections.len() == 1).then_some(()).ok_or(format!("{:?}", names(c)))
+            }),
+        ),
+        DoC(
+            "clean up: clear all markers",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.clear_sections();
+                c.section_clipboard = None;
             }),
         ),
     ]

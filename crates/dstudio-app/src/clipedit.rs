@@ -77,8 +77,8 @@ impl MenuAction {
             MenuAction::SectionRename => "Rename…",
             MenuAction::SectionColor => "Color",
             MenuAction::SectionInsert => "Insert",
-            MenuAction::SectionDelete => "Delete section",
-            MenuAction::SectionClear => "Clear all sections",
+            MenuAction::SectionDelete => "Delete marker",
+            MenuAction::SectionClear => "Clear all markers",
             MenuAction::TrackRename => "Rename…",
             MenuAction::TrackDuplicate => "Duplicate track",
             MenuAction::TrackDuplicateClips => "Duplicate track with clips",
@@ -830,6 +830,10 @@ impl Controller {
     }
 
     pub fn submenu_activate(&mut self, index: usize) {
+        if let Some(id) = self.menu.section {
+            self.section_submenu_activate(id, index);
+            return;
+        }
         if let Some(track) = self.menu.track {
             self.track_color_pick(track, index);
             return;
@@ -1182,6 +1186,8 @@ impl Controller {
             s.set_sub_open(self.menu.sub_open);
             let (sub, sub_h) = if sub_for == MenuAction::TrackColor {
                 self.track_color_rows()
+            } else if matches!(sub_for, MenuAction::SectionColor | MenuAction::SectionInsert) {
+                self.section_submenu_rows()
             } else {
                 let rows: Vec<(String, String, bool)> = if sub_for == MenuAction::Takes {
                     take_rows(self.menu.clip.and_then(|id| p.clip(id)))
@@ -1204,7 +1210,7 @@ impl Controller {
             .rename
             .and_then(|id| p.midi_clip(id).map(|c| c.name.clone()).or_else(|| p.clip(id).map(|c| c.name.clone())))
             .or_else(|| self.rename_section.and_then(|id| p.section_index(id)).map(|i| p.sections[i].name.clone()));
-        s.set_rename_title(if self.rename_section.is_some() { "Rename section" } else { "Rename clip" }.into());
+        s.set_rename_title(if self.rename_section.is_some() { "Rename marker" } else { "Rename clip" }.into());
         if renaming.is_some() != s.get_rename_open() {
             if let Some(n) = &renaming {
                 s.set_rename_text(n.clone().into());

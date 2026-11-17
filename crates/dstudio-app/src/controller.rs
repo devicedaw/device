@@ -512,6 +512,9 @@ pub struct Controller {
     /// Rename popup open for this clip.
     pub rename: Option<ClipId>,
     pub rename_section: Option<dstudio_core::SectionId>,
+    /// Marker copied with Cut / Copy (src/sections.rs), pasted with Paste.
+    /// The copied marker and what was in it (pasted with it when sections move clips).
+    pub section_clipboard: Option<(dstudio_core::Section, dstudio_core::section_follow::SectionContent)>,
     /// Counts presses on the lanes and the clip editors; the UI moves the keyboard focus back to
     /// the shortcuts on each, so an open name field commits (Studio.press-epoch).
     pub press_epoch: i32,
@@ -585,6 +588,8 @@ pub struct Controller {
     pub(crate) midi_inputs_model: Rc<VecModel<crate::MidiInputRow>>,
     // ---- plugin devices (src/devices.rs) ----
     pub devices: crate::devices::DevicesUi,
+    /// Chain card whose open name field saves the chain ("Save as…", src/chain_presets.rs).
+    pub(crate) chain_save_as: Option<dstudio_core::DeviceId>,
     pub(crate) tree_model: Rc<VecModel<TreeRow>>,
     // ---- browser Files section and Back / Forward (src/files.rs) ----
     pub files: crate::files::FilesUi,
@@ -684,6 +689,7 @@ impl Controller {
             clipboard_rest: Vec::new(),
             rename: None,
             rename_section: None,
+            section_clipboard: None,
             press_epoch: 0,
             lane_last_down: None,
             lane_playhead_before: None,
@@ -735,6 +741,7 @@ impl Controller {
             midi_in: Default::default(),
             midi_inputs_model: Rc::new(VecModel::default()),
             devices: Default::default(),
+            chain_save_as: None,
             tree_model: Rc::new(VecModel::default()),
             files: Default::default(),
             files_model: Rc::new(VecModel::default()),

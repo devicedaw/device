@@ -11,6 +11,30 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+### Added
+
+- Linux: Device now plays and records without PipeWire. When no sound server runs, it goes straight through ALSA,
+  which every Linux system has, and it starts even when PipeWire isn't installed. Settings › Audio also lists each
+  sound card's ALSA devices, marked "(ALSA)", next to the PipeWire ones, for the lowest latency.
+- Device chains can be saved and reused. The chain's name menu has Save, Save as…, Rename…, Unpack chain (keeps the
+  effects, drops the chain) and Delete saved chain, and Chains › swaps the chain for another one.
+- 27 ready-made chains in eight folders (Vocals, Drums, Bass, Guitar, Keys & Synths, Pads & Textures, FX and
+  Mix & Master), each with its main controls on macros. Find them, and your saved chains, under Browser › Devices ›
+  Chains and Add device › Chains.
+- Markers (the labelled ranges on the ruler) have a full right-click menu: Cut, Copy, Paste, Color, and Insert ›
+  Marker before / Marker after. ⌘X, ⌘C and ⌘V work on the selected marker. New markers are named "Marker 1",
+  "Marker 2" and so on.
+- Settings › General › Projects folder: choose where your projects are saved. Save starts there, and the browser
+  lists the projects in it.
+- Settings › General › Sections move clips: when on, moving a marker moves the clips and automation in it,
+  resizing, inserting or deleting a marker moves everything after it, and duplicating or pasting a marker copies its
+  clips too. Each edit is one undo step.
+
+### Changed
+
+- Projects has its own tab at the top of the browser, next to Devices and Files, with its own search. The Files tab
+  now only shows your folders.
+
 ### Fixed
 
 - Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song
