@@ -64,8 +64,8 @@ FetchContent_Declare(dstudio_vst3sdk
 # and the FFT / STFT library it is built on. Header-only.
 set(DSTUDIO_STRETCH_TAG 1.4.0)
 set(DSTUDIO_STRETCH_TAG_COMMIT a670068d9aeb64913331d5cc29337b19a457a7df)
-set(DSTUDIO_LINEAR_TAG 0.6.4)
-set(DSTUDIO_LINEAR_TAG_COMMIT de55e6a50ffcf6f8f43f649692d94691c7025151)
+set(DSTUDIO_LINEAR_TAG 0.6.6)
+set(DSTUDIO_LINEAR_TAG_COMMIT 7bb1c8f36794d6980080ce817c91f8da8fe56a66)
 FetchContent_Declare(dstudio_signalsmith_stretch
   GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git
   GIT_TAG ${DSTUDIO_STRETCH_TAG}
@@ -78,10 +78,10 @@ FetchContent_Declare(dstudio_signalsmith_linear
   SOURCE_SUBDIR _dstudio_headers_only)
 # Compressed audio import (src/decode.cpp): dr_mp3, dr_flac and dr_wav (AIFF only) from
 # dr_libs, stb_vorbis from stb. Single-file C libraries, pinned by commit (neither repository
-# tags all of its files). dr_libs at the wav-0.14.6 tag, which also holds mp3-0.7.4 and
-# flac-0.13.4; stb at the commit noted in third_party_licenses.md (stb_vorbis 1.22).
-set(DSTUDIO_DR_LIBS_COMMIT 35b5c392cc15456736c440a68dbe073178bbffe0)
-set(DSTUDIO_STB_COMMIT 4e9b368bfc071e97206ea5c6adba68dd0cbf8897)
+# tags all of its files). dr_libs at the commit noted in third_party_licenses.md (dr_mp3 0.7.5, dr_flac
+# 0.13.5, dr_wav 0.14.7); stb at the commit noted there too (stb_vorbis 1.24).
+set(DSTUDIO_DR_LIBS_COMMIT f12e197fd462e4c22873fbd70d11b1d2f2c1dc3c)
+set(DSTUDIO_STB_COMMIT 9600522de53973336fa033a289858a4354cbb04c)
 FetchContent_Declare(dstudio_dr_libs
   GIT_REPOSITORY https://github.com/mackron/dr_libs.git
   GIT_TAG ${DSTUDIO_DR_LIBS_COMMIT}

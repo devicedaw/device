@@ -37,8 +37,10 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ### Fixed
 
-- Windows: on some PCs every label and the timeline were blank, with only shapes and icons drawn. Device now draws
-  with Direct3D 12 on Windows, and only falls back to Vulkan on a PC without it.
+- Windows: Device now draws with Direct3D 12, and only falls back to Vulkan on a PC without it. This is aimed at a
+  report of every label and the timeline showing blank on one PC, with only shapes and icons drawn.
+- Importing MP3, FLAC and Ogg Vorbis files uses newer decoders with fixes for damaged or unusual files: a crash when
+  seeking some FLAC files, MP3 tag-reading errors, and several overflow and memory fixes for Ogg Vorbis.
 - Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song
   tempo in time signatures such as 6/8 and 2/2, and in exports and bounces, instead of the wrong speed.
 - Exports (mixdown, stems and Live sets) line up with the timeline when a device adds latency, such as the Limiter,
@@ -52,7 +54,9 @@ Fixed or Removed. Write it for people who use Device, not for developers.
   instead of crashing, staying silent or refusing to load. Media paths survive moving a project saved through a
   folder path with `..` or a symlink.
 - Very long recordings are kept: a take that reaches the file size limit is saved up to that point, and takes over
-  2 GB load again.
+  2 GB load again. The status line says when a take was cut short.
+- A project file holding two copies of a track (for example after merging two versions) opens with each copy
+  editable on its own.
 
 ## [0.1.0] - 2026-11-16
 

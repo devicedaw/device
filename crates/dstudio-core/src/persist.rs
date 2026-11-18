@@ -237,7 +237,81 @@ fn repair(project: &mut Project) -> Result<(), PersistError> {
     if project.next_id <= max || project.next_id >= MAX_ID {
         project.next_id = max + 1;
     }
+    if dedupe_ids(project) {
+        // Sends, outputs and sidechains name the first track with an id; checked again now
+        // that the later ones have their own.
+        project.sanitize_routing();
+    }
     Ok(())
+}
+
+/// Gives a fresh id to every track, clip and device whose id an earlier one of its kind
+/// already has (a merge or hand edit can leave two). The first keeps the id, so references
+/// from other tracks stay where they were; a renumbered device's own track (chains, mod
+/// links, automation lanes) follows it. Returns whether anything changed.
+fn dedupe_ids(project: &mut Project) -> bool {
+    use crate::automation::AutomationTarget;
+    use crate::device::DeviceId;
+    use crate::model::{ClipId, TrackId};
+    use std::collections::{HashMap, HashSet};
+    let (mut tracks, mut clips, mut devices) = (HashSet::new(), HashSet::new(), HashSet::new());
+    let mut next = project.next_id;
+    let mut changed = false;
+    let mut fresh = || {
+        let id = next;
+        next += 1;
+        id
+    };
+    for t in &mut project.tracks {
+        if !tracks.insert(t.id) {
+            t.id = TrackId(fresh());
+            tracks.insert(t.id);
+            changed = true;
+        }
+        for id in t.clips.iter_mut().map(|c| &mut c.id).chain(t.midi_clips.iter_mut().map(|c| &mut c.id)) {
+            if !clips.insert(*id) {
+                *id = ClipId(fresh());
+                clips.insert(*id);
+                changed = true;
+            }
+        }
+        let mut map = HashMap::new();
+        for d in t.devices.iter_mut().chain(t.instrument_plugin.as_mut()) {
+            if !devices.insert(d.id) {
+                let new = DeviceId(fresh());
+                map.insert(d.id, new);
+                d.id = new;
+                devices.insert(new);
+            }
+        }
+        if map.is_empty() {
+            continue;
+        }
+        changed = true;
+        let remap = |d: &mut DeviceId| {
+            if let Some(n) = map.get(d) {
+                *d = *n;
+            }
+        };
+        for d in t.devices.iter_mut().chain(t.instrument_plugin.as_mut()) {
+            if let Some(c) = d.chain.as_mut() {
+                remap(c);
+            }
+            for l in &mut d.links {
+                remap(&mut l.target);
+            }
+        }
+        for lane in &mut t.automation {
+            match &mut lane.target {
+                AutomationTarget::Plugin { device, .. }
+                | AutomationTarget::Builtin { device, .. }
+                | AutomationTarget::DeviceOn { device, .. } => remap(device),
+                _ => {}
+            }
+        }
+    }
+    project.next_id = next;
+    changed
 }
 
 /// The project folder as an absolute path with symlinks and `..` resolved, the way media paths
