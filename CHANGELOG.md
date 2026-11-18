@@ -11,6 +11,8 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-18
+
 ### Added
 
 - Linux: Device now plays and records without PipeWire. When no sound server runs, it goes straight through ALSA,

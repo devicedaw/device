@@ -61,7 +61,7 @@ public:
         host_.name = "Device";
         host_.vendor = "Device";
         host_.url = "";
-        host_.version = "0.1.0";
+        host_.version = "0.2.0";
         host_.get_extension = &ClapInstance::host_get_extension;
         host_.request_restart = [](const clap_host* h) { self_of(h)->request_restart(); };
         host_.request_process = [](const clap_host*) {};
