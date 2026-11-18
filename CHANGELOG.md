@@ -37,6 +37,8 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ### Fixed
 
+- Windows: Device now draws with Direct3D 12, and only falls back to Vulkan on a PC without it. This is aimed at a
+  report of every label and the timeline showing blank on one PC, with only shapes and icons drawn.
 - Importing MP3, FLAC and Ogg Vorbis files uses newer decoders with fixes for damaged or unusual files: a crash when
   seeking some FLAC files, MP3 tag-reading errors, and several overflow and memory fixes for Ogg Vorbis.
 - Tempo-synced effects, instruments and plugins (LFO, Trance Gate, Echo, Delay, Grains and others) run at the song

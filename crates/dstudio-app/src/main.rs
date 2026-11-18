@@ -1573,6 +1573,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // ---- Slint backend: our wgpu device + transparent macOS titlebar ----
     let (cfg, adapter) = gpu::make_wgpu_config()?;
+    eprintln!("gpu: {adapter}");
     let selector = slint::BackendSelector::new().backend_name("winit".into()).renderer_name("femtovg-wgpu".into()).require_wgpu_30(cfg);
     let offscreen = args.offscreen;
     #[cfg(target_os = "macos")]
