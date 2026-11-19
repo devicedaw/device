@@ -235,6 +235,22 @@ pub(crate) fn reuse_card_models(old: &DeviceCard, new: &mut DeviceCard) {
     keep(&old.canvas.paths, &mut new.canvas.paths);
     keep(&old.canvas.texts, &mut new.canvas.texts);
     keep(&old.canvas.grips, &mut new.canvas.grips);
+    // Expanded window: it is rebuilt every frame while open, so fresh rows would recreate the
+    // knob under the pointer and end its drag after the first move.
+    let (ow, nw) = (&old.win, &mut new.win);
+    keep(&ow.knobs, &mut nw.knobs);
+    keep(&ow.pills, &mut nw.pills);
+    keep(&ow.boxes, &mut nw.boxes);
+    keep(&ow.texts, &mut nw.texts);
+    keep(&ow.meters, &mut nw.meters);
+    keep(&ow.ticks, &mut nw.ticks);
+    for (o, n) in [(&ow.display, &mut nw.display), (&ow.square, &mut nw.square)] {
+        keep(&o.zones, &mut n.zones);
+        keep(&o.grips, &mut n.grips);
+        keep(&o.dots, &mut n.dots);
+        keep(&o.paths, &mut n.paths);
+        keep(&o.texts, &mut n.texts);
+    }
 }
 
 /// x of each visible dial-row cell (card relative, unscaled). Knobs
