@@ -14,13 +14,13 @@ only in `engine/src/platform/`; everything else is portable.
 | Plugin editor windows | yes | yes | yes (X11; XWayland on Wayland) |
 | Built and tested in CI | every run | every run | every run |
 | Audio streams run in CI | no (hosted runner, no audio device) | no (no audio endpoint) | yes, a headless PipeWire server |
-| Tested on real audio hardware | yes | **no** | **no** |
+| Tested on real audio hardware | yes | by hand on one PC | **no** |
 
 macOS is the primary platform. On Linux, CI runs a real PipeWire server with a
 null sink and a loopback, so the PipeWire streams, duplex recording and the
 app's audio self-test run on every change; only physical sound cards are
-missing. The WASAPI streaming code compiles and its "no device" paths are
-tested, but it has never been run against an audio device. See [engine/README.md › Platforms](../engine/README.md#platforms)
+missing. On Windows, CI tests the WASAPI "no device" paths; the streams
+themselves were checked by hand on one PC's built-in sound card. See [engine/README.md › Platforms](../engine/README.md#platforms)
 for the full matrix, the WASAPI notes and plugin folders on each system.
 
 ## Building

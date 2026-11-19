@@ -507,6 +507,7 @@ if(DSTUDIO_ENGINE_BUILD_TESTS)
     tests/test_strip.cpp
     tests/test_automation.cpp
     tests/test_frame_ring.cpp
+    tests/test_wasapi_period.cpp
     tests/test_linux_audio.cpp
     tests/test_warp.cpp
     tests/test_clip_loop.cpp

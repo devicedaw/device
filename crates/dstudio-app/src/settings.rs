@@ -86,6 +86,14 @@ pub fn fmt_buffer(n: u32, rate: f64) -> String {
     format!("{n} samples ({:.1} ms)", n as f64 * 1000.0 / rate.max(1.0))
 }
 
+/// Settings › Audio note when the running device does not use the buffer size
+/// picked (Windows shared mode offers only some sizes and rounds to the
+/// nearest it supports). `actual` is the device period in device frames.
+pub fn buffer_note(requested: u32, running: bool, actual: u32, device_rate: f64) -> Option<String> {
+    (requested > 0 && running && actual > 0 && actual != requested)
+        .then(|| format!("The device runs at {}, the closest buffer it supports.", fmt_buffer(actual, device_rate)))
+}
+
 /// Settings dropdown popup rows: 22 pt, 4 pt padding.
 pub const MENU_ROW: f32 = 22.0;
 pub const MENU_PAD: f32 = 4.0;
@@ -256,6 +264,12 @@ impl Controller {
                 engine_rate / 1000.0
             );
             note = if note.is_empty() { msg } else { format!("{note} {msg}") };
+        }
+        if !self.settings.fake_devices {
+            let st = self.engine.device_status();
+            if let Some(msg) = buffer_note(self.settings.prefs.audio.buffer_size, st.running, st.buffer_size, st.sample_rate) {
+                note = if note.is_empty() { msg } else { format!("{note} {msg}") };
+            }
         }
         self.settings.note = note;
     }
@@ -635,6 +649,16 @@ mod tests {
         assert_eq!(fmt_rate(48_000.0), "48 kHz");
         assert_eq!(fmt_rate(44_100.0), "44.1 kHz");
         assert_eq!(fmt_buffer(1024, 48_000.0), "1024 samples (21.3 ms)");
+    }
+    #[test]
+    fn buffer_note_only_when_the_device_differs() {
+        assert_eq!(
+            buffer_note(64, true, 128, 48_000.0).as_deref(),
+            Some("The device runs at 128 samples (2.7 ms), the closest buffer it supports.")
+        );
+        assert_eq!(buffer_note(128, true, 128, 48_000.0), None); // got what was picked
+        assert_eq!(buffer_note(0, true, 480, 48_000.0), None); // device default picked
+        assert_eq!(buffer_note(64, false, 0, 48_000.0), None); // not running
     }
     #[test]
     fn tone_level() {

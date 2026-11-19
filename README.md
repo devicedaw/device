@@ -36,8 +36,8 @@ wgpu.
 
 > [!WARNING]
 > **Device is pre-alpha.** The latest release, [0.2.0](https://github.com/devicedaw/device/releases/latest), is out to try, but features are missing and the project format may still
-> change. macOS is the platform it's developed and tested on every day; Windows and Linux build, but their audio
-> backends have never run on a physical sound card (Linux runs real PipeWire and ALSA streams in CI). Keep copies of anything you care about.
+> change. macOS is the platform it's developed and tested on every day. Windows audio has been checked on one PC's
+> built-in sound card; Linux audio has never run on a physical sound card (it runs real PipeWire and ALSA streams in CI). Keep copies of anything you care about.
 
 ## Features
 
@@ -214,7 +214,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Delay compensation | ✅ | |
 | Export | ✅ | |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
-| Windows and Linux audio | 🚧 | Linux plays through PipeWire or straight through ALSA; both run in CI on a headless PipeWire server, but neither Windows nor Linux has run on a physical sound card; no ASIO |
+| Windows and Linux audio | 🚧 | Windows: playback, recording, buffer sizes down to 128 samples and switching outputs checked on one PC's built-in sound card (WASAPI shared mode); no ASIO or exclusive mode. Linux plays through PipeWire or straight through ALSA in CI on a headless PipeWire server, but has not run on a physical sound card |
 | Releases and branding | 🚧 | 0.2.0 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is not notarised yet and Windows packages are not signed |
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
@@ -230,7 +230,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 Every change is built and tested on all three systems in CI, on hosted runners without audio hardware. The Linux
 job runs a headless PipeWire server, so playback and recording go through real PipeWire streams there, and
 through ALSA PCMs routed into it. Real audio
-hardware is tested by hand on a Mac.
+hardware is tested by hand on a Mac and on a Windows PC.
 
 ### Download
 
