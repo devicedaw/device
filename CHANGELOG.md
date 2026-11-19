@@ -11,6 +11,11 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+### Added
+
+- **Report a bug** and **Share your feedback** (top right) now open a form that sends your report straight to the
+  developer. Your email is optional and never shown publicly, and system info is only included if you leave it on.
+
 ## [0.2.0] - 2026-11-18
 
 ### Added

@@ -1216,7 +1216,19 @@ export global Studio {
     callback picker-sub-pick(int);
     callback picker-dismiss();
 
-    callback report-bug();   // TODO: no-op placeholder
-    callback feedback();     // TODO: no-op placeholder
+    // "Report a bug" / "Share your feedback" (top bar pills): one form (src/feedback.rs).
+    callback report-bug();
+    callback feedback();
+    in property <bool> feedback-open;
+    in property <bool> feedback-bug;           // false: "Share your feedback"
+    in property <bool> feedback-system;        // include system info and recent activity
+    in property <string> feedback-system-text; // exactly what that adds, shown in the form
+    in property <bool> feedback-sending;
+    in property <string> feedback-error;
+    in-out property <string> feedback-message;
+    in-out property <string> feedback-email;
+    callback feedback-close();
+    callback feedback-toggle-system();
+    callback feedback-send(string, string);    // message, email
 }
 
