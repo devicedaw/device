@@ -4236,4 +4236,30 @@ mod tests {
         c.win_action(did, ACT_HOLD, 0);
         assert_eq!(ghosts(&c), [("Hold view".into(), true), ("Pre".into(), true), ("Post".into(), false), ("Off".into(), false)]);
     }
+
+    /// The window is rebuilt every frame while open: its rows must land in the models the
+    /// window already shows, or the knob under the pointer is recreated and its drag ends
+    /// after the first move (a long drag moved the value by a hair).
+    #[test]
+    fn window_knob_drag_survives_frame_rebuilds() {
+        use slint::Model;
+        let (mut c, did, def) = controller_with("auto-filter");
+        let card = |v: WinView| crate::DeviceCard { id: did.0 as i32, builtin: true, win: v, ..Default::default() };
+        let mut shown = card(view(&c, did, def));
+        let k = shown.win.knobs.row_data(0).unwrap();
+        let start = k.value.clone();
+        c.panel_drag(did, k.param, 0, 0.0, 1.0 / 160.0, false);
+        for _ in 0..16 {
+            c.panel_drag(did, k.param, 1, -5.0, 1.0 / 160.0, false);
+            let mut next = card(view(&c, did, def));
+            crate::device_panel::reuse_card_models(&shown, &mut next);
+            assert!(next.win.knobs == shown.win.knobs, "knob rows rebuilt");
+            assert!(next.win.pills == shown.win.pills && next.win.display.zones == shown.win.display.zones);
+            shown = next;
+        }
+        let fresh = view(&c, did, def).knobs.row_data(0).unwrap();
+        assert_eq!(shown.win.knobs.row_data(0).unwrap(), fresh, "kept rows show the new value");
+        assert_ne!(fresh.value, start, "80 px of drag down moves the knob");
+        c.panel_drag(did, k.param, 2, 0.0, 1.0 / 160.0, false);
+    }
 }
