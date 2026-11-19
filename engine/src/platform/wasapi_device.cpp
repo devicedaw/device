@@ -27,15 +27,20 @@
 // confirm that rate. The engine rate is reached through AUTOCONVERTPCM.
 // Status reports the endpoint rate and latencies in endpoint frames.
 //
-// Not implemented (documented in engine/README.md): exclusive mode,
-// IAudioClient3 small shared periods, ASIO (SDK licence), device-change
-// notifications (a removed endpoint stops the stream; is_running() turns
-// false).
+// Buffer: a buffer_size below the endpoint's default period (10 ms) opens the
+// stream through IAudioClient3 with the smallest supported shared period at or
+// above it (wasapi_period.hpp), when the endpoint runs at the engine rate and
+// offers one; otherwise a plain stream at the default period.
+//
+// Not implemented (documented in engine/README.md): exclusive mode, ASIO
+// (SDK licence), device-change notifications (a removed endpoint stops the
+// stream; is_running() turns false).
 #if defined(_WIN32)
 
 #include "audio_device.hpp"
 #include "frame_ring.hpp"
 #include "os.hpp"
+#include "wasapi_period.hpp"
 #include "dstudio_engine.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -221,6 +226,7 @@ struct Stream {
     MixInfo mix;
     double period_s = 0.0; // device period
     double latency_s = 0.0; // IAudioClient::GetStreamLatency
+    uint32_t small_period_frames = 0; // IAudioClient3 period in endpoint frames; 0 = plain stream
     bool started = false;
 
     // Stops and releases the stream.
@@ -262,17 +268,25 @@ struct Stream {
         else if (channels == 2) mask = SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT;
         else if (channels == 1) mask = SPEAKER_FRONT_CENTER;
         const WAVEFORMATEXTENSIBLE fmt = float_format(channels, engine_rate, mask);
-        // Requested endpoint buffer: the configured buffer size, else 0
-        // (the engine's default, about two device periods).
-        const REFERENCE_TIME duration =
-            buffer_size != 0 ? static_cast<REFERENCE_TIME>(std::llround(buffer_size * 1e7 / engine_rate)) : 0;
-        const DWORD flags =
-            AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
-        hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, duration, 0,
-                                reinterpret_cast<const WAVEFORMATEX*>(&fmt), nullptr);
-        if (FAILED(hr)) {
-            err = hr_error("IAudioClient::Initialize", hr);
-            return hr;
+        // A buffer smaller than the default period: a small shared-mode period
+        // through IAudioClient3, when the endpoint offers one and runs at the
+        // engine rate (that path does no rate conversion). Otherwise, or if
+        // it fails, a plain stream.
+        small_period_frames = 0;
+        if (buffer_size != 0 && std::fabs(mix.rate - engine_rate) < 0.5) open_small_period(dev, fmt, buffer_size);
+        if (small_period_frames == 0) {
+            // Requested endpoint buffer: the configured buffer size, else 0
+            // (the engine's default, about two device periods).
+            const REFERENCE_TIME duration =
+                buffer_size != 0 ? static_cast<REFERENCE_TIME>(std::llround(buffer_size * 1e7 / engine_rate)) : 0;
+            const DWORD flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
+                                AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+            hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, duration, 0,
+                                    reinterpret_cast<const WAVEFORMATEX*>(&fmt), nullptr);
+            if (FAILED(hr)) {
+                err = hr_error("IAudioClient::Initialize", hr);
+                return hr;
+            }
         }
         event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         if (event == nullptr || FAILED(hr = client->SetEventHandle(event))) {
@@ -286,7 +300,8 @@ struct Stream {
         }
         buffer_frames = frames;
         REFERENCE_TIME def_period = 0, min_period = 0, lat = 0;
-        if (SUCCEEDED(client->GetDevicePeriod(&def_period, &min_period)))
+        if (small_period_frames != 0) period_s = small_period_frames / mix.rate;
+        else if (SUCCEEDED(client->GetDevicePeriod(&def_period, &min_period)))
             period_s = static_cast<double>(def_period) / kHnsPerSecond;
         if (SUCCEEDED(client->GetStreamLatency(&lat))) latency_s = static_cast<double>(lat) / kHnsPerSecond;
         if (is_render) hr = client->GetService(IID_PPV_ARGS(render.GetAddressOf()));
@@ -295,6 +310,34 @@ struct Stream {
             err = hr_error(is_render ? "GetService(IAudioRenderClient)" : "GetService(IAudioCaptureClient)", hr);
             return hr;
         }
+        return S_OK;
+    }
+
+    // Opens an IAudioClient3 on `dev` with the smallest supported period at or
+    // above `requested` frames and, on success, makes it `client` and sets
+    // small_period_frames. S_FALSE when the endpoint has no period below its
+    // default; a failure HRESULT when a call failed. In both cases `client`
+    // is left as it was (activated, not initialised) for a plain stream.
+    HRESULT open_small_period(IMMDevice* dev, const WAVEFORMATEXTENSIBLE& fmt, uint32_t requested) {
+        ComPtr<IAudioClient3> c3;
+        HRESULT hr = dev->Activate(__uuidof(IAudioClient3), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(c3.GetAddressOf()));
+        if (FAILED(hr)) return hr; // before Windows 10
+        SharedPeriods p;
+        hr = c3->GetSharedModeEnginePeriod(reinterpret_cast<const WAVEFORMATEX*>(&fmt), &p.default_frames,
+                                           &p.fundamental_frames, &p.min_frames, &p.max_frames);
+        if (FAILED(hr)) return hr;
+        const uint32_t period = small_shared_period(requested, p);
+        if (period == 0) return S_FALSE;
+        hr = c3->InitializeSharedAudioStream(AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period,
+                                             reinterpret_cast<const WAVEFORMATEX*>(&fmt), nullptr);
+        if (FAILED(hr)) return hr;
+        // Another stream may already run the endpoint at another period; the
+        // engine period is shared, so report the one in effect.
+        WAVEFORMATEX* cur = nullptr;
+        UINT32 cur_period = period;
+        if (SUCCEEDED(c3->GetCurrentSharedModeEnginePeriod(&cur, &cur_period)) && cur != nullptr) CoTaskMemFree(cur);
+        client = c3;
+        small_period_frames = cur_period;
         return S_OK;
     }
 };

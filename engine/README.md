@@ -120,7 +120,7 @@ POSIX signal or Windows NTSTATUS exception code).
 | Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `DStudioTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
 | Built with warnings as errors | yes (clang, `-Werror`) in CI | yes (`/W4 /WX`) in CI | yes (GCC, `-Werror`) in CI |
 | ctest | all tests in CI; device tests skip on the hosted runner (no audio device), run by hand on a Mac | all tests in CI; AU tests and device tests skip (no audio endpoint) | all tests in CI, against a headless PipeWire server (null sink + loopback); AU tests skip |
-| Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** (real PipeWire streams in CI, no sound card) |
+| Tested on real audio hardware | yes (Core Audio output + duplex, see below) | by hand on one PC (output, duplex, buffer sizes, see [Windows audio](#windows-audio-wasapi)) | **no** (real PipeWire streams in CI, no sound card) |
 
 **CI** (`.github/workflows/ci.yml`) runs on GitHub-hosted runners
 (`macos-latest`, `windows-latest`, `ubuntu-latest`), none with an audio
@@ -159,8 +159,10 @@ timeline position; on PipeWire they land sample-exact), and the app runs
 What the hosted jobs cannot cover: the Windows runner has no audio endpoint,
 so the WASAPI streaming code (open, callbacks, duplex ring in a live stream,
 latency values) is compiled and its enumeration/validation "no device" paths
-run, but it has **never been run against an audio device**; and neither OS has
-run on physical sound cards. Tests that need a device skip
+run, but not streamed. It was checked by hand on a Windows 10 PC with the
+inbox HD Audio driver (headphones, S/PDIF, HDMI out; a 44.1 kHz microphone),
+see "Windows audio: WASAPI" below; Linux has not run on a physical sound card.
+Tests that need a device skip
 with `SKIPPED: <reason>` (CTest shows "Skipped"; the harness exits 77 =
 `SKIP_RETURN_CODE`). The duplex FIFO itself (`FrameRing`) is unit-tested on
 every OS. The PDC golden hashes are compared only on Apple clang/arm64
@@ -189,13 +191,28 @@ elsewhere that test checks determinism and the on/off identities.
   thread. `stop()` signals and joins.
 * **Rates.** In shared mode an endpoint runs at the rate set in the Sound
   control panel; `device_rate` can only confirm it (else
-  `SE_ERR_INVALID_ARG`). `buffer_size` sets the endpoint buffer duration
-  (WASAPI rounds up to at least the device period). Status: endpoint rate,
-  device period as `buffer_size`, latencies in endpoint frames (render
-  buffer + stream latency; capture period + stream latency + ring target).
+  `SE_ERR_INVALID_ARG`).
+* **Buffer.** A plain shared stream runs at the endpoint's default period
+  (10 ms, 480 frames at 48 kHz) whatever buffer is asked for; `buffer_size`
+  only lengthens its endpoint buffer. A `buffer_size` *below* the default
+  period opens the stream through `IAudioClient3::InitializeSharedAudioStream`
+  with the smallest supported period at or above it
+  (`platform/wasapi_period.hpp`: multiples of the fundamental period between
+  the minimum and the default), when the endpoint runs at the engine rate (that
+  path does not convert rates) and offers a smaller period. Otherwise, or if
+  that call fails, a plain stream. The inbox HD Audio driver offers 128..480
+  frames in steps of 32; many HDMI/DisplayPort endpoints offer only 480.
+  Status: endpoint rate, the period in effect as `buffer_size`, latencies in
+  endpoint frames (render buffer + stream latency; capture period + stream
+  latency + ring target).
 * **Ids.** `uid` = the MMDevice endpoint id; render and capture endpoints are
   separate devices (a headset lists twice).
-* **Not implemented:** exclusive mode, `IAudioClient3` small shared periods,
+* **Checked on hardware** (Windows 10, inbox HD Audio driver, 48 kHz):
+  playback on headphones, S/PDIF and HDMI with every buffer size, 0 xruns;
+  output switched while playing in about 0.1 to 0.3 s; duplex recording from a
+  44.1 kHz microphone (converted by Windows) with 0 overruns. Output latency
+  1056 frames (22 ms) by default, 280 frames (5.8 ms) at 128.
+* **Not implemented:** exclusive mode,
   endpoint change notifications (a removed device ends the stream;
   `is_running()` turns false). **ASIO is future work**: the Steinberg ASIO
   SDK has its own licence and is deliberately not added; a backend would sit
@@ -1769,11 +1786,11 @@ the timeline, so looped and warped clips fade where they play.
 ## Placeholders and known gaps
 
 * **Windows / Linux audio** (`wasapi_device.cpp`, `pipewire_device.cpp`,
-  `alsa_device.cpp`): implemented but never run against real audio hardware
+  `alsa_device.cpp`): WASAPI was checked by hand on one Windows sound card
+  (inbox HD Audio driver); Linux has never run against real audio hardware
   (CI runners have no devices; ALSA runs there against its null PCM and
-  pipewire-alsa); no ASIO, no WASAPI exclusive mode or `IAudioClient3` low-latency
-  periods, no native JACK; device-change notifications are not handled on
-  any platform.
+  pipewire-alsa); no ASIO, no WASAPI exclusive mode, no native JACK;
+  device-change notifications are not handled on any platform.
 * **Plugin editors:** Windows editors ignore per-monitor DPI. Linux editors
   are X11 only (Wayland desktops run them through XWayland); no HiDPI scale
   is passed to plugins, and plugin timers run at the idle rate (16 ms in the app).
