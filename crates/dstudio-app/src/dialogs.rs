@@ -398,6 +398,7 @@ impl Controller {
         self.updates_open = false;
         self.undo_history_open = false;
         self.key_change = None;
+        self.feedback.open = false;
         self.ui_dirty = true;
     }
 

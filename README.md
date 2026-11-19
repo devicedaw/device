@@ -336,6 +336,9 @@ finishes something it describes, the same pull request updates it:
 
 ## Contributing
 
+Found a bug or have an idea? Use **Report a bug** or **Share your feedback** at the top right of the app. Reports go
+privately to the maintainer ([services/feedback](services/feedback/)); system info is only sent if you leave it on.
+
 Device is not accepting outside contributions yet: issues, pull requests and comments are limited to the
 maintainer for now. You are welcome to read, build and fork the code. [CONTRIBUTING.md](CONTRIBUTING.md) describes how
 contributions will work once they open. Security problems can be reported privately at any time as described in

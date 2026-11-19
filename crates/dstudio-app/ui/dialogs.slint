@@ -2,7 +2,7 @@
 // export and unsaved-changes modals at 100 % zoom, in our 85 % units (520 x 400.5 pt export
 // window centred in the main window; 440 x 149 pt prompt at x 515, y 347 over the timeline).
 import { Tokens } from "tokens.slint";
-import { Icon, Icons } from "widgets.slint";
+import { Icon, Icons, Switch } from "widgets.slint";
 import { Studio } from "studio.slint";
 import { ChoiceList } from "settings.slint";
 
@@ -301,4 +301,113 @@ export component UndoHistoryModal inherits Rectangle {
     }
     redo := HistoryButton { x: root.width - 17px - self.width; y: root.height - 13.6px - 27.2px; text: "Redo"; enabled: Studio.can-redo; clicked => { Studio.undo-history-travel(Studio.undo-history-current + 1); } }
     HistoryButton { x: redo.x - 6.8px - self.width; y: redo.y; text: "Undo"; enabled: Studio.can-undo; clicked => { Studio.undo-history-travel(Studio.undo-history-current - 1); } }
+}
+
+// Text field of the feedback form: 6.8 pt corners, accent border while focused, a grey
+// placeholder while empty. Multi-line fields wrap and scroll inside their box.
+component FormField inherits Rectangle {
+    in property <string> placeholder;
+    in property <bool> multi-line;
+    in-out property <string> text;
+    callback accepted();
+    border-radius: 6.8px; background: DialogTokens.pill; clip: true;
+    border-width: 0.5px; border-color: input.has-focus ? DialogTokens.accent : #ffffff17;
+    public function focus-input() { input.focus(); }
+    input := TextInput {
+        x: 10.2px; y: root.multi-line ? 7.65px : 0px;
+        width: parent.width - 20.4px; height: root.multi-line ? parent.height - 15.3px : parent.height;
+        text <=> root.text;
+        single-line: !root.multi-line; wrap: root.multi-line ? word-wrap : no-wrap;
+        color: #ffffff; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px;
+        vertical-alignment: root.multi-line ? top : center;
+        accessible-label: root.placeholder;
+        key-pressed(e) => {
+            if (!root.multi-line && e.text == Key.Return) { root.accepted(); return accept; }
+            reject
+        }
+    }
+    if root.text == "": Text {
+        x: input.x; y: input.y; width: input.width; height: root.multi-line ? 13.6px : input.height;
+        text: root.placeholder; color: #ffffff59; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px;
+        vertical-alignment: center; overflow: elide;
+    }
+}
+
+// "Report a bug" / "Share your feedback" (top bar). The alert-modal look (24 pt corners,
+// 20 pt padding, 16 pt title, 12 pt body, 32 pt pill buttons). System info is opt-in per
+// report and shown exactly as it will be sent.
+export component FeedbackModal inherits Rectangle {
+    property <length> pad: 17px;
+    property <length> preview-h: Studio.feedback-system ? 64.6px : 0px;
+    property <bool> can-send: !Studio.feedback-sending && Studio.feedback-message != "";
+    width: 400px; height: 323px + root.preview-h + (Studio.feedback-error != "" ? 17px : 0px);
+    border-radius: 20.4px; background: DialogTokens.surface;
+    border-width: 0.45px; border-color: #ffffff22;
+    drop-shadow-blur: 21px; drop-shadow-offset-y: 6.8px; drop-shadow-color: #00000080;
+    accessible-role: groupbox; accessible-label: Studio.feedback-bug ? "Report a bug" : "Share your feedback";
+    init => { message.focus-input(); }
+    TouchArea { }
+    Text { x: root.pad; y: 17px; height: 13.6px; text: Studio.feedback-bug ? "Report a bug" : "Share your feedback"; color: #ffffff; font-size: 13.6px; font-weight: 700; letter-spacing: -0.54px; vertical-alignment: center; }
+    Rectangle {
+        x: root.width - 17px - 13.6px; y: 17px; width: 13.6px; height: 13.6px;
+        accessible-role: button; accessible-label: "Close";
+        accessible-action-default => { Studio.feedback-close(); }
+        Icon { width: parent.width; height: parent.height; d: Icons.close; stroke-width: 1.1px; ink: close-ta.has-hover ? #ffffffb3 : #ffffff8c; }
+        close-ta := TouchArea { clicked => { Studio.feedback-close(); } }
+    }
+    Text {
+        x: root.pad; y: 40.8px; width: root.width - 2 * root.pad; height: 27.2px; wrap: word-wrap;
+        text: Studio.feedback-bug
+            ? "What happened, and what did you expect? Steps to make it happen again help a lot."
+            : "What do you like, what gets in your way, and what would you like next?";
+        color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: top;
+    }
+    message := FormField {
+        x: root.pad; y: 74.8px; width: root.width - 2 * root.pad; height: 112.2px;
+        multi-line: true;
+        placeholder: Studio.feedback-bug ? "Describe the bug" : "Your feedback";
+        text <=> Studio.feedback-message;
+    }
+    RowLabel { x: root.pad; y: 197.2px; text: "Email"; }
+    FormField {
+        x: root.pad + 51px; y: 197.2px; width: root.width - 2 * root.pad - 51px; height: 20.4px;
+        placeholder: "Optional, only if you'd like a reply";
+        text <=> Studio.feedback-email;
+        accepted => { if (root.can-send) { Studio.feedback-send(Studio.feedback-message, Studio.feedback-email); } }
+    }
+    // System info switch, then a preview of what it adds.
+    Switch { x: root.pad; y: 233.75px; on: Studio.feedback-system; toggled => { Studio.feedback-toggle-system(); }
+        accessible-role: checkbox; accessible-label: "Include system info"; accessible-checked: Studio.feedback-system;
+        accessible-action-default => { Studio.feedback-toggle-system(); }
+    }
+    Text {
+        x: root.pad + 27.2px; y: 229.5px; height: 19.4px; text: "Include system info and recent activity";
+        color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center;
+        TouchArea { clicked => { Studio.feedback-toggle-system(); } }
+    }
+    if Studio.feedback-system: Rectangle {
+        x: root.pad; y: 256.7px; width: root.width - 2 * root.pad; height: root.preview-h - 6.8px;
+        border-radius: 6.8px; background: #1c1d1f; clip: true;
+        Text {
+            x: 8.5px; y: 6.8px; width: parent.width - 17px; height: parent.height - 13.6px;
+            text: Studio.feedback-system-text; wrap: word-wrap; overflow: elide;
+            color: DialogTokens.label; font-size: 8.5px; font-weight: 500; vertical-alignment: top;
+        }
+    }
+    if Studio.feedback-error != "": Text {
+        x: root.pad; y: 256.7px + root.preview-h; width: root.width - 2 * root.pad; height: 13.6px;
+        text: Studio.feedback-error; color: #ff7a6b; font-size: 10.2px; font-weight: 600; letter-spacing: -0.2px; vertical-alignment: center; overflow: elide;
+    }
+    Text {
+        x: root.pad; y: root.height - 17px - 27.2px; width: 170px; height: 27.2px; wrap: word-wrap;
+        text: "Sent to the Device team. Your email is never shown publicly.";
+        color: DialogTokens.label; font-size: 8.5px; font-weight: 500; letter-spacing: -0.17px; vertical-alignment: center;
+    }
+    send := PillButton {
+        x: root.width - 17px - self.width; y: root.height - 17px - 27.2px; width: max(54.4px, self.preferred-width); height: 27.2px;
+        text: Studio.feedback-sending ? "Sending…" : "Send"; primary: true;
+        opacity: root.can-send || Studio.feedback-sending ? 1 : 0.5;
+        clicked => { if (root.can-send) { Studio.feedback-send(Studio.feedback-message, Studio.feedback-email); } }
+    }
+    PillButton { x: send.x - 6.8px - self.width; y: send.y; width: self.preferred-width; height: 27.2px; text: "Cancel"; clicked => { Studio.feedback-close(); } }
 }

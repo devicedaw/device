@@ -67,6 +67,7 @@ mod devices;
 mod devminimap;
 mod dialogs;
 mod fades;
+mod feedback;
 mod files;
 mod fit;
 mod gain_scope;
@@ -139,6 +140,8 @@ struct Args {
     /// Extra panels for the `reference-*` states.
     open_mixer: bool,
     open_assistant: bool,
+    /// `--state review-report-bug` / `review-feedback`: the feedback form, open with a draft.
+    feedback_demo: Option<feedback::Kind>,
     /// review-master-mute: the master starts muted.
     master_muted: bool,
     /// review-panel-collapsed: the bottom panel starts shut to its tab row.
@@ -366,6 +369,14 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.open_assistant = true;
                     a.assistant_demo = s.strip_prefix("review-assistant-").map(String::from);
+                }
+                "review-report-bug" => {
+                    a.reference_default = true;
+                    a.feedback_demo = Some(feedback::Kind::Bug);
+                }
+                "review-feedback" => {
+                    a.reference_default = true;
+                    a.feedback_demo = Some(feedback::Kind::Feedback);
                 }
                 "reference-midi-clip" => {
                     a.reference_default = true;
@@ -1121,7 +1132,7 @@ fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
     aw.upgrade()
         .map(|a| {
             let s = a.global::<Studio>();
-            s.get_chat_focused() || s.get_rename_open() || s.get_search_focused() || s.get_picker_focused()
+            s.get_chat_focused() || s.get_rename_open() || s.get_search_focused() || s.get_picker_focused() || s.get_feedback_open()
         })
         .unwrap_or(false)
 }
@@ -1650,6 +1661,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.toggle_bottom_collapse();
         }
         c.assistant_open = args.open_assistant;
+        if let Some(kind) = args.feedback_demo {
+            c.feedback_open(kind);
+            let draft = match kind {
+                feedback::Kind::Bug => {
+                    "The playhead jumps back to bar 1 when I loop a section and press Stop.\n\n1. Set a loop over bars 5-9\n2. Play, then Stop"
+                }
+                feedback::Kind::Feedback => "Love how fast the arrangement view feels. Would be great to colour a whole group at once.",
+            };
+            c.feedback.set_fields.set(Some((draft.into(), String::new())));
+        }
         if let Some(px) = args.assistant_width {
             c.settings.prefs.assistant_width = px * zoom::DESIGN_LEVEL;
         }
@@ -3512,9 +3533,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     on!(on_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
-    // TODO(feedback): wire "Report a bug" / "Share your feedback" to a real channel. No-ops for now.
-    on!(on_report_bug, |c| c.set_status("Report a bug: not connected yet (TODO)", 3));
-    on!(on_feedback, |c| c.set_status("Feedback: not connected yet (TODO)", 3));
+    // "Report a bug" / "Share your feedback" (top bar): the feedback form (feedback.rs).
+    on!(on_report_bug, |c| c.feedback_open(feedback::Kind::Bug));
+    on!(on_feedback, |c| c.feedback_open(feedback::Kind::Feedback));
+    on!(on_feedback_close, |c| c.feedback_close());
+    on!(on_feedback_toggle_system, |c| c.feedback_toggle_system());
+    on!(on_feedback_send, |c, message: slint::SharedString, email: slint::SharedString| c.feedback_send(message.as_str(), email.as_str()));
     {
         let ctl = ctl.clone();
         studio.on_lane_hover(move |x, y| {
@@ -3636,7 +3660,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // The export dialog and the unsaved-changes prompt are modal: Escape closes them (Cancel).
             {
                 let mut c = ctl.borrow_mut();
-                if c.export.open || c.unsaved_open || c.updates_open || c.undo_history_open || c.key_change.is_some() {
+                if c.export.open || c.unsaved_open || c.updates_open || c.undo_history_open || c.key_change.is_some() || c.feedback.open {
                     if c.key_change.is_some() && chord.key == "Enter" {
                         c.key_change_choice(crate::transport_fields::KeyChoice::Transpose);
                     } else if action == "view.escape" && !c.export_close_menu() {

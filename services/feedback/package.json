@@ -1,0 +1,8 @@
+{
+  "name": "device-feedback",
+  "private": true,
+  "type": "module",
+  "description": "Receives bug reports and feedback from Device Studio and files them as GitHub issues.",
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}

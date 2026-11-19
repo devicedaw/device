@@ -221,6 +221,8 @@ pub enum JobResult {
     Reloaded { asset: AssetId, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
     /// Assistant provider reply (raw `AssistantTurn` JSON) for a request started at `started`.
     Assistant { started: Instant, mode: dstudio_core::assistant::Mode, result: Result<String, String> },
+    /// A bug report or feedback was posted (feedback.rs).
+    Feedback(Result<(), String>),
     /// Takes of one finished recording pass, loaded into the engine.
     Recorded {
         doc_epoch: u64,
@@ -466,6 +468,8 @@ pub struct Controller {
     cue: Option<i64>,
     /// Edit › Undo History… dialog.
     pub undo_history_open: bool,
+    /// "Report a bug" / "Share your feedback" form (feedback.rs).
+    pub feedback: crate::feedback::FeedbackForm,
     pub(crate) undo_history_model: Rc<VecModel<crate::UndoHistoryRow>>,
     pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
@@ -654,6 +658,7 @@ impl Controller {
             paused: false,
             cue: None,
             undo_history_open: false,
+            feedback: Default::default(),
             undo_history_model: Rc::new(VecModel::default()),
             jobs_tx,
             jobs_rx,
@@ -844,6 +849,7 @@ impl Controller {
     pub fn set_status(&mut self, msg: impl Into<String>, secs: u64) {
         let msg = msg.into();
         eprintln!("[status] {msg}");
+        self.feedback.remember(&msg);
         self.status = Some((msg, Instant::now(), Duration::from_secs(secs)));
         self.ui_dirty = true;
     }
@@ -893,6 +899,7 @@ impl Controller {
             || self.updates_open
             || self.undo_history_open
             || self.key_change.is_some()
+            || self.feedback.open
     }
 
     /// File › Open Recent item `i` (newest first). A project that no longer opens leaves the list.
@@ -1490,6 +1497,7 @@ impl Controller {
                     Err(e) => self.set_status(format!("Import failed: {e}"), 6),
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
+                JobResult::Feedback(result) => self.finish_feedback(result),
                 JobResult::Recorded { doc_epoch, takes, midi, punch, rec_loop } => {
                     self.finish_recorded(doc_epoch, takes, midi, punch, rec_loop)
                 }
@@ -2593,6 +2601,7 @@ impl Controller {
         self.push_routing(&s);
         self.push_settings(&s);
         self.push_dialogs(&s);
+        self.push_feedback(&s);
         self.push_clip_render(&s);
         self.push_devices(&s);
         self.push_files(&s);
