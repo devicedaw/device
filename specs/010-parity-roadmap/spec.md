@@ -188,7 +188,7 @@ next to the target on the same window size.
   library of a couple of hundred multi-sampled sounds (keys, strings, brass, guitars, vocals, textures), with
   its own preset folder in the browser and its sound library as optional downloadable content (G15). All
   samples must be original or properly licensed for redistribution.
-- [x] **G28. Device-chain rows in Settings › Shortcuts.** (#PRNUM; with effect selection in the chain.) The Shortcuts page lists every timeline and editor
+- [x] **G28. Device-chain rows in Settings › Shortcuts.** (#147; with effect selection in the chain.) The Shortcuts page lists every timeline and editor
   key, but not the device-chain ones (move, delete, duplicate, fold, toggle a device). Add them, bindable like
   the others.
 - [ ] **G29. Windows: interface labels render as empty boxes** (issue #115). The last report is that preferring
