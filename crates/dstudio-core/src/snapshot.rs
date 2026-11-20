@@ -192,16 +192,11 @@ pub fn build_full(
 ) -> (SessionSnapshot, Vec<u64>) {
     let mut skipped = Vec::new();
     let map = project.tempo_map();
-    // Notes are the bulk of a snapshot: with one tempo, convert them with the same arithmetic as
-    // before tempo maps existed (bit for bit, and as cheap), else through the map.
+    // Notes are the bulk of a snapshot: with one tempo they use the same arithmetic as before
+    // tempo maps existed (bit for bit), chosen once here so the per-note loop has no branch.
     let bpm = project.transport.bpm;
-    let note_frames = |t: crate::model::Ticks| -> i64 {
-        if map.is_constant() {
-            (t as f64 / crate::PPQ as f64 * 60.0 / bpm * engine_rate).round() as i64
-        } else {
-            map.ticks_to_frames(t, engine_rate)
-        }
-    };
+    let one_tempo = |t: crate::model::Ticks| (t as f64 / crate::PPQ as f64 * 60.0 / bpm * engine_rate).round() as i64;
+    let on_map = |t: crate::model::Ticks| map.ticks_to_frames(t, engine_rate);
     let tracks = project
         .tracks
         .iter()
@@ -313,20 +308,7 @@ pub fn build_full(
             is_return: t.is_bus(),
             output: t.output.map(|o| o.0),
             sends: t.sends.iter().map(|s| SendSnapshot { target: s.target.0, gain: s.level, pre_fader: s.pre_fader }).collect(),
-            notes: {
-                let mut v: Vec<NoteSnapshot> = t
-                    .midi_clips
-                    .iter()
-                    .filter(|c| !c.disabled)
-                    .flat_map(|c| {
-                        c.playing_notes().into_iter().map(move |n| (c.start + n.start, c.start + n.start + n.length, n.pitch, n.velocity))
-                    })
-                    .map(|(s, e, pitch, velocity)| NoteSnapshot { start: note_frames(s), end: note_frames(e), pitch, velocity })
-                    .filter(|n| n.end > n.start)
-                    .collect();
-                v.sort_by_key(|n| (n.start, n.pitch));
-                v
-            },
+            notes: if map.is_constant() { track_notes(&t.midi_clips, one_tempo) } else { track_notes(&t.midi_clips, on_map) },
         })
         .collect();
     // A muted master is silent: no gain, and no volume lane to bring it back.
@@ -342,6 +324,19 @@ pub fn build_full(
     let tempo = tempo_segments(&map, engine_rate);
     let click_quarters = 4.0 / project.transport.time_signature.denominator.max(1) as f64;
     (SessionSnapshot { tracks, master_gain, master_automation, device_assets, tempo, click_quarters }, skipped)
+}
+
+/// A track's playing notes in engine frames (`frames` converts ticks), sorted by start and pitch.
+fn track_notes(clips: &[crate::midi::MidiClip], frames: impl Fn(crate::model::Ticks) -> i64) -> Vec<NoteSnapshot> {
+    let mut v: Vec<NoteSnapshot> = clips
+        .iter()
+        .filter(|c| !c.disabled)
+        .flat_map(|c| c.playing_notes().into_iter().map(move |n| (c.start + n.start, c.start + n.start + n.length, n.pitch, n.velocity)))
+        .map(|(s, e, pitch, velocity)| NoteSnapshot { start: frames(s), end: frames(e), pitch, velocity })
+        .filter(|n| n.end > n.start)
+        .collect();
+    v.sort_by_key(|n| (n.start, n.pitch));
+    v
 }
 
 /// A clip playing the engine's reversed copy (`frames` long, engine rate) of
