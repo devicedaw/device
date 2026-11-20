@@ -15870,7 +15870,7 @@ fn clip_render_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "clip render: Consolidate, Bounce and Export are enabled, Ask is not; Bounce has a submenu",
+            "clip render: Consolidate, Bounce, Export and Ask are enabled; Bounce has a submenu",
             Box::new(|_, a| {
                 let s = a.global::<Studio>();
                 let items = s.get_menu_items();
@@ -15878,7 +15878,7 @@ fn clip_render_steps() -> Vec<Step> {
                 let ok = on("Consolidate")
                     && on("Bounce")
                     && on("Export audio to Finder")
-                    && entry(&items, "Ask").is_some_and(|m| !m.enabled)
+                    && on("Ask")
                     && entry(&items, "Bounce").is_some_and(|m| m.submenu);
                 ok.then_some(()).ok_or("menu entries".into())
             }),
@@ -16357,6 +16357,84 @@ fn api_key_steps() -> Vec<Step> {
                 if let Some(p) = s2.borrow_mut().take() {
                     ctl.borrow_mut().provider = p;
                 }
+            }),
+        ),
+    ]
+}
+
+/// Ask from a clip (roadmap G17): with a clip selected, ⌘K opens the assistant with the clip as
+/// its context and the cursor in the composer.
+fn ask_clip_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::ClipId;
+    let id = Rc::new(std::cell::RefCell::new((0u64, String::new())));
+    let (i1, i2) = (id.clone(), id.clone());
+    vec![
+        DoC(
+            "ask: a MIDI clip named Hook on the instrument track, selected; assistant closed",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.assistant_open = false;
+                let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) else {
+                    return;
+                };
+                let k = ClipId(c.project().next_id);
+                let clip = dstudio_core::MidiClip {
+                    id: k,
+                    name: "Hook".into(),
+                    ..dstudio_core::MidiClip::empty(300 * dstudio_core::PPQ, 4 * dstudio_core::PPQ)
+                };
+                c.execute(dstudio_core::Command::AddMidiClip { track: t, clip });
+                *i1.borrow_mut() = (k.0, "Hook".into());
+                c.select_track(t);
+                c.select_clip(Some(k));
+                c.pr.focused = false;
+                c.ui_dirty = true;
+            }),
+        ),
+        Do("ask: Cmd+K", Box::new(|a| key(a, "k", true, false))),
+        // The panel opens on this update and its composer takes the focus on the next.
+        DoC(
+            "ask: let the panel open",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().update_ui(a);
+            }),
+        ),
+        DoC(
+            "ask: let the composer take the focus",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().update_ui(a);
+            }),
+        ),
+        Check(
+            "ask: the assistant is open with the clip as its context and the cursor in the composer",
+            Box::new(move |c, a| {
+                let s = a.global::<Studio>();
+                let (k, name) = i2.borrow().clone();
+                let ok = k != 0
+                    && c.assistant_open
+                    && s.get_chat_context_visible()
+                    && s.get_chat_context_name() == name.as_str()
+                    && s.get_chat_context_scope() == "Clip"
+                    && s.get_chat_focused()
+                    && c.selected_clip == Some(ClipId(k));
+                ok.then_some(()).ok_or(format!(
+                    "clip {k} open {} context {} {:?} focused {}",
+                    c.assistant_open,
+                    s.get_chat_context_visible(),
+                    s.get_chat_context_name(),
+                    s.get_chat_focused()
+                ))
+            }),
+        ),
+        DoC(
+            "ask: close the assistant",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.assistant_open = false;
+                a.global::<Studio>().set_chat_focused(false);
+                c.select_clip(None);
+                c.ui_dirty = true;
             }),
         ),
     ]
@@ -17839,6 +17917,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());
     all.extend(api_key_steps());
+    all.extend(ask_clip_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.

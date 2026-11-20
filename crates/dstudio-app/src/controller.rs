@@ -2598,6 +2598,15 @@ impl Controller {
         s.set_chat_key_saved(self.assistant.key_saved);
         s.set_chat_busy(self.assistant.busy.is_some());
         s.set_chat_notice(self.assistant.notice_visible);
+        // Ask focuses the composer once the panel exists (an update after it opened).
+        if self.assistant.focus_pending && self.assistant.shown && self.assistant_open {
+            self.assistant.focus_pending = false;
+            self.assistant.focus_epoch += 1;
+        } else if self.assistant.focus_pending {
+            self.ui_dirty = true;
+        }
+        self.assistant.shown = self.assistant_open;
+        s.set_chat_focus_epoch(self.assistant.focus_epoch);
         s.set_teach_mode(self.assistant.mode == dstudio_core::assistant::Mode::Teach);
         if self.chat_rev != Some(self.assistant.rev) {
             self.chat_rev = Some(self.assistant.rev);

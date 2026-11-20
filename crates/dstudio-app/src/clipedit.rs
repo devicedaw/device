@@ -660,12 +660,11 @@ impl Controller {
             items.push(if pattern { ToMidi } else { ToPattern });
         }
         items.push(Ask);
-        // PLACEHOLDER entry (disabled): Ask.
         self.menu.items = items
             .iter()
             .map(|&a| {
                 let enabled = match a {
-                    Cut | Copy | Duplicate | Delete | Rename | Disable | Enable | Takes => true,
+                    Cut | Copy | Duplicate | Delete | Rename | Disable | Enable | Takes | Ask => true,
                     Split => splittable,
                     ShowInFinder => !midi,
                     Consolidate => self.can_render_clip(id, false),
@@ -790,6 +789,7 @@ impl Controller {
             MenuAction::Delete => self.delete_selection(),
             MenuAction::Split => self.split_clip(),
             MenuAction::Consolidate => self.consolidate_clip(id),
+            MenuAction::Ask => self.ask_about_clip(id),
             MenuAction::Resample => self.bounce_clip(id),
             MenuAction::SendToSampler => {
                 self.send_to_sampler(id);

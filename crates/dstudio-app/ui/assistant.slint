@@ -264,6 +264,9 @@ component Disc inherits Rectangle {
 
 export component AssistantPanel inherits Panel {
     callback focus-main();   // give keyboard focus back to the window after sending
+    // Ask (clip menu, ⌘K) puts the cursor in the composer.
+    property <int> focus-epoch: Studio.chat-focus-epoch;
+    changed focus-epoch => { input.focus(); }
 
     // ---- header (32 px, padding 4 x 10) ----
     Icon { x: 8.5px; y: (27.2px - 10.2px) / 2; width: 10.2px; height: 10.2px; d: Icons.assistant; ink: Chat.menu-text; filled: true; }

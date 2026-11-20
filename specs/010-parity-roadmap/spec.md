@@ -105,7 +105,7 @@ target behaviour.
   launch, quietly when off-line, and from the menu), and when a newer one exists show a blue "Update available"
   pill in the title bar left of Report a bug. The pill and the dialog show the new version and open its
   download page.
-- [ ] **G17. Ask from a clip (⌘K).** The clip menu's Ask row is disabled (`src/clipedit.rs`, "PLACEHOLDER entry
+- [x] **G17. Ask from a clip (⌘K)** (#134). The clip menu's Ask row is disabled (`src/clipedit.rs`, "PLACEHOLDER entry
   (disabled): Ask"), and `assistant.ask` (⌘K) is not handled. It must open the assistant panel with the clip
   set as its context chip and the cursor in the composer.
 - [ ] **G18. Assistant: Getting started tour.** On first launch the assistant panel shows a "Getting started"
