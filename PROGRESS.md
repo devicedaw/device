@@ -768,3 +768,10 @@ gives the rendered audio clips warp markers at every tempo change and ramp sixte
 unstretched; `live_set::validate` checks the envelope's order and range. No set saved by the other application is in
 the repository to confirm how it interpolates between envelope events, so the extra events keep every beat within
 1 ms of Device's timing for a linear or a stepped reading (checked in `tempo_changes_become_an_envelope_and_render_markers`).
+### 2026-11-20: Ask from a clip
+
+The clip menu's Ask row (disabled until now) and ⌘K with a clip selected open the assistant with the clip as the
+composer's context chip and the cursor in the composer (`Controller::ask_about_clip`). The panel may not exist yet when
+Ask opens it, so the focus request waits for the next interface update (`AssistantState::focus_pending`) before it
+bumps `chat-focus-epoch`, which the panel's composer follows. Self-test section `ask_clip_steps`.
+

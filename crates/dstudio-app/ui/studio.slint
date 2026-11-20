@@ -692,6 +692,8 @@ export global Studio {
     in property <bool> chat-key-saved;           // the assistant's API key came from the keychain
     callback chat-save-key(string);
     callback chat-remove-key();
+    // Bumped to put the cursor in the composer (Ask, ⌘K).
+    in property <int> chat-focus-epoch;
     in property <[HighlightRect]> highlights;
     callback chat-send(string);
     callback chat-new();

@@ -55,6 +55,12 @@ pub struct AssistantState {
     pub context_removed: Option<(Option<u64>, Option<u64>)>,
     /// The key in use came from the keychain (the panel offers to remove it).
     pub key_saved: bool,
+    /// Bumped to put the cursor in the composer (Ask, ⌘K).
+    pub focus_epoch: i32,
+    /// Ask is waiting for the panel to exist before it bumps `focus_epoch`.
+    pub focus_pending: bool,
+    /// The panel was open at the last interface update.
+    pub shown: bool,
     /// Bumped when entries change, so the Slint model is rebuilt only then.
     pub rev: u64,
     /// Entries from this index on are new since the last model rebuild (entry animation).
@@ -71,6 +77,9 @@ impl Default for AssistantState {
             highlights: Vec::new(),
             context_removed: None,
             key_saved: false,
+            focus_epoch: 0,
+            focus_pending: false,
+            shown: false,
             rev: 0,
             fresh_from: 0,
         }
@@ -161,6 +170,19 @@ impl Controller {
         self.provider = std::sync::Arc::new(Provider::Unavailable);
         self.assistant.key_saved = false;
         self.set_status("API key removed", 3);
+        self.ui_dirty = true;
+    }
+
+    /// Ask (clip menu, ⌘K): open the assistant with clip `id` as its context and the cursor in
+    /// the composer.
+    pub fn ask_about_clip(&mut self, id: dstudio_core::ClipId) {
+        if let Some(track) = self.clip_track(id) {
+            self.select_track(track);
+        }
+        self.select_clip(Some(id));
+        self.assistant.context_removed = None;
+        self.assistant_open = true;
+        self.assistant.focus_pending = true;
         self.ui_dirty = true;
     }
 

@@ -1387,7 +1387,13 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
                 c.duplicate_section(s);
             }
         }
-        a if a.starts_with("clip.") || a == "assistant.ask" => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
+        "assistant.ask" => {
+            let mut c = ctl.borrow_mut();
+            if let Some(id) = c.selected_clip {
+                c.ask_about_clip(id);
+            }
+        }
+        a if a.starts_with("clip.") => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
         "track.add_audio" => {
             ctl.borrow_mut().add_audio_track();
         }
