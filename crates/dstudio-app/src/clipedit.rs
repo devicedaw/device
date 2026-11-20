@@ -149,10 +149,9 @@ fn take_rows(clip: Option<&dstudio_core::Clip>) -> Vec<(String, String, bool)> {
     (0..c.takes.len()).map(|i| (format!("Take {}", i + 1), if cur == Some(i) { "✓".into() } else { String::new() }, true)).collect()
 }
 
-/// Bounce submenu: (label, shortcut text, enabled). Two entries;
-/// DStudio builds Bounce to new track. Bounce track in place needs a track that changes kind (MIDI to
-/// audio, its instrument and devices removed), which the model cannot do yet, so it stays greyed.
-const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true), ("Bounce track in place", "", false)];
+/// Bounce submenu: (label, shortcut text, enabled): Bounce to new track, Bounce track in place
+/// (the clip's whole track, src/clip_render.rs).
+const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true), ("Bounce track in place", "", true)];
 
 /// Transpose submenu: (label, shortcut text, semitones).
 const TRANSPOSE: [(&str, &str, i32); 4] =
@@ -862,7 +861,10 @@ impl Controller {
             if BOUNCE.get(index).is_some_and(|b| b.2) {
                 self.menu_close();
                 self.selected_clip = Some(id);
-                self.bounce_clip(id);
+                match (index, self.clip_track(id)) {
+                    (1, Some(track)) => self.bounce_track_in_place(track),
+                    _ => self.bounce_clip(id),
+                }
             }
             return;
         }

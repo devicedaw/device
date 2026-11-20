@@ -719,6 +719,14 @@ project's audio files, and can `add_builtin_device` (effects into the chain, ins
 `load_sample` besides any edit command (device parameters, sends, automation, audio clips). The built-in device
 catalogue (44 devices, about 2000 parameters) goes into the system prompt as a cached block instead of every turn's
 state. Still to do: one run against the live API.
+### 2026-11-20: Bounce Track in Place
+
+Clip menu › Bounce › Bounce track in place prints the clip's whole track (spec 015): every enabled clip rendered
+through its devices, before the channel strip, to one audio clip from the first clip's start; the track becomes an
+audio track holding it, keeping its name, colour, mix, sends, output and lanes, with its effects and instrument kept
+but switched off. One undo step through a new `Command::ReplaceTrack`, which swaps a track for a new version of
+itself at the same place and id (removing and re-adding would drop references to it). The render reuses the clip
+render path (`ClipOp::BounceInPlace`). Core tests `tests/bounce_in_place.rs`; self-test `bounce_in_place_steps`.
 
 ### 2026-11-20: tempo changes in the core and engine
 

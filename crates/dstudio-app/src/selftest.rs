@@ -15957,7 +15957,7 @@ fn clip_render_steps() -> Vec<Step> {
         ),
         Do("clip render: open Bounce", Box::new(|a| click_entry(a, "Bounce"))),
         Check(
-            "clip render: the Bounce submenu lists Bounce to new track (enabled, ⌘ B) and Bounce track in place (greyed)",
+            "clip render: the Bounce submenu lists Bounce to new track (enabled, ⌘ B) and Bounce track in place (enabled)",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
                 let sub = s.get_sub_items();
@@ -15965,7 +15965,7 @@ fn clip_render_steps() -> Vec<Step> {
                 let ok = s.get_sub_open()
                     && sub.row_count() == 2
                     && entry(&sub, "Bounce to new track").is_some_and(|m| m.enabled && m.shortcut == "⌘ B")
-                    && entry(&sub, "Bounce track in place").is_some_and(|m| !m.enabled);
+                    && entry(&sub, "Bounce track in place").is_some_and(|m| m.enabled);
                 ok.then_some(()).ok_or(format!("open {} rows {}", s.get_sub_open(), sub.row_count()))
             }),
         ),
@@ -16347,6 +16347,86 @@ fn api_key_steps() -> Vec<Step> {
                 if let Some(p) = s2.borrow_mut().take() {
                     ctl.borrow_mut().provider = p;
                 }
+/// Bounce Track in Place (roadmap G4): an instrument track with a MIDI clip at beat 4 becomes an
+/// audio track holding the render from beat 4, its name and fader kept and its instrument off,
+/// in one undo step; ⌘Z brings the instrument track and its MIDI clip back.
+fn bounce_in_place_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::{AssetId, ClipId, Command, MidiClip, Note, Track, TrackId, TrackKind};
+    const B: i64 = dstudio_core::PPQ;
+    fn dir() -> std::path::PathBuf {
+        run_dir().join("bounce-in-place")
+    }
+    let id = Rc::new(Cell::new(0u64));
+    let (i1, i2, i3, i4) = (id.clone(), id.clone(), id.clone(), id.clone());
+    vec![
+        DoC(
+            "bounce in place: an instrument track at fader 0.8 with a MIDI clip of two notes at beat 4",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.clip_render.dir_override = Some(dir());
+                let n = c.project().next_id;
+                let mut clip = MidiClip::empty(4 * B, 4 * B);
+                clip.id = ClipId(n + 1);
+                clip.notes = vec![
+                    Note { id: 1, pitch: 60, start: 0, length: 2 * B, velocity: 110 },
+                    Note { id: 2, pitch: 67, start: 2 * B, length: B, velocity: 110 },
+                ];
+                let mut track = Track::new(TrackId(n), TrackKind::Instrument, "In place", dstudio_core::ColorIndex::FIRST);
+                track.gain = 0.8;
+                c.execute(Command::Batch {
+                    label: "bounce in place test".into(),
+                    commands: vec![Command::AddTrack { index: None, track }, Command::AddMidiClip { track: TrackId(n), clip }],
+                });
+                i1.set(n);
+                c.bounce_track_in_place(TrackId(n));
+            }),
+        ),
+        Check(
+            "bounce in place: an audio track with one clip from beat 4, same name and fader, instrument off, one undo step",
+            Box::new(move |c, _| {
+                eprintln!("bounce-in-place: render {:.1} ms (1 bar and its tail)", c.clip_render.last_ms);
+                let t = c.project().track(TrackId(i2.get())).ok_or("no track")?;
+                let k = t.clips.first().ok_or(format!("no clip; status {:?}", c.status_message()))?;
+                let ok = t.kind == TrackKind::Audio
+                    && t.clips.len() == 1
+                    && t.midi_clips.is_empty()
+                    && k.start == 4 * B
+                    && t.name == "In place"
+                    && t.gain == 0.8
+                    && t.instrument_plugin.as_ref().is_none_or(|d| !d.enabled)
+                    && c.doc.undo_label() == Some("Bounce Track in Place");
+                ok.then_some(()).ok_or(format!("{:?} {} clips; undo {:?}", t.kind, t.clips.len(), c.doc.undo_label()))
+            }),
+        ),
+        Do("bounce in place: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check(
+            "bounce in place: the instrument track and its MIDI clip are back",
+            Box::new(move |c, _| {
+                let t = c.project().track(TrackId(i3.get())).ok_or("no track")?;
+                (t.kind == TrackKind::Instrument
+                    && t.clips.is_empty()
+                    && t.midi_clips.len() == 1
+                    && t.instrument_plugin.as_ref().is_none_or(|d| d.enabled))
+                .then_some(())
+                .ok_or(format!("{:?} {} audio {} MIDI clips", t.kind, t.clips.len(), t.midi_clips.len()))
+            }),
+        ),
+        DoC(
+            "bounce in place: remove the test track, its render and the scratch folder",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let mut commands = vec![Command::RemoveTrack { track: TrackId(i4.get()) }];
+                commands.extend(
+                    c.project()
+                        .assets
+                        .iter()
+                        .filter(|a| in_dir(&a.absolute_path, &dir()))
+                        .map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }),
+                );
+                c.execute(Command::Batch { label: "bounce in place cleanup".into(), commands });
+                c.clip_render.dir_override = Some(run_dir().join("renders"));
+                let _ = std::fs::remove_dir_all(dir());
             }),
         ),
     ]
@@ -17712,6 +17792,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_selection_steps());
     all.extend(clip_fade_steps());
     all.extend(clip_render_steps());
+    all.extend(bounce_in_place_steps());
     all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
