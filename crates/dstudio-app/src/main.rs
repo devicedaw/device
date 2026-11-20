@@ -3323,6 +3323,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     on!(on_pr_zoom, |c, axis: i32, z: f32| c.pr_zoom(axis, z));
+    on!(on_pr_zoom_reset, |c, axis: i32| c.pr_zoom_reset(axis));
+    on!(on_tl_zoom, |c, axis: i32, z: f32| c.timeline_zoom(axis, z));
+    on!(on_tl_zoom_reset, |c, axis: i32| c.timeline_zoom_reset(axis));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
     on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
     on!(on_pr_scale_step, |c, m: i32, s: i32| c.pr_scale_step(m, s));

@@ -42,7 +42,7 @@ target behaviour.
   at the snapped position on click (one undo step, "Split Clip"). The header icon shows the active tool.
   T toggles Scissors with the previous tool; Escape leaves the tool as it is. (The clip editor header has no tool
   button, in Device or the target, so there is nothing to add there.)
-- [ ] **G2. Zoom sliders in the timeline header.** The vertical (track height) and horizontal (time) sliders
+- [x] **G2. Zoom sliders in the timeline header** (#126). The vertical (track height) and horizontal (time) sliders
   next to the tool button are painted rectangles (`ui/app.slint`, "vertical zoom (placeholder)"). Both must drag:
   horizontal zoom follows and sets the real zoom level (`src/zoom.rs`), vertical sets every track's height
   (same steps as ⌥-scroll). Double-click resets. The clip editor's pair works the same way.

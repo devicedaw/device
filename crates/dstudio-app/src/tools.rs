@@ -289,6 +289,9 @@ impl Controller {
 
     pub(crate) fn push_tools(&self, s: &Studio) {
         s.set_tool(self.tools.tool.index());
+        let (v, h) = self.timeline_zoom_pos();
+        s.set_tl_vzoom(v);
+        s.set_tl_hzoom(h);
         match self.tools.menu {
             Some((x, y)) => {
                 s.set_tool_menu_x(x);

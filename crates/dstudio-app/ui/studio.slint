@@ -751,6 +751,7 @@ export global Studio {
     callback typing-release();
     callback toggle-typing();
     callback pr-zoom(int, float);                           // 0 vertical, 1 horizontal; 0..1
+    callback pr-zoom-reset(int);                            // double-click: back to the default
     in property <float> pr-vzoom: 0.49;
     in property <float> pr-hzoom;
     callback pr-action(string);                             // quantize|humanize|reverse|legato|double|pen|smart_quantize|velocity_lane
@@ -932,6 +933,12 @@ export global Studio {
     callback tool-menu-toggle(length, length);
     callback tool-pick(int);
     callback tool-menu-dismiss();
+    // Timeline header zoom sliders (src/fit.rs): positions 0..1, vertical (track heights) and
+    // horizontal (time); moved, and reset by a double-click.
+    in property <float> tl-vzoom;
+    in property <float> tl-hzoom;
+    callback tl-zoom(int, float);
+    callback tl-zoom-reset(int);
     // ---- return tracks, sends and Out (src/routing.rs) ----
     in-out property <int> strip-tab;               // channel strip tab: 0 Input, 1 Sends (view state)
     in property <bool> returns-shown;             // Timeline Returns pill lit (return rows show)

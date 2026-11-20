@@ -5,28 +5,12 @@
 // Panel-relative
 // coordinates; the panel is as tall as the Devices tab's (306 pt by default).
 import { Tokens } from "tokens.slint";
-import { Icon, Icons, Label } from "widgets.slint";
+import { Icon, Icons, Label, ZoomSlider } from "widgets.slint";
 import { Studio, MenuItem } from "studio.slint";
 import { TrackName } from "track_header.slint";
 
 // Track title row at the top of the left column ("2 ‖ Instrument").
 // A toolbar zoom slider: pressing the track jumps to that point and dragging follows (0..1).
-component ZoomSlider inherits Rectangle {
-    in property <float> value;
-    in property <bool> fill;
-    callback changed(float);
-    y: 4px; height: 20px;
-    Rectangle { y: 9px; height: 2px; border-radius: 1px; background: #2f3036; }
-    if root.fill: Rectangle { x: 0; y: 9px; width: root.value * root.width; height: 2px; background: #e5e5e8; }
-    Rectangle { x: max(0px, min(root.width - 8px, root.value * root.width - 4px)); y: 6px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
-    TouchArea {
-        pointer-event(e) => {
-            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { root.changed(max(0, min(1, self.mouse-x / self.width))); }
-        }
-        moved => { if (self.pressed) { root.changed(max(0, min(1, self.mouse-x / self.width))); } }
-    }
-}
-
 export component TrackTitle inherits Rectangle {
     callback focus-main();
     Rectangle { x: 0.5px; y: 15px; width: 3px; height: 15px; border-radius: 1.5px; background: Studio.sel-color; }
@@ -464,10 +448,10 @@ export component PianoRoll inherits Rectangle {
             vel-ta := TouchArea { clicked => { Studio.pr-action("velocity_lane"); } }
         }
         Icon { x: root.width - 246.5px; y: 7.5px; width: 13px; height: 13px; d: Icons.v-resize; ink: #8e8f93; }
-        ZoomSlider { x: root.width - 224px; width: 67.5px; value: Studio.pr-vzoom; fill: true; changed(z) => { Studio.pr-zoom(0, z); } }
+        ZoomSlider { x: root.width - 224px; width: 67.5px; value: Studio.pr-vzoom; fill: true; changed(z) => { Studio.pr-zoom(0, z); } reset => { Studio.pr-zoom-reset(0); } }
     }
     Icon { x: root.width - 147.5px; y: 7.5px; width: 13px; height: 13px; d: Icons.h-resize; ink: #8e8f93; }
-    ZoomSlider { x: root.width - 132.5px; width: 74px; value: Studio.pr-hzoom; changed(z) => { Studio.pr-zoom(1, z); } }
+    ZoomSlider { x: root.width - 132.5px; width: 74px; value: Studio.pr-hzoom; changed(z) => { Studio.pr-zoom(1, z); } reset => { Studio.pr-zoom-reset(1); } }
     // Snap size: the same setting as the timeline toolbar's readout (click toggles, chevron opens the menu).
     Text { x: root.width - 49px; y: 7px; width: 23.5px; height: 14px; horizontal-alignment: right; text: Studio.snap-text; color: Studio.snap-text == "Off" ? #8e8f93 : Tokens.text-bright; font-size: 9px; font-weight: 600; vertical-alignment: center; }
     TouchArea { x: root.width - 47px; y: 4px; width: 24px; height: 20px; clicked => { Studio.snap-toggle(); } }

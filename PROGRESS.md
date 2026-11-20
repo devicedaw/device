@@ -673,3 +673,11 @@ position. App side: `src/tools.rs`; review states `review-tool-menu` and `review
 - Tests: `settings_search::tests`, self-test section `settings_search_steps` (incl. ⇧⌘T working after closing with the
   cursor in the field). Review states `review-settings-search` and `review-settings-search-none`.
 
+### 2026-11-20: timeline zoom sliders
+
+The two sliders in the timeline header, painted until now, work: the horizontal one follows and sets the zoom (log
+scale from half the default zoom to the closest), the vertical one sets every shown track's height (0.75 to 6 times
+the default row), both as view changes, not undo steps. Double-click resets either; the clip editor's pair gains the
+same double-click. `ZoomSlider` moved to `ui/widgets.slint` for both headers; mapping in `src/fit.rs`. Self-test
+section `zoom_slider_steps`.
+

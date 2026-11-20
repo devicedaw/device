@@ -12054,6 +12054,55 @@ fn snap_steps() -> Vec<Step> {
     ]
 }
 
+/// Timeline header zoom sliders (roadmap G2): the horizontal one sets the zoom, the vertical one
+/// every shown track's height (a view change, not an undo step); double-clicks reset both.
+fn zoom_slider_steps() -> Vec<Step> {
+    use crate::timeline::DEFAULT_PX_PER_BEAT;
+    use Step::*;
+    let before = Rc::new(Cell::new(0usize));
+    let b2 = before.clone();
+    vec![
+        DoC(
+            "zoom sliders: drag both to the right end",
+            Box::new(move |a, ctl| {
+                b2.set(ctl.borrow().doc.undo_depth());
+                let s = a.global::<Studio>();
+                s.invoke_tl_zoom(1, 1.0);
+                s.invoke_tl_zoom(0, 1.0);
+            }),
+        ),
+        Check(
+            "zoom sliders: closest zoom, every track at the tallest row, knobs at the end, no undo step",
+            Box::new(move |c, a| {
+                let s = a.global::<Studio>();
+                let tall = c.project().tracks.iter().take(c.view.pinned_from).all(|t| t.height == dstudio_core::Track::HEIGHT_RANGE.1);
+                ((c.view.px_per_beat - crate::timeline::MAX_PX_PER_BEAT).abs() < 1e-6
+                    && tall
+                    && s.get_tl_hzoom() > 0.99
+                    && s.get_tl_vzoom() > 0.99
+                    && c.doc.undo_depth() == before.get())
+                .then_some(())
+                .ok_or(format!("ppb {} knobs {} {} undo {}", c.view.px_per_beat, s.get_tl_hzoom(), s.get_tl_vzoom(), c.doc.undo_depth()))
+            }),
+        ),
+        Do(
+            "zoom sliders: double-click both",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_tl_zoom_reset(1);
+                s.invoke_tl_zoom_reset(0);
+            }),
+        ),
+        Check(
+            "zoom sliders: default zoom and row height again",
+            Box::new(|c, _| {
+                let unit = c.project().tracks.iter().take(c.view.pinned_from).all(|t| t.height == 1.0);
+                ((c.view.px_per_beat - DEFAULT_PX_PER_BEAT).abs() < 1e-6 && unit).then_some(()).ok_or(format!("ppb {}", c.view.px_per_beat))
+            }),
+        ),
+    ]
+}
+
 /// Edit tools (spec 012): the tool menu picks Scissors, T toggles it, a Scissors click splits a
 /// clip (one undo step), a Marquee drag over two tracks then Delete cuts a hole through both,
 /// ⌘Z restores it, Escape clears the range but keeps the tool.
@@ -17139,6 +17188,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
     all.extend(tool_steps());
+    all.extend(zoom_slider_steps());
     all.extend(transport_fields_steps());
     all.extend(track_rename_steps());
     all.extend(track_menu_steps());
