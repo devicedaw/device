@@ -49,7 +49,7 @@ component Header inherits Rectangle {
     // Escape cancels (src/controller.rs `rename_project`).
     title := Text {
         x: 0; y: 11px; width: root.width; height: 18px;
-        text: Studio.project-name; color: title-ta.has-hover ? Tokens.text-primary : Tokens.text-title; font-size: 10px; font-weight: 600;
+        text: Studio.project-name; color: Tokens.text-title; font-size: 10px; font-weight: 600;
         horizontal-alignment: center; vertical-alignment: center;
         visible: !Studio.title-editing;
         accessible-role: button; accessible-label: "Project name"; accessible-value: Studio.project-name;
@@ -58,19 +58,19 @@ component Header inherits Rectangle {
     title-ta := TouchArea {
         x: (root.width - min(root.width - 480px, max(60px, title-w.preferred-width + 16px))) / 2; y: 9px;
         width: min(root.width - 480px, max(60px, title-w.preferred-width + 16px)); height: 22px;
-        mouse-cursor: text;
         clicked => { Studio.title-editing = true; }
     }
-    title-w := Text { visible: false; text: Studio.project-name; font-size: 10px; font-weight: 600; }
+    title-w := Text { visible: false; text: Studio.project-name; font-size: 10px; font-weight: 500; }
+    // The field: a narrow box with an accent rim, the name left-aligned and selected.
     if Studio.title-editing: Rectangle {
-        x: (root.width - self.width) / 2; y: 9.5px; width: max(160px, title-w.preferred-width + 40px); height: 21px; border-radius: 4.25px;
-        background: #3a3b40; border-width: 0.85px; border-color: #ffffff59;
+        x: (root.width - self.width) / 2; y: 10.2px; width: max(91px, title-w.preferred-width + 13.6px); height: 17px; border-radius: 4.25px;
+        background: #2a2b2e; border-width: 0.85px; border-color: #628bf7;
         TextInput {
             accessible-label: "Project name";
-            x: 6px; width: parent.width - 12px; height: parent.height;
-            text: Studio.project-name; color: #ffffff; font-size: 10px; font-weight: 600;
-            horizontal-alignment: center; vertical-alignment: center; single-line: true;
-            selection-background-color: #ffffff47; selection-foreground-color: #ffffff;
+            x: 5.1px; width: parent.width - 10.2px; height: parent.height;
+            text: Studio.project-name; color: #e5e5e8; font-size: 10px; font-weight: 500;
+            vertical-alignment: center; single-line: true;
+            selection-background-color: #263a7d; selection-foreground-color: #e5e5e8;
             init => { self.focus(); self.select-all(); Studio.title-focused = true; }
             accepted => { Studio.title-editing = false; Studio.title-focused = false; Studio.project-rename(self.text); }
             key-pressed(e) => {
