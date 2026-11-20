@@ -106,6 +106,7 @@ public:
     int32_t publish(const se_session_desc_v9& desc, std::string& err);
     int32_t publish(const se_session_desc_v10& desc, std::string& err);
     int32_t publish(const se_session_desc_v11& desc, std::string& err);
+    int32_t publish(const se_session_desc_v12& desc, std::string& err);
 
     // ---- plugins (see dstudio_engine.h; main thread where documented)
     bool plugin_is_live(uint64_t device_id);
@@ -252,7 +253,10 @@ private:
     void publish_transport() noexcept;
     uint32_t advance_peek_window(uint32_t frames, const RenderGraph* graph) noexcept;
     // r == nullptr: mono (l only).
-    void mix_metronome(float* l, float* r, int64_t position, uint32_t frames) noexcept;
+    void mix_metronome(float* l, float* r, int64_t position, uint32_t frames, const RenderGraph* graph) noexcept;
+    // The tempo devices and plugins see for a block at `position`: the graph's
+    // tempo map when it has one, else se_transport_set_tempo.
+    void set_block_tempo(RtTransport& t, const TempoMap& map, int64_t position) const noexcept;
     void start_click(const float* buf, uint32_t offset, float* l, float* r, uint32_t frames) noexcept;
     // Adds the preview voices to l/r (silencing them first when soloed);
     // returns true when anything was added.

@@ -588,6 +588,8 @@ impl Controller {
             master_gain: 1.0,
             master_automation: vec![],
             device_assets: Default::default(),
+            tempo: vec![],
+            click_quarters: 1.0,
         };
         let e = &self.engine;
         let off = dstudio_engine::MetronomeConfig { enabled: false, gain: 0.0, frames_per_beat: 24_000.0, beats_per_bar: 4 };

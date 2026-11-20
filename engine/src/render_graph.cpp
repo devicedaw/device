@@ -641,6 +641,42 @@ int32_t build_render_graph(const se_session_desc_v10& desc, const AssetLookup& l
     return build_render_graph(d11, lookup, out, err);
 }
 
+// Validates a tempo map (se_session_publish_v12); nullptr when it is valid.
+static const char* validate_tempo(const se_session_desc_v12& d) noexcept {
+    if (d.tempo_count == 0) return nullptr;
+    if (d.tempo == nullptr) return "tempo_count > 0 but tempo == NULL";
+    if (d.tempo_count > SE_MAX_TEMPO_SEGMENTS) return "too many tempo segments";
+    if (!std::isfinite(d.click_quarters) || d.click_quarters <= 0.0) return "click_quarters must be finite and > 0";
+    if (d.tempo[0].start_frame != 0.0 || d.tempo[0].start_quarter != 0.0)
+        return "the first tempo segment must start at frame 0 and quarter 0";
+    for (uint32_t i = 0; i < d.tempo_count; ++i) {
+        const se_tempo_segment& g = d.tempo[i];
+        if (!std::isfinite(g.start_frame) || !std::isfinite(g.start_quarter)) return "tempo segment start not finite";
+        if (!(g.start_bpm >= 1.0 && g.start_bpm <= 10000.0) || !(g.end_bpm >= 1.0 && g.end_bpm <= 10000.0))
+            return "tempo must be finite and in [1, 10000] BPM";
+        if (i > 0 && (g.start_frame <= d.tempo[i - 1].start_frame || g.start_quarter <= d.tempo[i - 1].start_quarter))
+            return "tempo segments must start at strictly increasing frames and quarters";
+    }
+    if (d.tempo[d.tempo_count - 1].end_bpm != d.tempo[d.tempo_count - 1].start_bpm)
+        return "the last tempo segment must hold its tempo";
+    return nullptr;
+}
+
+int32_t build_render_graph(const se_session_desc_v12& desc12, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    if (const char* why = validate_tempo(desc12)) {
+        err = std::string("tempo map: ") + why;
+        return SE_ERR_INVALID_ARG;
+    }
+    const int32_t rc = build_render_graph(desc12.v11, lookup, out, err);
+    if (rc != SE_OK) return rc;
+    if (desc12.tempo_count > 0) {
+        out->tempo.assign(desc12.tempo, desc12.tempo + desc12.tempo_count);
+        out->click_quarters = desc12.click_quarters;
+    }
+    return SE_OK;
+}
+
 int32_t build_render_graph(const se_session_desc_v11& desc11, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err) {
     const se_session_desc_v10& desc10 = desc11.v10;
@@ -1208,6 +1244,8 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
     c->warp_voice_keys = g.warp_voice_keys;
     c->warp_voice_refs = g.warp_voice_refs;
     c->warp_voices = g.warp_voices;
+    c->tempo = g.tempo;
+    c->click_quarters = g.click_quarters;
     return c;
 }
 

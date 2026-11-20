@@ -201,7 +201,7 @@ impl Controller {
             let _ = self.doc.undo();
         }
         self.doc.seal_coalescing();
-        if self.execute(Command::SetTempo { bpm }) {
+        if self.execute(Command::SetTempo { bpm, at: None }) {
             self.doc.seal_coalescing();
             self.tf.merge_rev = Some(self.doc.revision());
         }
@@ -251,7 +251,7 @@ impl Controller {
                 self.tf.taps.clear();
                 if (self.project().transport.bpm - bpm).abs() > 1e-9 {
                     self.doc.seal_coalescing();
-                    self.execute(Command::SetTempo { bpm });
+                    self.execute(Command::SetTempo { bpm, at: None });
                     self.doc.seal_coalescing();
                 }
             }

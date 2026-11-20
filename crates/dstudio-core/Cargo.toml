@@ -28,3 +28,7 @@ harness = false
 [[bench]]
 name = "clip_loop"
 harness = false
+
+[[bench]]
+name = "tempo"
+harness = false

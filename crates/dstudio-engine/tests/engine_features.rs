@@ -85,6 +85,8 @@ fn publish_ramp_faded(e: &Engine, dir: &Path, frames: u32, fades: (i64, i64)) ->
         master_gain: 1.0,
         master_automation: vec![],
         device_assets: Default::default(),
+        tempo: vec![],
+        click_quarters: 1.0,
     };
     e.publish(&snap).unwrap();
     src
@@ -262,6 +264,8 @@ fn export_excludes_loop_and_metronome() {
         master_gain: 1.0,
         master_automation: vec![],
         device_assets: Default::default(),
+        tempo: vec![],
+        click_quarters: 1.0,
     };
     e.publish(&snap).unwrap();
     e.set_metronome(MetronomeConfig { enabled: false, gain: 0.0, frames_per_beat: 1.0, beats_per_bar: 1 }).unwrap();

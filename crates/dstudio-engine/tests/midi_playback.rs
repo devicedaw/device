@@ -178,6 +178,8 @@ fn audio_tracks_ignore_notes_and_v2_keeps_audio_working() {
         master_gain: 1.0,
         master_automation: vec![],
         device_assets: Default::default(),
+        tempo: vec![],
+        click_quarters: 1.0,
     };
     engine.publish(&snap).unwrap();
     engine.play().unwrap();

@@ -83,7 +83,7 @@ fn warp_on_at_the_project_tempo_keeps_the_clip_and_follows_tempo_changes() {
     assert_eq!(w.points[0].0, 96_000);
     assert!(w.points[0].1.abs() < 1e-9);
     // 120 -> 90 BPM: the 8 beats now take 5.33 s and the source plays slower.
-    d.execute(Command::SetTempo { bpm: 90.0 }, Origin::User).unwrap();
+    d.execute(Command::SetTempo { bpm: 90.0, at: None }, Origin::User).unwrap();
     let (start, len, w) = snap_warp(&d, c, &HashMap::new());
     assert_eq!(d.project().clip_length_ticks(d.project().clip(c).unwrap()), 8 * PPQ);
     assert_eq!((start, len), (128_000, 256_000));

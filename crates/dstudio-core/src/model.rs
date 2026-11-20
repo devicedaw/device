@@ -326,7 +326,12 @@ pub struct TimeSignature {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Transport {
+    /// The song tempo; with tempo changes, the tempo at bar 1 (the first point's).
     pub bpm: f64,
+    /// Tempo changes (spec 015), sorted by time; empty = one tempo for the whole song. A project
+    /// with changes is saved as schema 2 (persist), so builds before them refuse it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tempo: Vec<crate::tempo::TempoPoint>,
     pub time_signature: TimeSignature,
     pub loop_enabled: bool,
     pub loop_start: Ticks,
@@ -377,6 +382,7 @@ impl Default for Project {
             name: "Untitled".into(),
             transport: Transport {
                 bpm: 120.0,
+                tempo: Vec::new(),
                 time_signature: TimeSignature { numerator: 4, denominator: 4 },
                 loop_enabled: false,
                 loop_start: 0,
@@ -761,13 +767,34 @@ impl Project {
         PPQ * 4 * ts.numerator as i64 / ts.denominator as i64
     }
 
-    /// Ticks → seconds at the (currently constant) project tempo.
+    /// The tempo map: every conversion between musical and real time goes through it.
+    pub fn tempo_map(&self) -> crate::tempo::TempoMap {
+        crate::tempo::TempoMap::new(self.transport.bpm, &self.transport.tempo)
+    }
+
+    /// The song has tempo changes.
+    pub fn has_tempo_changes(&self) -> bool {
+        !self.transport.tempo.is_empty()
+    }
+
+    /// Tempo in BPM at tick `t`.
+    pub fn bpm_at(&self, t: Ticks) -> f64 {
+        if self.transport.tempo.is_empty() { self.transport.bpm } else { self.tempo_map().bpm_at(t as f64) }
+    }
+
+    /// Ticks → seconds from bar 1, through the tempo map.
     pub fn ticks_to_seconds(&self, t: Ticks) -> f64 {
-        t as f64 / PPQ as f64 * 60.0 / self.transport.bpm
+        if self.transport.tempo.is_empty() {
+            return t as f64 / PPQ as f64 * 60.0 / self.transport.bpm;
+        }
+        self.tempo_map().ticks_to_seconds(t)
     }
 
     pub fn seconds_to_ticks(&self, s: f64) -> Ticks {
-        (s * self.transport.bpm / 60.0 * PPQ as f64).round() as Ticks
+        if self.transport.tempo.is_empty() {
+            return (s * self.transport.bpm / 60.0 * PPQ as f64).round() as Ticks;
+        }
+        self.tempo_map().seconds_to_ticks(s)
     }
 
     /// Ticks → frames at `rate` (rounded to nearest frame).
@@ -788,13 +815,23 @@ impl Project {
         }
     }
 
-    /// What the clip plays without its loop: the source window at the clip's speed.
+    /// What the clip plays without its loop: the source window at the clip's speed. An unwarped
+    /// clip plays in real time, so its length in ticks depends on the tempo under it.
     pub fn content_length_ticks(&self, clip: &Clip) -> Ticks {
+        self.content_length_ticks_in(&self.tempo_map(), clip)
+    }
+
+    /// [Project::content_length_ticks] with a tempo map built once by the caller.
+    pub fn content_length_ticks_in(&self, map: &crate::tempo::TempoMap, clip: &Clip) -> Ticks {
         if clip.warp.enabled {
             return crate::warp::beats_to_ticks(self.warped_clip_beats(clip));
         }
         let rate = self.asset(clip.asset).map(|a| a.sample_rate).unwrap_or(48_000.0);
-        self.seconds_to_ticks(clip.source_length as f64 / rate / clip.warp.varispeed())
+        let seconds = clip.source_length as f64 / rate / clip.warp.varispeed();
+        if map.is_constant() {
+            return map.seconds_to_ticks(seconds);
+        }
+        map.seconds_to_ticks(map.ticks_to_seconds(clip.start) + seconds) - clip.start
     }
 }
 
