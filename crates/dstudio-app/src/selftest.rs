@@ -16347,6 +16347,11 @@ fn api_key_steps() -> Vec<Step> {
                 if let Some(p) = s2.borrow_mut().take() {
                     ctl.borrow_mut().provider = p;
                 }
+            }),
+        ),
+    ]
+}
+
 /// Bounce Track in Place (roadmap G4): an instrument track with a MIDI clip at beat 4 becomes an
 /// audio track holding the render from beat 4, its name and fader kept and its instrument off,
 /// in one undo step; ⌘Z brings the instrument track and its MIDI clip back.
