@@ -223,6 +223,10 @@ pub enum JobResult {
     Assistant { started: Instant, mode: dstudio_core::assistant::Mode, result: Result<String, String> },
     /// A bug report or feedback was posted (feedback.rs).
     Feedback(Result<(), String>),
+    /// The latest release was looked up (updates.rs); `manual`: from Check for Updates….
+    UpdateChecked { manual: bool, result: Result<Option<crate::updates::Release>, String> },
+    /// An update was downloaded, checked and staged (or failed).
+    UpdateDownloaded(Result<PathBuf, String>),
     /// Takes of one finished recording pass, loaded into the engine.
     Recorded {
         doc_epoch: u64,
@@ -458,6 +462,8 @@ pub struct Controller {
     pub(crate) pending_import: Option<crate::live_import::PendingImport>,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
+    /// The update check, download and restart (updates.rs).
+    pub updates: crate::updates::Updates,
     /// "Change project key?": the key change waiting on Transpose MIDI / Don't transpose / Cancel.
     pub key_change: Option<crate::transport_fields::KeyChange>,
     /// Settings › General › Playhead on stop: where the last playback started, whether the
@@ -657,6 +663,7 @@ impl Controller {
             unsaved_open: false,
             pending_import: None,
             updates_open: false,
+            updates: Default::default(),
             key_change: None,
             play_start: None,
             paused: false,
@@ -872,10 +879,7 @@ impl Controller {
                 self.undo_history_open = true;
                 self.ui_dirty = true;
             }
-            "options.check_updates" => {
-                self.updates_open = true;
-                self.ui_dirty = true;
-            }
+            "options.check_updates" => self.updates_check(true),
             "file.export_ableton" => {
                 self.export_open();
                 self.export_pick_recipe(2);
@@ -1476,6 +1480,7 @@ impl Controller {
     /// Drain finished background jobs (called from a UI timer and each frame).
     pub fn poll_jobs(&mut self) {
         self.clip_render_tick();
+        self.updates_tick();
         while let Ok(job) = self.jobs_rx.try_recv() {
             self.pending_jobs = self.pending_jobs.saturating_sub(1);
             match job {
@@ -1491,6 +1496,8 @@ impl Controller {
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
                 JobResult::Feedback(result) => self.finish_feedback(result),
+                JobResult::UpdateChecked { manual, result } => self.finish_update_check(manual, result),
+                JobResult::UpdateDownloaded(result) => self.finish_update_download(result),
                 JobResult::Recorded { doc_epoch, takes, midi, punch, rec_loop } => {
                     self.finish_recorded(doc_epoch, takes, midi, punch, rec_loop)
                 }
@@ -2596,6 +2603,7 @@ impl Controller {
         self.push_settings(&s);
         self.push_dialogs(&s);
         self.push_feedback(&s);
+        self.push_updates(&s);
         self.push_clip_render(&s);
         self.push_devices(&s);
         self.push_files(&s);

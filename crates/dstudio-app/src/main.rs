@@ -70,6 +70,7 @@ mod devminimap;
 mod dialogs;
 mod fades;
 mod feedback;
+mod updates;
 mod files;
 mod fit;
 mod gain_scope;
@@ -190,6 +191,9 @@ struct Args {
     /// 6 Check for Updates, 7 Undo History (after a few edits, the last one undone), 8 export dialog at 44.1 kHz,
     /// 9 with a loop region over bars 3-4 and the Range menu open on it.
     dialog_state: u8,
+    /// review-update-available / -downloading / -ready: the title bar's update pill (1, 2, 3);
+    /// review-update-dialog: Check for Updates… with an update available (4).
+    update_review: u8,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
     /// the live recording clip.
@@ -514,6 +518,15 @@ fn parse_args() -> Result<Args, String> {
                 "review-check-updates" => {
                     a.reference_default = true;
                     a.dialog_state = 6;
+                }
+                s @ ("review-update-available" | "review-update-downloading" | "review-update-ready" | "review-update-dialog") => {
+                    a.reference_default = true;
+                    a.update_review = match s {
+                        "review-update-available" => 1,
+                        "review-update-downloading" => 2,
+                        "review-update-ready" => 3,
+                        _ => 4,
+                    };
                 }
                 "review-export-44k" => {
                     a.reference_default = true;
@@ -3077,6 +3090,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     on!(on_open_recent, |c, i: i32| c.open_recent(i as usize));
     on!(on_updates_close, |c| c.dialogs_close());
+    on!(on_updates_confirm, |c| c.updates_primary());
+    on!(on_update_pill_clicked, |c| c.update_pill_clicked());
     on!(on_key_change_choose, |c, i: i32| c.key_change_choice(match i {
         2 => transport_fields::KeyChoice::Transpose,
         1 => transport_fields::KeyChoice::Keep,
@@ -3937,6 +3952,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     app_menu_timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), appmenu::adopt_items);
     slint::Timer::single_shot(Duration::ZERO, appmenu::set_dock_icon);
     let dialog_timer = slint::Timer::default();
+    // Updates (updates.rs): a real run checks once, quietly; self-tests and review states never
+    // touch the network.
+    if use_prefs {
+        ctl.borrow_mut().updates_check(false);
+    } else {
+        let mut c = ctl.borrow_mut();
+        c.updates.check_override = Some(Ok(None));
+        if args.update_review > 0 {
+            let r = updates::sample_release();
+            c.updates.check_override = Some(Ok(Some(r.clone())));
+            c.updates.state = match args.update_review {
+                2 => {
+                    let p = &c.updates.progress;
+                    p.total.store(100, std::sync::atomic::Ordering::Relaxed);
+                    p.received.store(42, std::sync::atomic::Ordering::Relaxed);
+                    updates::State::Downloading(r)
+                }
+                3 => updates::State::Ready(r, std::env::temp_dir()),
+                _ => updates::State::Available(r),
+            };
+            if args.update_review == 4 {
+                c.updates_check(true);
+            }
+        }
+    }
     if args.dialog_state > 0 {
         let dir = std::env::temp_dir().join(format!("dstudio-ref-{}", std::process::id()));
         std::fs::create_dir_all(&dir)?;

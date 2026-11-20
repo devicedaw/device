@@ -1276,6 +1276,7 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
+ "sha2",
  "slint",
  "slint-build",
  "ureq",

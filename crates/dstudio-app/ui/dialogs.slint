@@ -196,8 +196,8 @@ export component UnsavedPrompt inherits Rectangle {
 }
 
 // Options › Check for Updates…. A modal (400 pt wide, 24 pt corners, 20 pt padding, 16 pt
-// title, 12 pt body, 32 pt pill buttons); DStudio has no update server yet, so the
-// dialog reports the running version with an OK button.
+// title, 12 pt body, 32 pt pill buttons). The text and buttons come from src/updates.rs:
+// checking, up to date, an update available (Later / Update), downloading, ready (Later / Restart).
 export component UpdatesModal inherits Rectangle {
     width: 340px; height: 132.6px;
     border-radius: 20.4px; background: DialogTokens.surface;
@@ -214,11 +214,21 @@ export component UpdatesModal inherits Rectangle {
         close-ta := TouchArea { clicked => { Studio.updates-close(); } }
     }
     Text {
-        x: 17px; y: 40.8px; width: root.width - 34px; height: 30.6px; wrap: word-wrap;
-        text: "You're running Device v\{Studio.app-version}. There's no update server yet, so new versions arrive as new builds.";
+        x: 17px; y: 40.8px; width: root.width - 34px; height: 44px; wrap: word-wrap;
+        text: Studio.updates-text;
         color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: top;
+        accessible-role: text; accessible-label: self.text;
     }
-    PillButton { x: root.width - 17px - 40.8px; y: root.height - 17px - 27.2px; width: 40.8px; height: 27.2px; text: "OK"; primary: true; clicked => { Studio.updates-close(); } }
+    if Studio.updates-primary == "": PillButton { x: root.width - 17px - 40.8px; y: root.height - 17px - 27.2px; width: 40.8px; height: 27.2px; text: "OK"; primary: true; clicked => { Studio.updates-close(); } }
+    primary := PillButton {
+        visible: Studio.updates-primary != "";
+        x: root.width - 17px - self.width; y: root.height - 17px - 27.2px; width: max(60.9px, self.preferred-width); height: 27.2px;
+        text: Studio.updates-primary; primary: true; clicked => { Studio.updates-confirm(); }
+    }
+    if Studio.updates-later && Studio.updates-primary != "": PillButton {
+        x: primary.x - 6.8px - self.width; y: root.height - 17px - 27.2px; width: 60.9px; height: 27.2px;
+        text: "Later"; clicked => { Studio.updates-close(); }
+    }
 }
 
 // "Change project key?" when a project with a key and MIDI clips gets a new key. The same

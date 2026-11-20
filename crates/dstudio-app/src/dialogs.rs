@@ -414,6 +414,7 @@ impl Controller {
             self.release_live_set(*job);
         }
         self.updates_open = false;
+        self.updates.restart_pending = false;
         self.undo_history_open = false;
         self.key_change = None;
         self.feedback.open = false;
@@ -1014,6 +1015,11 @@ impl Controller {
     /// The unsaved-changes prompt was answered with Save or Don't Save: go on with what asked.
     pub fn unsaved_continue(&mut self) {
         use crate::live_import::PendingImport;
+        if self.updates.restart_pending {
+            self.dialogs_close();
+            self.update_restart_now();
+            return;
+        }
         match self.pending_import.take() {
             Some(PendingImport::File(file)) => {
                 self.dialogs_close();

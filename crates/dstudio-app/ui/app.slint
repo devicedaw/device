@@ -38,6 +38,27 @@ import { KeyPicker } from "transport.slint";
 export { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, SectionLabel, ClipLabel, TreeRow, FileRow, FileGuide, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, MidiInputRow, DeviceCard, PluginRow, ShortcutKey, ShortcutRow }
 
 // ------------------------------------------------------------------ header
+// Title bar pill for updates (src/updates.rs): "Update available" (accent), a progress fill with
+// the percentage while downloading, then "Restart to update".
+component UpdatePill inherits Rectangle {
+    in property <int> mode;
+    in property <float> progress;
+    in property <string> version;
+    callback clicked;
+    property <string> label: mode == 1 ? "Update available" : mode == 2 ? "Downloading \{Math.floor(clamp(progress, 0, 1) * 100)}%" : "Restart to update";
+    width: t.preferred-width + 22px;
+    border-radius: self.height / 2;
+    clip: true;
+    background: mode == 2 ? Tokens.bg-control : (ta.has-hover ? Tokens.raised-rim-accent : Tokens.accent);
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-description: mode == 1 ? "Device \{root.version} is available. Click to download it." : mode == 3 ? "Device \{root.version} is downloaded. Click to restart and install it." : "";
+    accessible-action-default => { root.clicked(); }
+    if mode == 2: Rectangle { x: 0; width: parent.width * clamp(root.progress, 0, 1); height: parent.height; background: Tokens.accent; }
+    t := Text { x: 11px; height: parent.height; text: root.label; color: Tokens.on-accent; font-size: 10.2px; font-weight: 600; letter-spacing: -0.41px; vertical-alignment: center; }
+    ta := TouchArea { mouse-cursor: mode == 2 ? MouseCursor.default : MouseCursor.pointer; clicked => { root.clicked(); } }
+}
+
 component Header inherits Rectangle {
     property <bool> bpm-editing;
     // Left edge of the 1440-unit transport block (it stays centred in the window).
@@ -51,6 +72,11 @@ component Header inherits Rectangle {
         text: Studio.project-name; color: Tokens.text-title; font-size: 10px; font-weight: 600;
         horizontal-alignment: center; vertical-alignment: center;
         accessible-role: text;
+    }
+    if Studio.update-pill > 0: UpdatePill {
+        x: root.width - 220px - 7px - self.width; y: 9.45px; height: 22.1px;
+        mode: Studio.update-pill; progress: Studio.update-progress; version: Studio.update-version;
+        clicked => { Studio.update-pill-clicked(); }
     }
     Pill { x: root.width - 220px; y: 9.45px; width: 82px; height: 22.1px; text: "Report a bug"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.report-bug(); } }
     Pill { x: root.width - 131px; y: 9.45px; width: 118px; height: 22.1px; text: "Share your feedback"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.feedback(); } }

@@ -1034,6 +1034,15 @@ export global Studio {
     callback general-stop-mode(bool);                       // true = Stop in place
     in property <bool> updates-open;                        // Options › Check for Updates…
     in property <string> app-version;
+    in property <string> updates-text;                      // the dialog's message (src/updates.rs)
+    in property <string> updates-primary;                   // its main button ("" = OK only)
+    in property <bool> updates-later;                       // a Later button beside it
+    callback updates-confirm();
+    // Title bar update pill: 0 hidden, 1 "Update available", 2 downloading, 3 "Restart to update".
+    in property <int> update-pill;
+    in property <string> update-version;
+    in property <float> update-progress;                    // 0..1 while downloading
+    callback update-pill-clicked();
     in property <bool> undo-history-open;                   // Edit › Undo History…
     in property <[UndoHistoryRow]> undo-history-rows;
     in property <int> undo-history-current;                 // row index of the current state

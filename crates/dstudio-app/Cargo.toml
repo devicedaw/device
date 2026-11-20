@@ -31,6 +31,8 @@ png = "=0.18.1"
 pollster = "=0.4.0"
 rfd = "0.15"
 ureq = { version = "3", features = ["json"] }
+# Checks downloaded updates against the release's SHA256SUMS.txt (updates.rs). Already in the tree.
+sha2 = "0.10"
 flate2 = "1.1"
 # Already in the tree; local date and time for Edit › Undo History.
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
