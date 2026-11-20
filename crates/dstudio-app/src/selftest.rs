@@ -408,6 +408,18 @@ fn midi_steps() -> Vec<Step> {
                 .ok_or(format!("start {} len {} tab {} pr {}", m.start, m.length, s.get_bottom_tab(), s.get_pr_visible()))
             }),
         ),
+        Check(
+            "the empty clip's sidebar offers Shape (selectable) and opens on Patterns",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let empty = instrument_clip(c).is_some_and(|m| m.notes.is_empty());
+                (empty && s.get_composer_shape_ok() && !s.get_composer_shape_tab()).then_some(()).ok_or(format!(
+                    "empty {empty} shape ok {} tab {}",
+                    s.get_composer_shape_ok(),
+                    s.get_composer_shape_tab()
+                ))
+            }),
+        ),
         DoC(
             "click the MIDI clip in the lane",
             Box::new(move |a, ctl| {
@@ -16742,6 +16754,51 @@ fn assistant_full_steps() -> Vec<Step> {
     ]
 }
 
+/// I on an audio track's header (roadmap G30): every recordable track has input monitoring.
+fn header_monitor_steps() -> Vec<Step> {
+    use Step::*;
+    vec![
+        DoC(
+            "monitor: lanes at the top, track 1 an audio track",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.view.scroll_y = 0.0;
+                if c.mixer_open {
+                    c.toggle_mixer();
+                }
+                c.ui_dirty = true;
+            }),
+        ),
+        DoC(
+            "monitor: click I on track 1's header (an audio track)",
+            Box::new(|a, ctl| {
+                let (x, y) = header_r(ctl, 0);
+                click(a, x + 13.6, y);
+            }),
+        ),
+        Check(
+            "monitor: the audio track's header has I: input monitoring on, one undo step",
+            Box::new(|c, _| {
+                let t = &c.project().tracks[0];
+                (t.kind == dstudio_core::TrackKind::Audio && t.monitor && c.doc.undo_label() == Some("Input Monitoring Change"))
+                    .then_some(())
+                    .ok_or(format!("{:?} monitor {} undo {:?}", t.kind, t.monitor, c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "monitor: click I again",
+            Box::new(|a, ctl| {
+                let (x, y) = header_r(ctl, 0);
+                click(a, x + 13.6, y);
+            }),
+        ),
+        Check(
+            "monitor: input monitoring off again",
+            Box::new(|c, _| (!c.project().tracks[0].monitor).then_some(()).ok_or("still monitoring".into())),
+        ),
+    ]
+}
+
 /// Clip menu Bounce through a third-party plugin (src/clip_render.rs, CHR-38): the CLAP test gain
 /// on a track is edited after the project's state was saved, the clip is bounced, and the file has
 /// the live instance's gain (the plugin was prepared on this thread from its current state and
@@ -18134,6 +18191,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());
+    all.extend(header_monitor_steps());
     all.extend(api_key_steps());
     all.extend(ask_clip_steps());
     all.extend(assistant_full_steps());

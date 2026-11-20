@@ -85,9 +85,12 @@ impl TrackSend {
 pub struct ColorIndex(pub u8);
 
 impl ColorIndex {
-    /// Colour of a new project's first track: pink (palette index 4). Later
-    /// tracks follow the cycle from there (orange, then teal, ...).
-    pub const FIRST: ColorIndex = ColorIndex(4);
+    /// Colour of a new project's first track: teal (palette index 6). The default project's
+    /// second track is orange (5); later tracks take the next unused colour after the last
+    /// track's (coral, amber, ...).
+    pub const FIRST: ColorIndex = ColorIndex(6);
+    /// The default project's second (instrument) track: orange.
+    pub const SECOND: ColorIndex = ColorIndex(5);
 }
 
 /// Which device input feeds a track (the "In" selector: "None",
@@ -401,7 +404,7 @@ impl Default for Project {
         let a = p.alloc_id();
         p.tracks.push(Track::new(TrackId(a), TrackKind::Audio, "Audio", ColorIndex::FIRST));
         let b = p.alloc_id();
-        p.tracks.push(Track::new(TrackId(b), TrackKind::Instrument, "Instrument", ColorIndex(ColorIndex::FIRST.0 + 1)));
+        p.tracks.push(Track::new(TrackId(b), TrackKind::Instrument, "Instrument", ColorIndex::SECOND));
         crate::builtin::synth_v2::upgrade_project(&mut p);
         p
     }

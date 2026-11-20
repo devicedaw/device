@@ -149,18 +149,18 @@ target behaviour.
 Found by putting Device's review states (`--state reference-default`, `reference-mixer`, `reference-pianoroll`)
 next to the target on the same window size.
 
-- [ ] **G30. I (input monitoring) on audio track headers.** Audio track headers show M S R; only instrument
+- [x] **G30. I (input monitoring) on audio track headers.** (#PR) Audio track headers show M S R; only instrument
   headers have I (`ui/track_header.slint`, `if root.t.instrument`). Every recordable track shows M S R I in the
   header, as the channel strip already does.
-- [ ] **G31. A second "Add track" row below the last track.** The track list has "+ Add track" only at the
+- [x] **G31. A second "Add track" row below the last track.** (already in Device: the row below the last track opens the same menu and adds at the end) The track list has "+ Add track" only at the
   top. There is a second one in the empty space below the last track (above Master), opening the same menu
   (G7), and adding the track at the end.
-- [ ] **G32. Default track colours.** A new project's first track is pink and the second orange. The first
+- [x] **G32. Default track colours.** (#PR) A new project's first track is pink and the second orange. The first
   track (audio) should be teal and the second (instrument) orange, and new tracks continue through the palette
   from there (ties in with G5).
-- [ ] **G33. Piano roll loop bar in the clip's colour.** The loop bar above the piano roll is a pale pink on an
+- [x] **G33. Piano roll loop bar in the clip's colour.** (#PR) The loop bar above the piano roll is a pale pink on an
   orange instrument clip. It must be the track colour at full strength, like the clip header in the timeline.
-- [ ] **G34. Shape tab available on an empty MIDI clip.** In the clip sidebar the Shape tab is greyed until the
+- [x] **G34. Shape tab available on an empty MIDI clip.** (#PR) In the clip sidebar the Shape tab is greyed until the
   clip has notes; it should always be selectable for a MIDI clip (the rack just has nothing to shape yet).
 - [ ] **G35. Instruments in the Devices browser open into their presets.** Devices › Instruments lists the
   built-in instruments as plain rows under "Built-in". Each instrument with factory presets is a folder

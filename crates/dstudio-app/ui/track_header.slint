@@ -448,7 +448,8 @@ export component TrackHeaderRow inherits Rectangle {
             x: 55.25px; y: root.bottom-y + 1.7px; text: "R"; label: root.t.arm ? "Disarm track for recording" : "Arm track for recording";
             on: root.t.arm; on-color: Tokens.track-arm-on; pressed => { Studio.track-arm(root.t.id); }
         }
-        if root.t.instrument && !root.minimal: TrackButton {
+        // Every recordable track has input monitoring, audio and instrument alike.
+        if !root.minimal && !root.t.is-return && !root.t.is-group: TrackButton {
             x: 68.85px; y: root.bottom-y + 1.7px; text: "I"; label: root.t.monitor ? "Disable input monitoring" : "Enable input monitoring";
             on: root.t.monitor; on-color: Tokens.track-monitor-on; on-text: #1a1a1a; pressed => { Studio.track-monitor(root.t.id); }
         }

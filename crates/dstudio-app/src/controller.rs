@@ -164,7 +164,7 @@ pub fn track_color(c: ColorIndex) -> [f32; 3] {
 }
 
 /// Colour for a new track: the first palette entry after the last track's colour that no track
-/// uses yet, else the least-used one. The first track is pink.
+/// uses yet, else the least-used one. The first track is teal.
 pub fn next_track_color(p: &Project) -> ColorIndex {
     let n = TRACK_PALETTE.len();
     let Some(last) = p.tracks.last() else { return ColorIndex::FIRST };
