@@ -5,7 +5,8 @@ time (`FetchContent`, see `engine/CMakeLists.txt`) into the build tree
 (`engine/build*/_deps/`, or `target/dstudio-third-party/` for cargo builds),
 both of which are git-ignored. Offline builds can point CMake at local
 checkouts with `-DFETCHCONTENT_SOURCE_DIR_DSTUDIO_CLAP=<dir>` and
-`-DFETCHCONTENT_SOURCE_DIR_DSTUDIO_VST3SDK=<dir>`.
+`-DFETCHCONTENT_SOURCE_DIR_DSTUDIO_VST3SDK=<dir>` (on Windows also
+`-DFETCHCONTENT_SOURCE_DIR_DSTUDIO_ASIOSDK=<unpacked ASIOSDK dir>`).
 
 | Component | Source | Pinned tag (commit) | License | What we use |
 |---|---|---|---|---|
@@ -15,13 +16,21 @@ checkouts with `-DFETCHCONTENT_SOURCE_DIR_DSTUDIO_CLAP=<dir>` and
 | signalsmith-linear | https://github.com/Signalsmith-Audio/linear | `0.6.6` (`7bb1c8f36794d6980080ce817c91f8da8fe56a66`, 2026-10-21) | MIT | Header-only FFT / STFT used by signalsmith-stretch (vDSP backend on macOS via Accelerate) |
 | dr_libs (dr_mp3, dr_flac, dr_wav) | https://github.com/mackron/dr_libs | commit `f12e197fd462e4c22873fbd70d11b1d2f2c1dc3c` (2026-11-11): dr_mp3 0.7.5, dr_flac 0.13.5, dr_wav 0.14.7 | Public domain (Unlicense) or MIT No Attribution; we use it under MIT-0. dr_mp3 embeds minimp3 (CC0) | Single-file decoders for MP3, FLAC and AIFF / AIFC import (`src/decode.cpp`, implementations in `src/decoders_impl.c`); dr_wav is used for AIFF only, WAV keeps our own reader |
 | stb_vorbis (stb) | https://github.com/nothings/stb | commit `9600522de53973336fa033a289858a4354cbb04c` (2026-11-12), stb_vorbis 1.24 | MIT or public domain (Unlicense); we use it under MIT | Ogg Vorbis import (`src/decode.cpp`) |
+| ASIO SDK (Windows only) | https://www.steinberg.net/developers/ (`ASIO-SDK_2.3.4_2025-10-15.zip`) | 2.3.4, zip SHA-256 `d5ebf0c20dd2c5f43771fd0c1418f4b361bf52434ee670097cfa6b3a335e2eca` | Dual: Steinberg ASIO License or GPLv3; **we use it under GPLv3** | Headers only (`common/asio.h`, `asiosys.h`, `iasiodrv.h`): the `IASIO` driver interface for `src/platform/asio_device.cpp`. Off with `-DDSTUDIO_ENGINE_ASIO=OFF` |
 | Audio Units, CoreAudioKit, AppKit | Apple system frameworks | macOS SDK | Apple SDK terms | AU hosting (`AudioToolbox`), `AUGenericView` / `AUCocoaUIBase` editors, NSWindow |
 
 Notes:
 
 * Only the `pluginterfaces` and `public.sdk` submodules of the VST 3 SDK are
-  checked out (no `base`, `vstgui4`, `tutorials`, `doc`). The ASIO SDK is a
-  separate product (GPLv3 / proprietary) and is **not** used.
+  checked out (no `base`, `vstgui4`, `tutorials`, `doc`).
+* The ASIO SDK is fetched as Steinberg's versioned zip and checked against
+  its SHA-256 (it has no public repository to pin by commit). Steinberg offers
+  it under its proprietary licence or GPLv3 (since 2025-10-15); Device uses the
+  GPLv3 option, which can be combined with the AGPL-3.0-or-later (section 13
+  of both licences), so Windows builds with ASIO are distributed under the
+  AGPL with GPLv3 parts. None of the SDK is redistributed in this repository.
+  "ASIO" is a trademark of Steinberg Media Technologies GmbH; Device names
+  ASIO drivers in its device list and ships no ASIO logo.
 * "VST" is a trademark of Steinberg Media Technologies GmbH. The MIT license
   covers the SDK code; use of the VST logo/trademark is governed separately by
   Steinberg's usage guidelines (`VST3_Usage_Guidelines.pdf` in the SDK). We
@@ -188,6 +197,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## ASIO SDK: GPLv3 (Windows)
+
+Steinberg ASIO SDK 2.3.4, (c) 2025 Steinberg Media Technologies GmbH. Its
+`LICENSE.txt` offers the SDK under the Steinberg ASIO License "or
+alternatively under the terms of the General Public License (GPL) Version 3";
+Device uses it under GPLv3 (<https://www.gnu.org/licenses/gpl-3.0.html>). The
+SDK zip, with that `LICENSE.txt`, is unpacked into the build tree by CMake.
 
 ## App: LAME (MP3 export)
 

@@ -65,8 +65,11 @@ cd engine
 cmake --preset default && cmake --build --preset default && ctest --preset default
 ```
 
-ASIO is not supported (the ASIO SDK's licence keeps it out for now); audio goes
-through WASAPI shared mode at the rate set in the Sound control panel.
+Audio goes through WASAPI shared mode at the rate set in the Sound control
+panel, or through an installed ASIO driver picked in Settings › Audio. The
+engine's configure step downloads the Steinberg ASIO SDK zip (checked against
+its SHA-256); pass `-DDSTUDIO_ENGINE_ASIO=OFF` to build without ASIO, or
+`-DFETCHCONTENT_SOURCE_DIR_DSTUDIO_ASIOSDK=<unpacked ASIOSDK>` offline.
 
 ### Linux
 

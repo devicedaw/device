@@ -214,7 +214,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Delay compensation | ✅ | |
 | Export | ✅ | |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
-| Windows and Linux audio | 🚧 | Windows: playback, recording, buffer sizes down to 128 samples and switching outputs checked on one PC's built-in sound card (WASAPI shared mode); no ASIO or exclusive mode. Linux plays through PipeWire or straight through ALSA in CI on a headless PipeWire server, but has not run on a physical sound card |
+| Windows and Linux audio | 🚧 | Windows: playback, recording, buffer sizes down to 128 samples and switching outputs checked on one PC's built-in sound card (WASAPI shared mode); ASIO drivers play and record, checked with FlexASIO only (no hardware ASIO driver yet); no exclusive mode. Linux plays through PipeWire or straight through ALSA in CI on a headless PipeWire server, but has not run on a physical sound card |
 | Releases and branding | 🚧 | 0.2.0 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is not notarised yet and Windows packages are not signed |
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
@@ -224,7 +224,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | System | You need | Audio | Plugins |
 |---|---|---|---|
 | macOS | Apple silicon | Core Audio | AU, VST3, CLAP |
-| Windows | Windows x64 | WASAPI (shared mode) | VST3, CLAP |
+| Windows | Windows x64 | WASAPI (shared mode), ASIO | VST3, CLAP |
 | Linux | x64, X11 or Wayland | PipeWire or ALSA (no sound server needed) | VST3, CLAP |
 
 Every change is built and tested on all three systems in CI, on hosted runners without audio hardware. The Linux
