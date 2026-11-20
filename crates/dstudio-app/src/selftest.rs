@@ -13884,7 +13884,8 @@ fn settings_help_steps() -> Vec<Step> {
                 (tip(a) == crate::settings_search::help("Buffer size")
                     && x > set_x() + 187.0 + 40.0
                     && x < set_x() + set_w()
-                    && (y - (set_y() + 292.5 + 11.25)).abs() < 2.0)
+                    // Window coordinates: below Linux's in-window menu bar.
+                    && (y - menu_bar_h() - (set_y() + 292.5 + 11.25)).abs() < 2.0)
                     .then_some(())
                     .ok_or(format!("tip {:?} at {x}, {y}", tip(a)))
             }),
