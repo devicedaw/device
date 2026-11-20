@@ -1243,6 +1243,8 @@ impl Controller {
     // ---------------------------------------------------------------- track edits
 
     pub fn select_track(&mut self, id: TrackId) {
+        // A track (header, strip, a new track) takes the selection from the chain's effects.
+        self.devices.fx_sel.clear();
         if self.selected_track != Some(id) {
             self.selected_section = None;
             self.selected_track = Some(id);
@@ -2358,6 +2360,7 @@ impl Controller {
         self.extra_clips.clear();
         if id.is_some() {
             self.selected_section = None;
+            self.devices.fx_sel.clear();
         }
         if id.is_some_and(|c| self.project().find_midi_clip(c).is_some()) {
             self.bottom_tab = BottomTab::Clip;

@@ -1575,7 +1575,10 @@ export component CardHeader inherits Rectangle {
     TouchArea {
         mouse-cursor: MouseCursor.grab;
         pointer-event(e) => {
-            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.device-drag(root.card.id, 0, self.absolute-position.x + self.mouse-x); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                Studio.device-select(root.card.id, e.modifiers.shift || e.modifiers.control || e.modifiers.meta);
+                Studio.device-drag(root.card.id, 0, self.absolute-position.x + self.mouse-x);
+            }
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.device-drag(root.card.id, 2, self.absolute-position.x + self.mouse-x); }
         }
         moved => { Studio.device-drag(root.card.id, 1, self.absolute-position.x + self.mouse-x); }

@@ -64,7 +64,8 @@ wgpu.
   clip to cut it at the pointer).
   Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
   Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected
-  clip or marker, ⌘D duplicates the selected clip or marker. Settings › Shortcuts lists them all by section; click
+  clip or marker, ⌘D duplicates the selected clip or marker. Click an effect's header to select it (⇧ or ⌘ for more);
+  ⌘D duplicates the selected effects, ⌘G puts them in a new chain and ⌘⇧G unpacks a selected chain. Settings › Shortcuts lists them all by section; click
   one's keys to record new ones, search by name or key, and reset to the defaults at any time. Its Preset menu swaps in
   the keys of Ableton Live, Logic Pro, GarageBand, FL Studio, Fender Studio Pro, Bitwig, Pro Tools or BandLab. ↑/↓ select the track above
   or below, ⇧↑/⇧↓ (⌘⇧ for an octave) transpose the selected MIDI clips, U folds a group, A shows automation, I

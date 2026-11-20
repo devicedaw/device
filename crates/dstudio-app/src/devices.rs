@@ -446,6 +446,8 @@ pub struct DevicesUi {
     pub menu: Option<DevMenu>,
     pub dnd: Option<Dnd>,
     pub card_drag: Option<CardDrag>,
+    /// Selected effects (src/effect_select.rs); only the selected track's count.
+    pub fx_sel: Vec<DeviceId>,
     pub chain_scroll: f32,
     /// Last `plugin_load_errors()`, editors we opened that are still open, latencies.
     pub load_errors: Vec<(DeviceId, String)>,
@@ -493,6 +495,7 @@ impl Default for DevicesUi {
             menu: None,
             dnd: None,
             card_drag: None,
+            fx_sel: Vec::new(),
             chain_scroll: 0.0,
             load_errors: Vec::new(),
             editors: HashSet::new(),

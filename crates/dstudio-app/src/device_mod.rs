@@ -147,6 +147,7 @@ impl Controller {
         let Some(t) = self.track_of(d.id) else { return };
         let at = t.devices.iter().position(|x| x.id == d.id);
         card.folded = d.folded;
+        card.selected = self.devices.fx_sel.contains(&d.id) && at.is_some();
         card.member = at.and_then(|i| modu::head_of(&t.devices, i)).is_some();
         // Instrument cards swap through the instrument selector.
         card.swappable = at.is_none() || modu::outputs(d) == 0;

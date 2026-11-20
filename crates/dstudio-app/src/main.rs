@@ -70,6 +70,7 @@ mod device_window_widener;
 mod devices;
 mod devminimap;
 mod dialogs;
+mod effect_select;
 mod fades;
 mod feedback;
 mod files;
@@ -250,6 +251,8 @@ struct Args {
     device_chain_review: bool,
     /// review-chain-gaps (1: instrument track, 2: audio track): meters and "+" between cards.
     chain_gaps_review: u8,
+    /// review-effect-selection: three effects on the audio track, the first two selected.
+    effect_selection_review: bool,
     /// review-devices-minimap: Instrument track with the Synth and a long chain of built-in effects (the Devices minimap shows).
     devices_minimap_review: bool,
     /// review-tool-menu (1): the timeline's edit tool menu open; review-marquee-range (2): two
@@ -703,6 +706,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.chain_gaps_review = if st.ends_with("audio") { 2 } else { 1 };
                 }
+                "review-effect-selection" => {
+                    a.reference_default = true;
+                    a.effect_selection_review = true;
+                }
                 "review-device-chain" => {
                     a.reference_default = true;
                     a.device_chain_review = true;
@@ -897,7 +904,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-add-track-menu, review-lane-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-effect-selection, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-add-track-menu, review-lane-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
                     ));
                 }
             },
@@ -1394,6 +1401,9 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "track.select_next" => ctl.borrow_mut().select_track_step(1),
         "track.fold" => ctl.borrow_mut().fold_selected_group(),
         "track.ungroup" => ctl.borrow_mut().ungroup_selected(),
+        "fx.duplicate" => ctl.borrow_mut().duplicate_selected_effects(),
+        "fx.group" => ctl.borrow_mut().group_selected_effects(),
+        "fx.unpack" => ctl.borrow_mut().unpack_selected_chain(),
         "track.duplicate" | "track.duplicate_with_clips" => {
             let mut c = ctl.borrow_mut();
             if let Some(t) = c.selected_track {
@@ -1450,6 +1460,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.transport_menus_dismiss();
             c.tool_menu_dismiss();
             c.range_clear();
+            c.effect_select_clear();
             c.rename = None;
             c.rename_section = None;
             c.pr.menu = -1;
@@ -2561,6 +2572,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.add_item_to_track(&devices::Item::Plugin(plugin), t, None);
         }
         c.set_bottom_tab(BottomTab::Devices);
+        c.seek_beats(20.0);
+    }
+    if args.effect_selection_review {
+        let mut c = ctl.borrow_mut();
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Audio).map(|t| t.id) {
+            c.select_track(t);
+            for id in ["channeleq", "delay", "reverb"] {
+                if let Some(d) = dstudio_core::builtin::find(id) {
+                    c.add_item_to_track(&devices::Item::Builtin(d), t, None);
+                }
+            }
+            let ids: Vec<_> = c.project().track(t).map(|t| t.devices.iter().map(|d| d.id).collect()).unwrap_or_default();
+            if ids.len() >= 3 {
+                c.effect_select(ids[ids.len() - 3], false);
+                c.effect_select(ids[ids.len() - 2], true);
+            }
+        }
+        c.set_bottom_tab(BottomTab::Devices);
+        c.chain_scroll_by(10_000.0);
         c.seek_beats(20.0);
     }
     if args.transport_review > 0 {
@@ -3734,6 +3764,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_device_edit, |c, id: i32| c.device_edit(dstudio_core::DeviceId(id as u64)));
     on!(on_device_remove, |c, id: i32| c.device_remove(dstudio_core::DeviceId(id as u64)));
     on!(on_device_use_synth, |c| c.device_use_synth());
+    on!(on_device_select, |c, id: i32, extend: bool| c.effect_select(dstudio_core::DeviceId(id as u64), extend));
     on!(on_device_drag, |c, id: i32, phase: i32, x: f32| c.device_drag(dstudio_core::DeviceId(id as u64), phase, x));
     on!(on_panel_drag, |c, id: i32, p: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag(
         dstudio_core::DeviceId(id as u64),
@@ -4054,6 +4085,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     midi_editor_focused: c.pr_visible() && c.pr.focused,
                     section_selected: c.selected_section.is_some(),
                     range_selected: c.tools.range.is_some(),
+                    fx_slot_selected: c.fx_slot_selected(),
                     clip_or_devices_focused: c.bottom_panel_shown(),
                     ..Default::default()
                 }
