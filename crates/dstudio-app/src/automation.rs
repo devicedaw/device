@@ -2160,7 +2160,8 @@ mod tests {
         let last = cats[comp].1.last().unwrap();
         assert_eq!(last.label, "On");
         assert!(matches!(&last.target, Some(AutomationTarget::DeviceOn { device, .. }) if *device == d));
-        let master: Vec<_> = c.pick_categories(None).into_iter().map(|(cat, e)| (cat, e.into_iter().map(|e| e.label).collect::<Vec<_>>())).collect();
+        let master: Vec<_> =
+            c.pick_categories(None).into_iter().map(|(cat, e)| (cat, e.into_iter().map(|e| e.label).collect::<Vec<_>>())).collect();
         assert_eq!(
             master,
             [("Song".to_string(), vec!["Tempo".to_string()]), ("Master".to_string(), vec!["Volume".to_string()])],
