@@ -1126,6 +1126,9 @@ export global Studio {
     in-out property <string> settings-tip;
     in-out property <length> settings-tip-x;
     in-out property <length> settings-tip-y;
+    // Settings › Privacy (spec 018): Send crash reports is on.
+    in property <bool> privacy-crash-reports: true;
+    callback privacy-toggle-crash-reports();
     callback settings-dropdown(int);
     callback settings-menu-pick(int);
     callback settings-menu-dismiss();

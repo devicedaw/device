@@ -225,6 +225,8 @@ pub enum JobResult {
     Feedback(Result<(), String>),
     /// The latest release was looked up (updates.rs).
     UpdateChecked(Result<Option<crate::updates::Release>, String>),
+    /// A crash report from an earlier run was posted (crash.rs).
+    CrashReport(Result<(), String>),
     /// Takes of one finished recording pass, loaded into the engine.
     Recorded {
         doc_epoch: u64,
@@ -1519,6 +1521,7 @@ impl Controller {
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
                 JobResult::Feedback(result) => self.finish_feedback(result),
                 JobResult::UpdateChecked(result) => self.finish_update_check(result),
+                JobResult::CrashReport(result) => self.finish_crash_report(result),
                 JobResult::Recorded { doc_epoch, takes, midi, punch, rec_loop } => {
                     self.finish_recorded(doc_epoch, takes, midi, punch, rec_loop)
                 }

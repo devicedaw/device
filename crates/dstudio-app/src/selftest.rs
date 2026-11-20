@@ -5162,7 +5162,7 @@ fn recording_steps() -> Vec<Step> {
         // ---------------- settings ----------------
         Do("settings: Cmd+, (app.settings)", Box::new(|a| key(a, ",", true, false))),
         Check(
-            "settings: open on Audio with output/input/mute/sample-rate/buffer controls; 9 sidebar pages",
+            "settings: open on Audio with output/input/mute/sample-rate/buffer controls; 7 sidebar pages",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
                 let pages: Vec<String> = (0..slint::Model::row_count(&s.get_settings_pages()))
@@ -11456,14 +11456,14 @@ fn general_settings_steps() -> Vec<Step> {
         Do(
             "general: click Auto-show built-in effect windows",
             Box::new(move |a| {
-                let (x, y) = switch_xy(411.0);
+                let (x, y) = switch_xy(356.5);
                 click(a, x, y);
             }),
         ),
         Do(
-            "general: click the disabled Sample licensing switch",
+            "general: click the disabled assistant listening switch",
             Box::new(move |a| {
-                let (x, y) = switch_xy(282.5);
+                let (x, y) = switch_xy(431.8);
                 click(a, x, y);
             }),
         ),
@@ -11483,11 +11483,12 @@ fn general_settings_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "general: Stop in place and built-in windows on; licensing unchanged",
+            "general: Stop in place and built-in windows on; nothing else changed",
             Box::new(|c, a| {
                 let g = &c.settings.prefs.general;
                 let s = a.global::<Studio>();
-                (g.stop_in_place && g.show_builtin_windows && s.get_general_stop_in_place() && s.get_general_on().row_data(2) == Some(true))
+                let want = crate::prefs::GeneralPrefs { stop_in_place: true, show_builtin_windows: true, ..Default::default() };
+                (*g == want && s.get_general_stop_in_place() && s.get_general_on().row_data(2) == Some(true))
                     .then_some(())
                     .ok_or(format!("{g:?}"))
             }),
@@ -13920,7 +13921,7 @@ fn settings_search_steps() -> Vec<Step> {
             "settings search: the field has the cursor and every page is listed",
             Box::new(|_, a| {
                 let s = a.global::<Studio>();
-                (s.get_search_focused() && slots(a) == (0..9).collect::<Vec<i32>>() && !s.get_settings_search_none())
+                (s.get_search_focused() && slots(a) == (0..7).collect::<Vec<i32>>() && !s.get_settings_search_none())
                     .then_some(())
                     .ok_or(format!("focused {} slots {:?}", s.get_search_focused(), slots(a)))
             }),
@@ -13940,7 +13941,7 @@ fn settings_search_steps() -> Vec<Step> {
                 let hit = s.invoke_settings_row_hit(s.get_settings_search(), "Default instrument".into());
                 let other = s.invoke_settings_row_hit(s.get_settings_search(), "MIDI inputs".into());
                 (c.settings.search == "instr"
-                    && slots(a) == [-1, -1, 0, -1, -1, -1, -1, -1, -1]
+                    && slots(a) == [-1, -1, 0, -1, -1, -1, -1]
                     && c.settings.page == crate::midi_in::MIDI_PAGE
                     && hit
                     && !other)
@@ -14028,7 +14029,7 @@ fn settings_search_steps() -> Vec<Step> {
             Box::new(|c, a| {
                 (c.settings.search.is_empty()
                     && a.global::<Studio>().get_settings_search().is_empty()
-                    && slots(a) == (0..9).collect::<Vec<i32>>())
+                    && slots(a) == (0..7).collect::<Vec<i32>>())
                 .then_some(())
                 .ok_or(format!("search {:?} slots {:?}", c.settings.search, slots(a)))
             }),
@@ -14095,7 +14096,7 @@ fn settings_help_steps() -> Vec<Step> {
         ),
         Do("settings help: open General", Box::new(|a| a.global::<Studio>().invoke_settings_page_select(0))),
         Check("settings help: changing page hides the tip", Box::new(move |_, a| tip(a).is_empty().then_some(()).ok_or(tip(a)))),
-        Do("settings help: hover Talk key's (i) (greyed)", Box::new(|a| hover_settings_info(a, 531.6))),
+        Do("settings help: hover Talk key's (i) (greyed)", Box::new(|a| hover_settings_info(a, 477.1))),
         Check(
             "settings help: a greyed row says it isn't available",
             Box::new(move |_, a| (tip(a) == "Not available in Device.").then_some(()).ok_or(tip(a))),
@@ -14105,6 +14106,64 @@ fn settings_help_steps() -> Vec<Step> {
             "settings help: Settings closed, no tip left",
             Box::new(move |c, a| (!c.settings.open && tip(a).is_empty()).then_some(()).ok_or(tip(a))),
         ),
+    ]
+}
+
+/// Settings › Privacy (spec 018, roadmap G14): Send crash reports switches off and on and the
+/// preferences follow, Usage tracking can't be switched on, and the (i) explains the switch.
+fn privacy_steps() -> Vec<Step> {
+    use crate::settings_search::PRIVACY_PAGE;
+    use Step::*;
+    // The switches' centres: right-aligned in the page, rows at y 71 and 115.
+    fn switch(y: f32) -> (f32, f32) {
+        (set_x() + set_w() - 20.5 - 22.5 + 10.0, set_y() + y + 2.0 + 5.0)
+    }
+    let state = |c: &Controller, a: &AppWindow| (c.settings.prefs.crash_reports_off, a.global::<Studio>().get_privacy_crash_reports());
+    vec![
+        DoC("privacy: open Settings", Box::new(|_, ctl| ctl.borrow_mut().open_settings())),
+        Do(
+            "privacy: click Privacy in the sidebar",
+            Box::new(|a| {
+                let (x, y) = settings_row(PRIVACY_PAGE);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "privacy: seven pages, Privacy open, Send crash reports on",
+            Box::new(move |c, a| {
+                let s = a.global::<Studio>();
+                let pages = slint::Model::row_count(&s.get_settings_pages());
+                (pages == 7 && c.settings.page == PRIVACY_PAGE && state(c, a) == (false, true)).then_some(()).ok_or(format!(
+                    "pages {pages} page {} state {:?}",
+                    c.settings.page,
+                    state(c, a)
+                ))
+            }),
+        ),
+        Do("privacy: click the Send crash reports switch", Box::new(|a| click(a, switch(71.0).0, switch(71.0).1))),
+        Check(
+            "privacy: crash reports off in the preferences and on screen",
+            Box::new(move |c, a| (state(c, a) == (true, false)).then_some(()).ok_or(format!("{:?}", state(c, a)))),
+        ),
+        Do("privacy: click it again", Box::new(|a| click(a, switch(71.0).0, switch(71.0).1))),
+        Check(
+            "privacy: crash reports on again",
+            Box::new(move |c, a| (state(c, a) == (false, true)).then_some(()).ok_or(format!("{:?}", state(c, a)))),
+        ),
+        Do("privacy: click the Usage tracking switch", Box::new(|a| click(a, switch(115.0).0, switch(115.0).1))),
+        Check(
+            "privacy: Usage tracking stays off and nothing else changed",
+            Box::new(move |c, a| (state(c, a) == (false, true) && c.settings.open).then_some(()).ok_or(format!("{:?}", state(c, a)))),
+        ),
+        Do("privacy: hover Send crash reports' (i)", Box::new(|a| hover_settings_info(a, 71.0))),
+        Check(
+            "privacy: its help shows",
+            Box::new(|_, a| {
+                let tip = a.global::<Studio>().get_settings_tip();
+                (tip == crate::settings_search::help("Send crash reports")).then_some(()).ok_or(tip.to_string())
+            }),
+        ),
+        DoC("privacy: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
     ]
 }
 
@@ -18365,6 +18424,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(default_instrument_steps());
     all.extend(settings_search_steps());
     all.extend(settings_help_steps());
+    all.extend(privacy_steps());
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());

@@ -51,6 +51,7 @@ mod clipedit;
 mod composer;
 mod controller;
 mod count_in;
+mod crash;
 mod default_instrument;
 mod device_canvas;
 mod device_editors;
@@ -130,7 +131,7 @@ use dstudio_core::{Project, TrackId, db_to_gain};
 use dstudio_engine::{Config, Engine};
 use slint::ComponentHandle;
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -212,6 +213,8 @@ struct Args {
     settings_search_review: Option<&'static str>,
     /// review-settings-help: Settings › Audio with Buffer size's (i) hovered, its help showing.
     settings_help_review: bool,
+    /// review-settings-privacy: Settings › Privacy.
+    settings_privacy_review: bool,
     /// Settings › Shortcuts: 1 the page, 2 recording keys for Tap tempo, 3 Tap tempo unmapped,
     /// 4-6 searching "track", "notes", "transpose".
     shortcuts_review: u8,
@@ -842,6 +845,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-settings-midi" => {
                     a.reference_default = true;
                     a.settings_midi_review = true;
+                }
+                "review-settings-privacy" => {
+                    a.reference_default = true;
+                    a.settings_privacy_review = true;
                 }
                 "review-settings-help" => {
                     a.reference_default = true;
@@ -1698,13 +1705,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     suppress_appkit_menu_items();
 
-    // ---- engine (48 kHz) ----
-    let engine = Arc::new(Engine::new(Config { sample_rate: 48_000.0, ..Config::default() })?);
-    let mut device_error = None;
     // App preferences (Settings › Audio): never read or written by self-tests and
     // `--state` / screenshot runs, so those can never open a real input device.
     let use_prefs = !args.self_test && !args.reference_default && args.screenshot.is_none() && args.exit_after_frames.is_none();
     let prefs_path = if use_prefs { prefs::default_path() } else { None };
+    // Crash reports (spec 018): recorded next to the preferences, so never in those runs either.
+    let crash_dir = prefs_path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf);
+    if let Some(dir) = &crash_dir {
+        crash::install(dir);
+        crash::crash_test_from_env();
+    }
+
+    // ---- engine (48 kHz) ----
+    let engine = Arc::new(Engine::new(Config { sample_rate: 48_000.0, ..Config::default() })?);
+    let mut device_error = None;
     let mut saved_prefs = prefs::Preferences::default();
     let mut prefs_error = None;
     if let Some(path) = &prefs_path {
@@ -1807,6 +1821,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.devices.chains.open(dir.join("Chains"));
         }
         c.settings.prefs_path = prefs_path;
+        if let Some(dir) = &crash_dir {
+            c.send_crash_report(dir);
+        }
         if std::env::var_os("DSTUDIO_PROJECTS_DIR").is_none()
             && let Some(dir) = c.settings.prefs.general.projects_folder.clone()
         {
@@ -3042,6 +3059,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.settings.prefs.shortcuts = shortcuts::changes(&c.settings.keys.map, &c.settings.prefs.shortcut_preset);
         }
     }
+    if args.settings_privacy_review {
+        let mut c = ctl.borrow_mut();
+        c.open_settings();
+        c.settings_page(settings_search::PRIVACY_PAGE);
+    }
     if args.settings_help_review {
         let mut c = ctl.borrow_mut();
         c.open_settings();
@@ -3272,6 +3294,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         _ => transport_fields::KeyChoice::Cancel,
     }));
     on!(on_general_toggle, |c, i: i32| c.general_toggle(i));
+    on!(on_privacy_toggle_crash_reports, |c| c.privacy_toggle_crash_reports());
     {
         let ctl = ctl.clone();
         let aw = app.as_weak();

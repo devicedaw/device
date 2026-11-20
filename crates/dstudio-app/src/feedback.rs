@@ -133,7 +133,7 @@ pub fn url() -> String {
 }
 
 /// A readable OS name and version, best effort.
-fn os_version() -> String {
+pub(crate) fn os_version() -> String {
     let os = std::env::consts::OS;
     let run = |cmd: &str, args: &[&str]| {
         std::process::Command::new(cmd)

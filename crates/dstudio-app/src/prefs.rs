@@ -104,6 +104,10 @@ pub struct Preferences {
     /// changes on top of it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub shortcut_preset: String,
+    /// Settings › Privacy › Send crash reports switched off (spec 018); on by default, so
+    /// files without it send them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub crash_reports_off: bool,
 }
 
 fn is_zero_u8(v: &u8) -> bool {
@@ -277,6 +281,7 @@ mod tests {
             count_in_bars: 2,
             shortcuts: [("transport.record".to_string(), vec!["primary+shift+r".to_string()])].into_iter().collect(),
             shortcut_preset: "Logic Pro".into(),
+            crash_reports_off: true,
         };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
@@ -294,6 +299,7 @@ mod tests {
         assert!(loaded.shortcuts.is_empty(), "files without shortcut changes keep the defaults");
         assert!(loaded.shortcut_preset.is_empty(), "files without a preset use Device Studio's keys");
         assert_eq!(loaded.count_in_bars, 0, "files without a count-in record straight away");
+        assert!(!loaded.crash_reports_off, "files without the Privacy switch send crash reports");
         assert_eq!(loaded.general.projects_folder, None, "files without a projects folder use the default one");
         let _ = std::fs::remove_dir_all(dir);
     }

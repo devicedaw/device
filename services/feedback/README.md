@@ -16,7 +16,9 @@ Vercel function with no dependencies; the app and the website never hold a crede
 { "kind": "bug", "message": "What happened", "email": "", "version": "0.2.0", "system": "", "log": "" }
 ```
 
-`kind` is `bug` or `feedback`; `message` is required (3 to 10,000 characters); `email` is optional. `system` and
+`kind` is `bug`, `feedback` or `crash` (sent by the app itself on the launch after a crash when Settings › Privacy ›
+Send crash reports is on: the app version, OS and architecture in `system`, the panic message as `message`, and where
+it happened and the backtrace in `log`, with home folder paths and the user name removed); `message` is required (3 to 10,000 characters); `email` is optional. `system` and
 `log` are only filled when the reporter leaves "Include system info and recent activity" on. A non-empty `website`
 field is a honeypot: the request is answered with success and dropped. Responses are `{ "ok": true }` or
 `{ "error": "<sentence the app shows>" }` with status 400, 429 or 502.
