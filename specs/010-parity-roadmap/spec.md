@@ -46,7 +46,7 @@ target behaviour.
   next to the tool button are painted rectangles (`ui/app.slint`, "vertical zoom (placeholder)"). Both must drag:
   horizontal zoom follows and sets the real zoom level (`src/zoom.rs`), vertical sets every track's height
   (same steps as ⌥-scroll). Double-click resets. The clip editor's pair works the same way.
-- [x] ** (#PR, colour grid with G5)G3. Track header menu, complete** (`src/track_menu.rs`). Today: Rename, Duplicate track, Duplicate track
+- [x] ** (#141, colour grid with G5)G3. Track header menu, complete** (`src/track_menu.rs`). Today: Rename, Duplicate track, Duplicate track
   with clips, Color, Group or Ungroup, Delete track. It must be, in order, with separators between groups:
   Rename… / Duplicate track (⌘D) / Duplicate with clips (⇧⌘D) / Bounce track in place / Show automation (Hide
   automation when shown) / Group track (⌘G) / Delete track (Del) / Audio track (⌘T) / Instrument track (⇧⌘T) /
