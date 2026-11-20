@@ -1,6 +1,6 @@
 # Bounce Track in Place
 
-Status: Done · Spec: 015 · Issue: none · Roadmap: [010 › G4](../010-parity-roadmap/spec.md)
+Status: Done · Spec: 017 · Issue: none · Roadmap: [010 › G4](../010-parity-roadmap/spec.md)
 
 ## Problem
 

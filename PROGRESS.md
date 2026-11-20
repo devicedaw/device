@@ -721,7 +721,7 @@ catalogue (44 devices, about 2000 parameters) goes into the system prompt as a c
 state. Still to do: one run against the live API.
 ### 2026-11-20: Bounce Track in Place
 
-Clip menu › Bounce › Bounce track in place prints the clip's whole track (spec 015): every enabled clip rendered
+Clip menu › Bounce › Bounce track in place prints the clip's whole track (spec 017): every enabled clip rendered
 through its devices, before the channel strip, to one audio clip from the first clip's start; the track becomes an
 audio track holding it, keeping its name, colour, mix, sends, output and lanes, with its effects and instrument kept
 but switched off. One undo step through a new `Command::ReplaceTrack`, which swaps a track for a new version of
