@@ -24,6 +24,7 @@ pub mod midi_record;
 pub mod model;
 pub mod modulation;
 pub mod persist;
+pub mod range;
 pub mod render_plan;
 pub mod scale;
 pub mod section_follow;

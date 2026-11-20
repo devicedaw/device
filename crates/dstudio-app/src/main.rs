@@ -108,6 +108,7 @@ mod synth;
 mod takes;
 mod text_measure;
 mod timeline;
+mod tools;
 mod track_menu;
 mod transport_fields;
 mod typing;
@@ -230,6 +231,9 @@ struct Args {
     device_chain_review: bool,
     /// review-devices-minimap: Instrument track with the Synth and a long chain of built-in effects (the Devices minimap shows).
     devices_minimap_review: bool,
+    /// review-tool-menu (1): the timeline's edit tool menu open; review-marquee-range (2): two
+    /// MIDI clips with a Marquee range across both tracks.
+    tools_review: u8,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
     key_change_review: bool,
@@ -668,6 +672,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.key_change_review = true;
                 }
+                st @ ("review-tool-menu" | "review-marquee-range") => {
+                    a.reference_default = true;
+                    a.tools_review = if st == "review-tool-menu" { 1 } else { 2 };
+                }
                 "review-snap-menu" => {
                     a.reference_default = true;
                     a.snap_menu_review = true;
@@ -780,7 +788,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-tool-menu, review-marquee-range, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1103,8 +1111,21 @@ pub fn app_keymap() -> Keymap {
         let chords = chords.iter().map(|c| Chord::parse(c).expect("valid chord")).collect();
         k.bindings.push(Binding { action: action.into(), chords, when: Condition::MidiEditorFocused });
     }
+    // The Marquee tool's range: Delete, ⌘X, ⌘C and ⌘L act on it (⌘E and ⌘D are in the core preset).
+    for (action, chords) in [
+        ("range.delete", &["delete", "backspace"][..]),
+        ("range.cut", &["primary+x"][..]),
+        ("range.copy", &["primary+c"][..]),
+        ("range.loop", &["primary+l"][..]),
+    ] {
+        let chords = chords.iter().map(|c| Chord::parse(c).expect("valid chord")).collect();
+        k.bindings.push(Binding { action: action.into(), chords, when: Condition::RangeSelected });
+    }
     // Listed with no default key (record one in Settings › Shortcuts).
     for (action, when) in [
+        ("tool.select_selector", Condition::Always),
+        ("tool.select_marquee", Condition::Always),
+        ("tool.select_scissors", Condition::Always),
         ("clip.move_to_track_above", Condition::ClipsSelected),
         ("clip.move_to_track_below", Condition::ClipsSelected),
         ("midi.glue", Condition::MidiEditorFocused),
@@ -1209,6 +1230,21 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
                 }
             }
         }
+        "tool.scissors" => ctl.borrow_mut().toggle_scissors(),
+        "tool.select_selector" => ctl.borrow_mut().set_tool(tools::Tool::Selector),
+        "tool.select_marquee" => ctl.borrow_mut().set_tool(tools::Tool::Marquee),
+        "tool.select_scissors" => ctl.borrow_mut().set_tool(tools::Tool::Scissors),
+        "range.delete" => ctl.borrow_mut().range_delete(),
+        "range.cut" => ctl.borrow_mut().range_cut(),
+        "range.copy" => {
+            ctl.borrow_mut().range_copy();
+        }
+        "range.duplicate" => ctl.borrow_mut().range_duplicate(),
+        "range.loop" => ctl.borrow_mut().range_loop(),
+        "clip.split_at_range" => ctl.borrow_mut().range_split(),
+        "edit.paste" if ctl.borrow().tools.clipboard.is_some() => {
+            ctl.borrow_mut().range_paste();
+        }
         "edit.paste" => {
             let mut c = ctl.borrow_mut();
             match c.marker_shortcut_target().filter(|_| c.section_clipboard.is_some()) {
@@ -1296,6 +1332,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.devmenu_dismiss();
             c.auto_picker_close();
             c.transport_menus_dismiss();
+            c.tool_menu_dismiss();
+            c.range_clear();
             c.rename = None;
             c.rename_section = None;
             c.pr.menu = -1;
@@ -2417,6 +2455,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.key_mode(true);
         c.key_pick(2);
     }
+    if args.tools_review == 1 {
+        // Opened below the tool button of the default 1440 x 820 window (anchors are not measured yet).
+        ctl.borrow_mut().tool_menu_toggle(969.0, 98.0);
+    }
+    if args.tools_review == 2 {
+        let mut c = ctl.borrow_mut();
+        let ppq = dstudio_core::PPQ;
+        let p = c.project();
+        let (n, tracks): (u64, Vec<dstudio_core::TrackId>) = (p.next_id, p.tracks.iter().map(|t| t.id).collect());
+        if let Some(&inst) = tracks.get(1) {
+            let notes = (0..8).map(|i| dstudio_core::Note {
+                id: i + 1,
+                pitch: 60 + (i as u8 * 3) % 12,
+                start: i as i64 * ppq,
+                length: ppq / 2,
+                velocity: 100,
+            });
+            c.execute(dstudio_core::Command::AddMidiClip {
+                track: inst,
+                clip: dstudio_core::MidiClip {
+                    id: dstudio_core::ClipId(n),
+                    notes: notes.collect(),
+                    ..dstudio_core::MidiClip::empty(0, 8 * ppq)
+                },
+            });
+        }
+        c.set_tool(tools::Tool::Marquee);
+        c.tools.range = Some(dstudio_core::range::TimeRange { start: 4 * ppq, end: 12 * ppq, tracks });
+    }
     if args.snap_menu_review {
         let mut c = ctl.borrow_mut();
         c.snap.pick(5);
@@ -3094,6 +3161,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_ac_resample, |c| c.resample_open_clip());
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
+        // The Marquee tool and Scissors take lane presses before anything else (src/tools.rs).
+        if kind == 0 {
+            c.snap.bypass = cmd;
+        }
+        if c.tool_pointer(kind, x, y) {
+            return;
+        }
         // A second press that completes a double-click acts on its own, and so do its moves and
         // release (src/clipedit.rs). It leaves press_epoch alone: a bump moves keyboard focus back
         // to the main area, away from a rename field the double-click just opened.
@@ -3114,6 +3188,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     on!(on_snap_toggle, |c| c.snap_toggle());
+    on!(on_tool_menu_toggle, |c, x: f32, y: f32| c.tool_menu_toggle(x, y));
+    on!(on_tool_menu_dismiss, |c| c.tool_menu_dismiss());
+    on!(on_tool_pick, |c, i: i32| c.set_tool(tools::Tool::ALL.get(i.max(0) as usize).copied().unwrap_or_default()));
     on!(on_snap_menu_toggle, |c, x: f32, y: f32| c.snap_menu_toggle(x, y));
     on!(on_snap_menu_pick, |c, i: i32| c.snap_menu_pick(i.max(0) as usize));
     on!(on_snap_menu_dismiss, |c| {
@@ -3551,6 +3628,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.auto_hover(x, y);
                 c.clip_hover(x, y);
+                c.tool_hover(x, y);
             }
         });
     }
@@ -3644,6 +3722,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     midi_clip_selected: c.selected_clips().iter().any(|id| c.project().midi_clip(*id).is_some()),
                     midi_editor_focused: c.pr_visible() && c.pr.focused,
                     section_selected: c.selected_section.is_some(),
+                    range_selected: c.tools.range.is_some(),
                     clip_or_devices_focused: c.bottom_panel_shown(),
                     ..Default::default()
                 }

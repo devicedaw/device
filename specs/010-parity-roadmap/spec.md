@@ -33,14 +33,15 @@ target behaviour.
 
 ## P0: core workflow
 
-- [ ] **G1. Edit tools: Selector, Marquee and Scissors** (spec). The tool button in the timeline header
+- [x] **G1. Edit tools: Selector, Marquee and Scissors** (spec, [012](../012-edit-tools/spec.md), #125). The tool button in the timeline header
   (`ui/app.slint`, the cursor icon with a chevron next to the zoom sliders) is drawn but does nothing, and the
   `tool.scissors` key (T) in `dstudio-core/src/keymap.rs` has no handler. It must open a three-row menu
   (Selector, Marquee tool, Scissors, each with its icon and key) and switch the timeline's pointer mode:
   Selector is today's behaviour; Marquee drags a time range across tracks (the range then works with Cut,
   Copy, Paste, Delete, Duplicate and Split, and with ⌘L to loop it); Scissors splits the clip under the pointer
   at the snapped position on click (one undo step, "Split Clip"). The header icon shows the active tool.
-  Escape returns to Selector. Also in the clip editor header, which has the same button.
+  T toggles Scissors with the previous tool; Escape leaves the tool as it is. (The clip editor header has no tool
+  button, in Device or the target, so there is nothing to add there.)
 - [ ] **G2. Zoom sliders in the timeline header.** The vertical (track height) and horizontal (time) sliders
   next to the tool button are painted rectangles (`ui/app.slint`, "vertical zoom (placeholder)"). Both must drag:
   horizontal zoom follows and sets the real zoom level (`src/zoom.rs`), vertical sets every track's height

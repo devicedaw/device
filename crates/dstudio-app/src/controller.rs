@@ -493,6 +493,8 @@ pub struct Controller {
     pub(crate) mm: crate::minimap::State,
     /// Timeline snap toggle, grid size and menu (src/snap.rs).
     pub(crate) snap: crate::snap::State,
+    /// Timeline edit tools and the Marquee range (src/tools.rs).
+    pub(crate) tools: crate::tools::State,
     /// Transport bar tempo, signature and key fields (src/transport_fields.rs).
     pub(crate) tf: crate::transport_fields::State,
     /// Devices minimap (src/devminimap.rs) and the pointer hide / warp requests of minimap drags (src/pointer.rs).
@@ -675,6 +677,7 @@ impl Controller {
             ruler_model: Rc::new(VecModel::default()),
             mm: crate::minimap::State::new(),
             snap: crate::snap::State::new(),
+            tools: Default::default(),
             tf: crate::transport_fields::State::new(),
             dm: crate::devminimap::State::new(),
             ptr: crate::pointer::Queue::default(),
@@ -2417,6 +2420,7 @@ impl Controller {
         self.update_minimap(app);
         self.update_devmm(app);
         self.push_snap(&s);
+        self.push_tools(&s);
         self.push_transport_fields(&s);
         s.set_press_epoch(self.press_epoch);
         s.set_doc_epoch(self.doc_epoch as i32);

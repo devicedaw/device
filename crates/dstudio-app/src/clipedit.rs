@@ -480,6 +480,8 @@ impl Controller {
     pub fn copy_clip(&mut self) -> bool {
         let mut items = self.copy_items().into_iter();
         let Some(first) = items.next() else { return false };
+        // The newest copy is what ⌘V pastes: a copied range gives way to these clips.
+        self.tools.clipboard = None;
         self.clipboard = Some(first);
         self.clipboard_rest = items.collect();
         true

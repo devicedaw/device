@@ -625,10 +625,19 @@ component Timeline inherits Panel {
                 TouchArea { x: -3px; y: -2px; width: 19px; height: 18px; clicked => { Studio.auto-toggle-draw(); } }
             }
         }
+        // Edit tool: the active tool's icon; the button opens the tool menu (src/tools.rs).
         Rectangle {
             width: 25px + 1.7px;
-            Icon { x: 0; y: 7px; width: 13px; height: 13px; d: Icons.cursor; ink: #e5e5e8; filled: true; }
-            Icon { x: 14px; y: 8px; width: 11px; height: 11px; d: Icons.chevron-down; ink: #8e8f93; }
+            Icon {
+                x: 0; y: 7px; width: 13px; height: 13px; ink: #e5e5e8; filled: Studio.tool == 0;
+                d: Studio.tool == 1 ? Icons.plus : Studio.tool == 2 ? Icons.scissors : Icons.cursor;
+            }
+            Icon { x: 14px; y: 8px; width: 11px; height: 11px; d: Icons.chevron-down; ink: Studio.tool-menu-open ? #ffffff : #8e8f93; }
+            TouchArea {
+                x: -3px; width: parent.width + 3px;
+                accessible-role: button; accessible-label: "Edit tool";
+                clicked => { Studio.tool-menu-toggle(parent.absolute-position.x, (parent.absolute-position.y - Studio.menu-dy) + parent.height); }
+            }
         }
         // vertical zoom (placeholder), horizontal zoom (mirrors the real zoom level)
         if !root.zoom-hidden: Rectangle {
@@ -675,6 +684,15 @@ component Timeline inherits Panel {
         for l in Studio.auto-labels: Text {
             x: l.x; y: l.y + 0.75px; height: 13px; text: l.text; font-size: 9.25px; font-weight: 600; vertical-alignment: center;
             color: l.state == 1 ? l.accent : l.state == 2 ? #6a6b6f : l.dim;
+        }
+        // Marquee tool range and the Scissors cut line (src/tools.rs).
+        if Studio.range-on: Rectangle {
+            x: Studio.range-x; y: Studio.range-y; width: Studio.range-w; height: Studio.range-h;
+            background: #ffffff85;
+        }
+        if Studio.cut-on: Rectangle {
+            x: Studio.cut-x - 0.5px; y: Studio.cut-y; width: 1px; height: Studio.cut-h;
+            background: #ffffff;
         }
         if Studio.marquee-on: Rectangle {
             x: Studio.marquee-x; y: Studio.marquee-y; width: Studio.marquee-w; height: Studio.marquee-h;
@@ -1124,6 +1142,34 @@ export struct LayoutAnchors {
     settings-x: length, settings-y: length, settings-w: length,
 }
 
+// The timeline's edit tool menu: three rows with the tool's icon and a check on the active one.
+component ToolMenu inherits Rectangle {
+    width: 117.3px; height: 3.4px * 2 + 20.4px * 3;
+    border-radius: 6px;
+    background: Tokens.bg-raised;
+    border-width: 0.5px;
+    border-color: @linear-gradient(180deg, Tokens.popup-border-top 0%, Tokens.popup-border 8%);
+    drop-shadow-blur: 10px;
+    drop-shadow-color: #00000070;
+    drop-shadow-offset-y: 2px;
+    accessible-role: list;
+    for row[i] in [
+        { label: "Selector", icon: Icons.cursor, filled: true },
+        { label: "Marquee tool", icon: Icons.plus, filled: false },
+        { label: "Scissors", icon: Icons.scissors, filled: false },
+    ]: Rectangle {
+        x: 3.4px; y: 3.4px + i * 20.4px; width: root.width - 6.8px; height: 20.4px;
+        border-radius: 4px;
+        background: ta.has-hover ? #ffffff14 : transparent;
+        accessible-role: button; accessible-label: row.label; accessible-checked: Studio.tool == i;
+        accessible-action-default => { Studio.tool-pick(i); }
+        Icon { x: 6.8px; y: 4.7px; width: 11px; height: 11px; d: row.icon; filled: row.filled; ink: #ffffff; }
+        Text { x: 25.5px; text: row.label; color: #ffffff; font-size: 9.35px; font-weight: 600; vertical-alignment: center; }
+        if Studio.tool == i: Icon { x: parent.width - 18.7px; y: 4.7px; width: 11px; height: 11px; d: Icons.check; ink: #ffffff; stroke-width: 1.6px; }
+        ta := TouchArea { clicked => { Studio.tool-pick(i); } }
+    }
+}
+
 export component AppWindow inherits Window {
     title: Studio.project-name + (Studio.project-edited ? " — Edited" : "") + " — Device";
     preferred-width: 1440px;
@@ -1381,6 +1427,12 @@ export component AppWindow inherits Window {
                 items: Studio.synth-menu-items;
                 picked(i) => { Studio.synth-menu-pick(i); }
             }
+        }
+        // Edit tool menu (src/tools.rs): Selector, Marquee tool, Scissors, the active one ticked.
+        if Studio.tool-menu-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.tool-menu-dismiss(); } } }
+            ToolMenu { x: Studio.tool-menu-x - 3.4px; y: Studio.tool-menu-y + 5.1px; }
         }
         // Timeline snap menu: Off, then Auto and the grid sizes, a rule before the triplets (S76).
         if Studio.snap-menu-open: Rectangle {
