@@ -1680,16 +1680,17 @@ fn synth_steps() -> Vec<Step> {
             }),
         ),
         Do(
-            "click the preset name, pick the 4th sound in the list",
+            "click the preset name, pick Rubber Acid (Bass, under its heading)",
             Box::new(|a| {
                 let (x, y) = synth_xy(crate::devices::SYNTH_W - 74.0, 16.0);
                 click(a, x, y);
-                let (x, y) = synth_menu_row(a, 4);
+                // Rows: Bass, Basement Sub, Rubber Acid, …
+                let (x, y) = synth_menu_row(a, 2);
                 click(a, x, y);
             }),
         ),
         Check(
-            "synth: preset list loaded factory sound 4 in one undo step, list closed",
+            "synth: preset list loaded Rubber Acid (factory sound 4) in one undo step, list closed",
             Box::new(move |c, a| {
                 one_step(&r2, c, "Load Preset")?;
                 let (v, name) = inst_synth(c).ok_or("no instrument")?;
