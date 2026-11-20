@@ -77,6 +77,12 @@ impl Provider {
         }
     }
 
+    /// Anthropic with `key` (from the keychain), the model as in [Self::from_env].
+    pub fn from_key(key: &str) -> Provider {
+        let model = std::env::var("DSTUDIO_ASSISTANT_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| DEFAULT_MODEL.into());
+        Provider::Anthropic { key: key.trim().to_string(), model }
+    }
+
     /// TEST provider from JSON text: one `AssistantTurn` object or an array of them.
     pub fn fixture_from_json(text: &str, label: &str) -> Result<Provider, String> {
         let v: Value = serde_json::from_str(text).map_err(|e| format!("fixture {label}: {e}"))?;
@@ -102,7 +108,7 @@ impl Provider {
     /// Blocking: call on a worker thread. Returns raw `AssistantTurn` JSON.
     pub fn complete(&self, req: &Request) -> Result<String, String> {
         match self {
-            Provider::Unavailable => Err("Set ANTHROPIC_API_KEY to enable the assistant".into()),
+            Provider::Unavailable => Err("Add your Anthropic API key to use the assistant".into()),
             Provider::Fixture { turns, next, .. } => {
                 let mut n = next.lock().map_err(|_| "fixture lock poisoned".to_string())?;
                 let t = turns[(*n).min(turns.len() - 1)].clone();
@@ -118,13 +124,13 @@ impl Provider {
 pub fn system_prompt(mode: Mode) -> String {
     let mode_rules = match mode {
         Mode::Assist => {
-            "MODE: ASSIST. You may change the project with `edit` and `set_track_volume_db` actions. \
+            "MODE: ASSIST. You may change the project with `edit`, `set_track_volume_db`, `add_builtin_device` and `load_sample` actions. \
              All edits in one turn are validated together and applied as ONE undo step; if any edit is invalid, nothing is applied. \
              Use real ids from the project state. To refer to a track you create in the same turn, give it an explicit id equal to \
              `next_id_hint` (then +1 for each further new object) instead of 0. You may also highlight controls and explain."
         }
         Mode::Teach => {
-            "MODE: TEACH. You must NEVER change the project: do not emit `edit` or `set_track_volume_db` actions (they are rejected and \
+            "MODE: TEACH. You must NEVER change the project: do not emit `edit`, `set_track_volume_db`, `add_builtin_device` or `load_sample` actions (they are rejected and \
              the whole turn fails). Only `highlight` the controls the user should use (each with a short note on what to do) and \
              `explain` the steps in plain language, so the user learns to do it themselves."
         }
@@ -134,7 +140,11 @@ pub fn system_prompt(mode: Mode) -> String {
          transport bar (play, loop, bar/time readouts, BPM, key, time signature, metronome, master volume), a sound browser on the \
          left, a timeline with track headers (mute, solo, arm, pan knob, volume slider) and lanes holding audio clips, a master row, \
          and a bottom panel with the track inspector and devices, which can switch to a mixer. Time positions are in ticks (960 per \
-         quarter note). Volumes in the state are in dB.\n\n\
+         quarter note). Volumes in the state are in dB. Each track lists its effect chain (`devices`, in order) and its `instrument`, \
+         each with its id and the parameters changed from their defaults; the built-in device list after these rules gives every \
+         built-in effect and instrument you can add, with each parameter as [id, min, max, default, unit]; `assets` are the \
+         project's audio files, which audio clips and sample slots can use; \
+         `sends` go into return tracks.\n\n\
          Always answer by calling the `{TOOL_NAME}` tool exactly once with the actions to perform; put any prose for the user in \
          `explain` actions. Keep explanations short (one to three sentences). Highlight targets must be ids from the tool schema \
          (`UI target` list) or `track:<id>:<header|mute|solo|arm|pan|volume|lane>` for an existing track.\n\n{mode_rules}"
@@ -179,7 +189,12 @@ pub fn build_body(model: &str, req: &Request) -> Value {
     let mut body = json!({
         "model": model,
         "max_tokens": 16000,
-        "system": system_prompt(req.mode),
+        // The built-in device catalogue is long and never changes, so it is the cached part of the
+        // prompt (with the tool schema before it); the rules above it are short.
+        "system": [
+            {"type": "text", "text": system_prompt(req.mode)},
+            {"type": "text", "text": format!("Built-in devices (JSON):\n{}", dstudio_core::assistant::builtin_catalog()), "cache_control": {"type": "ephemeral"}},
+        ],
         "tools": [{
             "name": TOOL_NAME,
             "description": "Perform one assistant turn in the DAW: a list of edits (Assist mode only), UI highlights and explanations.",
@@ -274,7 +289,10 @@ mod tests {
         // Opus 5.5 rejects forced tool use: auto + one call at most.
         assert_eq!(b["tool_choice"]["type"], "auto");
         assert_eq!(b["fallbacks"], "default");
-        assert!(b["system"].as_str().unwrap().contains("MODE: TEACH"));
+        assert!(b["system"][0]["text"].as_str().unwrap().contains("MODE: TEACH"));
+        // The long, unchanging device catalogue is the cached block.
+        assert_eq!(b["system"][1]["cache_control"]["type"], "ephemeral");
+        assert!(b["system"][1]["text"].as_str().unwrap().contains("\"compressor\""));
         assert_eq!(b["messages"].as_array().unwrap().len(), 3);
         assert!(b.get("temperature").is_none());
     }

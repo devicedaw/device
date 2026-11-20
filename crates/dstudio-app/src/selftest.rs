@@ -16062,6 +16062,52 @@ fn clip_render_steps() -> Vec<Step> {
     ]
 }
 
+/// The assistant's API key (roadmap G22): a key with a space is refused; a good one is saved
+/// (in the self-test's in-memory store, never the keychain) and the assistant can use it;
+/// removing it stops the assistant. The test provider is put back afterwards.
+fn api_key_steps() -> Vec<Step> {
+    use Step::*;
+    let saved: Rc<std::cell::RefCell<Option<std::sync::Arc<crate::assistant_provider::Provider>>>> = Rc::new(Default::default());
+    let (s1, s2) = (saved.clone(), saved.clone());
+    vec![
+        DoC(
+            "api key: try a key with a space, then a good one",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                *s1.borrow_mut() = Some(c.provider.clone());
+                c.assistant_save_key("sk-ant bad");
+                c.assistant_save_key("  sk-ant-test-key  ");
+            }),
+        ),
+        Check(
+            "api key: the good key is saved (trimmed) and the assistant is available with it",
+            Box::new(|c, a| {
+                let ok = c.key_store.load().as_deref() == Some("sk-ant-test-key")
+                    && c.provider.available()
+                    && !c.provider.is_fixture()
+                    && a.global::<Studio>().get_chat_key_saved();
+                ok.then_some(()).ok_or(format!("stored {:?} provider {:?}", c.key_store.load(), c.provider))
+            }),
+        ),
+        DoC("api key: remove it", Box::new(|_, ctl| ctl.borrow_mut().assistant_remove_key())),
+        Check(
+            "api key: gone from the store and the assistant asks for a key",
+            Box::new(|c, a| {
+                let ok = c.key_store.load().is_none() && !c.provider.available() && !a.global::<Studio>().get_chat_available();
+                ok.then_some(()).ok_or(format!("stored {:?}", c.key_store.load()))
+            }),
+        ),
+        DoC(
+            "api key: put the test provider back",
+            Box::new(move |_, ctl| {
+                if let Some(p) = s2.borrow_mut().take() {
+                    ctl.borrow_mut().provider = p;
+                }
+            }),
+        ),
+    ]
+}
+
 /// Clip menu Bounce through a third-party plugin (src/clip_render.rs, CHR-38): the CLAP test gain
 /// on a track is edited after the project's state was saved, the clip is bounced, and the file has
 /// the live instance's gain (the plugin was prepared on this thread from its current state and
@@ -17451,6 +17497,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());
+    all.extend(api_key_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.

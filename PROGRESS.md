@@ -708,3 +708,15 @@ drop return-to-return sends when they open a project.
   chained delay compensation, RT-guarded export parity), app unit tests, self-test `return_send_steps` and the
   Project export section. `bench_render` gets a "+ A into B" Returns row. Review states `review-return-sends` and
   `review-return-sends-strip`.
+### 2026-11-21: assistant key and devices
+
+The assistant no longer needs `ANTHROPIC_API_KEY` (which a Finder-launched app never sees): with no key, its panel
+asks for one and keeps it in the system keychain (`src/api_key.rs`, the `keyring` crate: Keychain, Credential Manager,
+Secret Service over zbus); "Remove API key" under the greeting deletes it. The variable still wins, for development.
+The self-test uses an in-memory store and never touches the keychain. The model now sees each track's chain
+(`devices`, `instrument`, with only the parameters changed from their defaults), sends, output, lanes and the
+project's audio files, and can `add_builtin_device` (effects into the chain, instruments onto the track) and
+`load_sample` besides any edit command (device parameters, sends, automation, audio clips). The built-in device
+catalogue (44 devices, about 2000 parameters) goes into the system prompt as a cached block instead of every turn's
+state. Still to do: one run against the live API.
+

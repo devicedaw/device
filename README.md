@@ -115,7 +115,9 @@ wgpu.
   seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.
 - **Undo for everything.** Every edit is a validated, invertible command, so undo and redo cover the whole project.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
-  one undo step. It uses your own Anthropic API key.
+  one undo step. It knows each track's devices, sends and lanes, and can add built-in effects and instruments, set their
+  parameters, load samples into the Sampler and Drum Rack, and place audio clips. It uses your own Anthropic API key,
+  pasted into the panel once and kept in the system keychain.
 
 ### A closer look
 
