@@ -328,6 +328,9 @@ struct Args {
     title_rename_review: bool,
     /// review-synth-presets: reference-synth with the Synth's factory sound list open.
     synth_presets_review: bool,
+    /// review-instrument-sounds: reference-synth with the Instruments browser open on the Synth's
+    /// Bass sounds.
+    instrument_sounds_review: bool,
     clip_menu: Option<i32>,
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
     ac_edit: Option<i32>,
@@ -510,6 +513,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.synth_state = true;
                     a.synth_presets_review = true;
+                }
+                "review-instrument-sounds" => {
+                    a.reference_default = true;
+                    a.synth_state = true;
+                    a.instrument_sounds_review = true;
                 }
                 "reference-input-menu" => {
                     a.reference_default = true;
@@ -861,7 +869,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-synth-presets, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-synth-presets, review-instrument-sounds, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
                     ));
                 }
             },
@@ -2032,6 +2040,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(20.0);
         if args.synth_presets_review {
             c.synth_pill(synth::act::PRESETS, 0, 1020.0, 520.0, 160.0);
+        }
+        if args.instrument_sounds_review {
+            c.browser_tab(0);
+            for k in ["i/builtin", "i/b/synth", "i/b/synth/Bass"] {
+                c.devices.expanded.insert(k.into());
+            }
+            c.devices.selected = Some("i/b/synth/Bass/Rubber Acid".into());
         }
     }
     if args.input_menu_state || (args.settings_state && !args.settings_devices_review) {

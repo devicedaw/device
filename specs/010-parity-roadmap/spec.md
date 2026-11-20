@@ -162,7 +162,7 @@ next to the target on the same window size.
   orange instrument clip. It must be the track colour at full strength, like the clip header in the timeline.
 - [x] **G34. Shape tab available on an empty MIDI clip.** (#144) In the clip sidebar the Shape tab is greyed until the
   clip has notes; it should always be selectable for a MIDI clip (the rack just has nothing to shape yet).
-- [ ] **G35. Instruments in the Devices browser open into their presets.** Devices › Instruments lists the
+- [x] **G35. Instruments in the Devices browser open into their presets.** (#PRNUM; the Synth's folder. Click to preview is G40.) Devices › Instruments lists the
   built-in instruments as plain rows under "Built-in". Each instrument with factory presets is a folder
   (with the preset count on the right) that opens into category folders (with counts) and then presets;
   clicking a preset previews it, dragging or double-clicking adds the instrument with that preset. Depends on
@@ -170,6 +170,9 @@ next to the target on the same window size.
 
 ## P2: content and polish
 
+- [ ] **G40. Preview a preset from the Devices browser.** Clicking a sound in an instrument's browser folder
+  plays a short note through the instrument with that sound, without adding it to a track (G35 shows the
+  sounds; double-click and drag add them).
 - [x] **G25. Synth factory library** [devices] (#140; the browser's category folders come with G35). The Synth has 12 named sounds and numbered placeholders
   (`dstudio-core/src/builtin/synth_v2/mod.rs`, `PRESETS`). The browser's Devices › Instruments › Synth folder
   must hold about 100 original sounds in categories (Bass, Keys, Pluck, Lead, Pad, Brass, and the rest), each

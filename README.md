@@ -160,7 +160,8 @@ interval against an A4 reference with the formant strip, Grains, whose window dr
 axes over two cards of controls, Pitch Corrector, whose window draws the correction trace over labelled cent rules, and Shaper, whose window draws
 its lane tabs and curve editor across the display, and LFO, whose window draws two cycles of its wave across the
 window. Every effect has its window; the instruments and the Rack keep everything in their card. The Synth comes with
-100 factory sounds in ten categories (bass, keys, plucks, leads, pads, brass, strings, bells, arps and textures).
+100 factory sounds in ten categories (bass, keys, plucks, leads, pads, brass, motion, textures, effects and drums);
+Devices › Instruments opens the Synth into those categories, and dropping a sound adds the Synth with it.
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |
