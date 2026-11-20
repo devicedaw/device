@@ -121,8 +121,8 @@ wgpu.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
   one undo step. It knows each track's devices, sends and lanes, and can add built-in effects and instruments, set their
   parameters, load samples into the Sampler and Drum Rack, and place audio clips. Ask in a clip's menu (or ⌘K with a
-  clip selected) opens it about that clip. It uses your own Anthropic API key, pasted into the panel once and kept in
-  the system keychain.
+  clip selected) opens it about that clip, and its header button stretches it to the full window height, beside a
+  narrower bottom panel. It uses your own Anthropic API key, pasted into the panel once and kept in the system keychain.
 
 ### A closer look
 

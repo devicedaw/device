@@ -66,6 +66,10 @@ pub struct Preferences {
     /// Docked assistant width in design units (drag its splitter); 0 = default.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub assistant_width: f32,
+    /// The docked assistant spans the full window height, over the bottom panel's right end
+    /// (its header button), instead of the timeline row only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub assistant_full: bool,
     /// File › Open Recent: project folders, newest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent_projects: Vec<String>,

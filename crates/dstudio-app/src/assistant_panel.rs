@@ -183,6 +183,10 @@ impl Controller {
         self.assistant.context_removed = None;
         self.assistant_open = true;
         self.assistant.focus_pending = true;
+    /// The header's layout button: the full window height, or the timeline row only. Saved.
+    pub fn assistant_toggle_full(&mut self) {
+        self.settings.prefs.assistant_full = !self.settings.prefs.assistant_full;
+        self.save_prefs();
         self.ui_dirty = true;
     }
 

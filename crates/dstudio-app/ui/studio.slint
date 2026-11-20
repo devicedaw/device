@@ -694,6 +694,8 @@ export global Studio {
     callback chat-remove-key();
     // Bumped to put the cursor in the composer (Ask, ⌘K).
     in property <int> chat-focus-epoch;
+    in property <bool> assistant-full;          // the assistant spans the window height (its header button)
+    callback chat-toggle-full();
     in property <[HighlightRect]> highlights;
     callback chat-send(string);
     callback chat-new();

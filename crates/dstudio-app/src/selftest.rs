@@ -16525,6 +16525,51 @@ fn bounce_in_place_steps() -> Vec<Step> {
     ]
 }
 
+/// Assistant full height (roadmap G21): the header's layout button takes the docked assistant
+/// down over the bottom panel's right end, which narrows; pressing it again puts it back. Saved.
+fn assistant_full_steps() -> Vec<Step> {
+    use Step::*;
+    let w0 = Rc::new(Cell::new(0.0f32));
+    let (w1, w2) = (w0.clone(), w0.clone());
+    vec![
+        DoC(
+            "assistant height: open the assistant at the timeline row height",
+            Box::new(move |a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.assistant_full = false;
+                c.assistant_open = true;
+                c.update_ui(a);
+            }),
+        ),
+        DoC(
+            "assistant height: press the header's layout button",
+            Box::new(move |a, ctl| {
+                ctl.borrow_mut().update_ui(a);
+                w1.set(geo().bottom_w);
+                a.global::<Studio>().invoke_chat_toggle_full();
+            }),
+        ),
+        Check(
+            "assistant height: full height is on and saved, the bottom panel narrowed by the assistant's width",
+            Box::new(move |c, _| {
+                let (before, now) = (w2.get(), geo().bottom_w);
+                (c.settings.prefs.assistant_full && now < before - 200.0)
+                    .then_some(())
+                    .ok_or(format!("full {} bottom {before} -> {now}", c.settings.prefs.assistant_full))
+            }),
+        ),
+        Do("assistant height: press it again", Box::new(|a| a.global::<Studio>().invoke_chat_toggle_full())),
+        Check(
+            "assistant height: back to the timeline row, the bottom panel full width again",
+            Box::new(move |c, _| {
+                let now = geo().bottom_w;
+                (!c.settings.prefs.assistant_full && (now - w0.get()).abs() < 0.5).then_some(()).ok_or(format!("bottom {now}"))
+            }),
+        ),
+        DoC("assistant height: close the assistant", Box::new(|_, ctl| ctl.borrow_mut().assistant_open = false)),
+    ]
+}
+
 /// Clip menu Bounce through a third-party plugin (src/clip_render.rs, CHR-38): the CLAP test gain
 /// on a track is edited after the project's state was saved, the clip is bounced, and the file has
 /// the live instance's gain (the plugin was prepared on this thread from its current state and
@@ -17918,6 +17963,119 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(note_redraw_steps());
     all.extend(api_key_steps());
     all.extend(ask_clip_steps());
+    // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
+    // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
+    // once it is on screen, and say what we got.
+    all.insert(
+        0,
+        Step::Do(
+            "window: ask for 1440×820 pt again now that it is shown",
+            Box::new(|a| {
+                let s = a.window().size().to_logical(a.window().scale_factor());
+                eprintln!("self-test: window {}×{} pt at scale {}", s.width, s.height, a.window().scale_factor());
+                if s.width < 1440.0 || s.height < 820.0 {
+                    a.window().set_size(slint::LogicalSize::new(s.width.max(1440.0), s.height.max(820.0)));
+                }
+            }),
+        ),
+    );
+    // The width is what the click targets need (a narrower window squeezes the bottom panels); a
+    // shorter window only scrolls the lanes, which the steps handle. GitHub's Mac gives 1440×677.
+    // The resize is asynchronous (a window-manager round trip on X11): give it about a second.
+    for i in 1..=8 {
+        all.insert(i, Step::Do("window: wait for the resize", Box::new(|_| {})));
+    }
+    all.insert(
+        9,
+        Step::Check(
+            "window: at least 1440 pt wide and 600 pt tall, the room the click targets assume",
+            Box::new(|_, a| {
+                let s = a.window().size().to_logical(a.window().scale_factor());
+                (s.width >= 1440.0 && s.height >= 600.0)
+                    .then_some(())
+                    .ok_or(format!("window {}×{} pt: the screen is too small for the self-test", s.width, s.height))
+            }),
+        ),
+    );
+    let steps = Rc::new(all);
+    let idx = Rc::new(std::cell::Cell::new(0usize));
+    let fails = Rc::new(std::cell::Cell::new(0usize));
+    let skips = Rc::new(std::cell::Cell::new(0usize));
+    let timer = Rc::new(slint::Timer::default());
+    let aw = app.as_weak();
+    let t2 = timer.clone();
+    timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(120), move || {
+        let Some(app) = aw.upgrade() else { return };
+        {
+            let Ok(mut c) = ctl.try_borrow_mut() else { return };
+            if c.pending_jobs > 0 {
+                c.poll_jobs();
+                return;
+            }
+        }
+        let i = idx.get();
+        if i >= steps.len() {
+            let n = steps.iter().filter(|s| matches!(s, Step::Check(..))).count() - skips.get();
+            let skipped = if skips.get() > 0 { format!(" ({} skipped)", skips.get()) } else { String::new() };
+            let fixture = ctl.try_borrow().map(|c| c.devices.catalog.fixture.is_some()).unwrap_or(false);
+            let note =
+                if fixture { " [plugin catalogue from a TEST fixture: the plugin checks did not exercise the engine scanner]" } else { "" };
+            eprintln!(
+                "self-test: {} frames waited for the GPU (at most {} in flight)",
+                crate::gpu::THROTTLED_FRAMES.load(std::sync::atomic::Ordering::Relaxed),
+                crate::gpu::MAX_FRAMES_IN_FLIGHT
+            );
+            println!("self-test: {} / {n} checks passed{skipped}{note}", n - fails.get());
+            finish_run(fails.get());
+            t2.stop();
+            let _ = slint::quit_event_loop();
+            return;
+        }
+        match &steps[i] {
+            Step::DoC(name, f) => {
+                eprintln!("self-test: > {name}");
+                if let Ok(mut c) = ctl.try_borrow_mut() {
+                    c.update_ui(&app);
+                }
+                f(&app, &ctl);
+            }
+            Step::Do(name, f) => {
+                eprintln!("self-test: > {name}");
+                // Push models first, as a rendered frame would: when the window is not
+                // presenting frames (occluded/locked screen) the UI would otherwise act
+                // on stale view models.
+                if let Ok(mut c) = ctl.try_borrow_mut() {
+                    c.update_ui(&app);
+                }
+                f(&app);
+            }
+            Step::Check(name, f) => {
+                // Let the frame update readouts first.
+                if let Ok(mut c) = ctl.try_borrow_mut() {
+                    c.update_ui(&app);
+                }
+                let r = f(&ctl.borrow(), &app);
+                match r {
+                    Ok(()) => println!("PASS {name}"),
+                    // A guarded check that did not run (e.g. needs a plugin window): not counted.
+                    Err(e) if e.starts_with("SKIP: ") => {
+                        skips.set(skips.get() + 1);
+                        println!("SKIP {name}: {}", &e[6..]);
+                    }
+                    Err(e) => {
+                        fails.set(fails.get() + 1);
+                        println!("FAIL {name}: {e}");
+                    }
+                }
+            }
+        }
+        idx.set(i + 1);
+    });
+    // Keep the timer alive for the lifetime of the event loop.
+    std::mem::forget(timer);
+}
+
+    all.extend(assistant_full_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.
