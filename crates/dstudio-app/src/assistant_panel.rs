@@ -4,6 +4,7 @@
 //! `commit` (one undo step, `Origin::Assistant`) → `after_change()`.
 //! Plan errors are shown as an error entry and nothing is executed.
 
+use crate::assistant_provider::Provider;
 use crate::controller::{Controller, JobResult};
 use crate::highlight::{self, Layout};
 use crate::{ChatEntry, HighlightRect};
@@ -52,6 +53,8 @@ pub struct AssistantState {
     pub highlights: Vec<Highlight>,
     /// The user removed the selection from the chat context (until it changes).
     pub context_removed: Option<(Option<u64>, Option<u64>)>,
+    /// The key in use came from the keychain (the panel offers to remove it).
+    pub key_saved: bool,
     /// Bumped when entries change, so the Slint model is rebuilt only then.
     pub rev: u64,
     /// Entries from this index on are new since the last model rebuild (entry animation).
@@ -67,6 +70,7 @@ impl Default for AssistantState {
             busy: None,
             highlights: Vec::new(),
             context_removed: None,
+            key_saved: false,
             rev: 0,
             fresh_from: 0,
         }
@@ -127,6 +131,36 @@ impl AssistantState {
 impl Controller {
     pub fn toggle_assistant(&mut self) {
         self.assistant_open = !self.assistant_open;
+        self.ui_dirty = true;
+    }
+
+    /// The assistant panel's key field: save `key` in the system keychain and use it.
+    pub fn assistant_save_key(&mut self, key: &str) -> bool {
+        let key = key.trim();
+        if let Err(why) = crate::api_key::check(key) {
+            self.set_status(format!("Can't use that API key: {why}"), 5);
+            return false;
+        }
+        if let Err(e) = self.key_store.save(key) {
+            self.set_status(format!("Couldn't save the API key in the keychain: {e}"), 6);
+            return false;
+        }
+        self.provider = std::sync::Arc::new(Provider::from_key(key));
+        self.assistant.key_saved = true;
+        self.set_status("API key saved in your keychain", 3);
+        self.ui_dirty = true;
+        true
+    }
+
+    /// Remove the saved key from the keychain; the assistant stops until a key is added again.
+    pub fn assistant_remove_key(&mut self) {
+        if let Err(e) = self.key_store.delete() {
+            self.set_status(format!("Couldn't remove the API key: {e}"), 6);
+            return;
+        }
+        self.provider = std::sync::Arc::new(Provider::Unavailable);
+        self.assistant.key_saved = false;
+        self.set_status("API key removed", 3);
         self.ui_dirty = true;
     }
 
@@ -223,7 +257,7 @@ impl Controller {
             return false;
         }
         if !self.provider.available() {
-            self.set_status("Set ANTHROPIC_API_KEY to enable the assistant", 4);
+            self.set_status("Add your Anthropic API key to use the assistant", 4);
             return false;
         }
         let mut state = assistant::describe_state(self.project());
@@ -338,7 +372,7 @@ impl Controller {
         };
         let mut e = vec![entry(EntryKind::User, ask, &[], 0.0, false, point)];
         match name {
-            "empty" => e.clear(),
+            "empty" | "key" => e.clear(),
             "turn" | "point" | "draft" => e.push(entry(EntryKind::Reply, reply, if point { &[] } else { &steps }, 4.8, false, false)),
             "steps" => e.push(entry(EntryKind::Reply, reply, &steps, 4.8, true, false)),
             "error" => e.push(entry(

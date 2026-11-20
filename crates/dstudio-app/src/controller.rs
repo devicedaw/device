@@ -568,6 +568,8 @@ pub struct Controller {
     pub assistant_open: bool,
     pub assistant: AssistantState,
     pub provider: Arc<Provider>,
+    /// Where the assistant's API key is kept (src/api_key.rs).
+    pub key_store: crate::api_key::KeyStore,
     ballistics: Ballistics,
     strips_model: Rc<VecModel<MixerStrip>>,
     strip_meters_model: Rc<VecModel<StripMeter>>,
@@ -728,6 +730,7 @@ impl Controller {
             assistant_open: false,
             assistant: AssistantState::default(),
             provider: Arc::new(Provider::Unavailable),
+            key_store: crate::api_key::KeyStore::System,
             ballistics: Ballistics::default(),
             strips_model: Rc::new(VecModel::default()),
             strip_meters_model: Rc::new(VecModel::default()),
@@ -2567,6 +2570,7 @@ impl Controller {
             None => self.chat_saved_w(),
         });
         s.set_chat_available(self.provider.available());
+        s.set_chat_key_saved(self.assistant.key_saved);
         s.set_chat_busy(self.assistant.busy.is_some());
         s.set_chat_notice(self.assistant.notice_visible);
         s.set_teach_mode(self.assistant.mode == dstudio_core::assistant::Mode::Teach);

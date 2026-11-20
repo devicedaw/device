@@ -87,5 +87,54 @@ fn state_description_and_schema_are_well_formed() {
     assert_eq!(s["tracks"][0]["volume_db"], 0.0);
     assert_eq!(s["tempo_bpm"], 120.0);
     let schema = tool_schema();
-    assert_eq!(schema["properties"]["actions"]["items"]["oneOf"].as_array().unwrap().len(), 4);
+    assert_eq!(schema["properties"]["actions"]["items"]["oneOf"].as_array().unwrap().len(), 6);
+    // The model sees each track's chain and the built-ins it may add, with their parameters.
+    assert!(s["tracks"][1]["instrument"]["builtin"].is_string());
+    let cat = builtin_catalog();
+    let cat = cat.as_array().unwrap();
+    assert!(cat.iter().any(|d| d["id"] == "compressor" && d["params"].as_array().is_some_and(|p| !p.is_empty())));
+}
+
+#[test]
+fn the_assistant_adds_a_built_in_effect_and_sets_its_parameters_in_one_step() {
+    let mut d = doc();
+    let audio = d.project().tracks[0].id.0;
+    let raw = format!(
+        r#"{{"actions":[
+        {{"type":"add_builtin_device","track":{audio},"device":"compressor","params":{{"threshold":-18.0}}}},
+        {{"type":"add_builtin_device","track":{audio},"device":"no-such-device"}}
+    ]}}"#
+    );
+    // An unknown device fails the whole turn: nothing half-applies.
+    assert!(matches!(plan(&d, Mode::Assist, &parse_turn(&raw).unwrap()), Err(AssistantError::InvalidEdit { index: 1, .. })));
+    let raw =
+        format!(r#"{{"actions":[{{"type":"add_builtin_device","track":{audio},"device":"compressor","params":{{"threshold":-18.0}}}}]}}"#);
+    let p = plan(&d, Mode::Assist, &parse_turn(&raw).unwrap()).unwrap();
+    assert!(p.summary[0].starts_with("Added Compressor to Audio"), "{:?}", p.summary);
+    commit(&mut d, &p).unwrap();
+    let dev = &d.project().tracks[0].devices[0];
+    assert_eq!(dev.params.get("threshold"), Some(&-18.0));
+    // Its parameter is now in the state, and editable by id.
+    let s = describe_state(d.project());
+    assert_eq!(s["tracks"][0]["devices"][0]["params"]["threshold"], -18.0);
+    let raw = format!(
+        r#"{{"actions":[{{"type":"edit","command":{{"op":"set_device_param","device":{},"param":"threshold","value":-12.0}}}}]}}"#,
+        dev.id.0
+    );
+    let p = plan(&d, Mode::Assist, &parse_turn(&raw).unwrap()).unwrap();
+    commit(&mut d, &p).unwrap();
+    assert_eq!(d.project().tracks[0].devices[0].params.get("threshold"), Some(&-12.0));
+    // Point mode may not add devices.
+    let raw = format!(r#"{{"actions":[{{"type":"add_builtin_device","track":{audio},"device":"compressor"}}]}}"#);
+    assert!(matches!(plan(&d, Mode::Teach, &parse_turn(&raw).unwrap()), Err(AssistantError::EditInTeachMode { index: 0 })));
+}
+
+#[test]
+fn the_state_lists_only_changed_device_parameters() {
+    // The catalogue (every parameter and default) is sent once and cached; each turn's state
+    // carries only what a device changed, so it stays small however many devices there are.
+    let d = doc();
+    let s = describe_state(d.project()).to_string();
+    assert!(s.len() < 8_000, "{} bytes", s.len());
+    assert!(!s.contains("builtin_devices"));
 }

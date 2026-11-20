@@ -684,6 +684,9 @@ export global Studio {
     in property <bool> chat-context-instrument;
     in-out property <string> chat-draft;   // composer text (transient input, not project state)
     in-out property <bool> chat-focused;
+    in property <bool> chat-key-saved;           // the assistant's API key came from the keychain
+    callback chat-save-key(string);
+    callback chat-remove-key();
     in property <[HighlightRect]> highlights;
     callback chat-send(string);
     callback chat-new();
