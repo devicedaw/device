@@ -885,6 +885,7 @@ mod tests {
     fn set() -> LiveSet {
         LiveSet {
             bpm: 100.0,
+            tempo: Vec::new(),
             numerator: 3,
             denominator: 4,
             loop_on: true,

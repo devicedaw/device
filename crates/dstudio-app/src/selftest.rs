@@ -17874,6 +17874,7 @@ fn live_import_steps() -> Vec<Step> {
                 crate::wavgen::write_wav(&wav, 48_000, 1, &samples).unwrap();
                 let set = LiveSet {
                     bpm: 100.0,
+                    tempo: Vec::new(),
                     numerator: 4,
                     denominator: 4,
                     loop_on: false,

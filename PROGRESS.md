@@ -747,3 +747,16 @@ clicking one shows the lane. The transport field shows the tempo at the playhead
 point in effect there ("Tempo Change"). Device readouts, "warp on", Smart Quantize and the recording's live clip use the
 tempo at the playhead or the clip's start. App side: `src/tempo_lane.rs` and the Tempo target in `src/automation.rs`;
 review state `review-tempo-lane`; self-test section `tempo_steps`.
+
+### 2026-11-20: tempo changes in exports
+
+The last of three pull requests for spec 015. Mixdown, Stems and render in place already rendered on the tempo map
+(they render the published snapshot); a test now renders a project with a step offline and finds the click on the
+frame the map gives its beat, in an export as long as the map says. Clip menu › Export MIDI writes a tempo event at
+the clip's start and at each change inside it, a ramp as a step every sixteenth note holding that step's average tempo
+(`smf::tempo_events`), so every step ends when it does in Device. The Live set export writes the tempo envelope with
+an event per point (a step as two events at one beat, ramps as straight segments with an event every sixteenth) and
+gives the rendered audio clips warp markers at every tempo change and ramp sixteenth they cross, so the set plays them
+unstretched; `live_set::validate` checks the envelope's order and range. No set saved by the other application is in
+the repository to confirm how it interpolates between envelope events, so the extra events keep every beat within
+1 ms of Device's timing for a linear or a stepped reading (checked in `tempo_changes_become_an_envelope_and_render_markers`).

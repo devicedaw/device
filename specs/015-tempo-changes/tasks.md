@@ -42,9 +42,9 @@ Tick a task only when its verification passed.
 
 ## PR C: tempo-export
 
-- [ ] T17. Exports: export length and click transient from the map (Mixdown/Stems render) —
+- [x] T17. Exports: export length and click transient from the map (Mixdown/Stems render) —
   verify: `crates/dstudio-engine/tests/tempo.rs` export test
-- [ ] T18. MIDI export tempo events (ramps as sixteenth steps) — verify: `smf` tests
-- [ ] T19. Live set: tempo envelope per point (ramps with sixteenth events), warp markers at
+- [x] T18. MIDI export tempo events (ramps as sixteenth steps) — verify: `smf` tests
+- [x] T19. Live set: tempo envelope per point (ramps with sixteenth events), warp markers at
   tempo points, `validate` checks the envelope — verify: `cargo test -p dstudio-app live_set`
-- [ ] T20. Docs and close: README, PROGRESS.md, roadmap G37, spec Done — verify: `spec-verify`
+- [x] T20. Docs and close: README, PROGRESS.md, roadmap G37, spec Done — verify: `spec-verify`

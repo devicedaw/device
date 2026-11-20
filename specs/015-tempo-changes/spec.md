@@ -1,6 +1,6 @@
 # Tempo changes during a song
 
-Status: Building · Spec: 015 · Issue: none
+Status: Done · Spec: 015 · Issue: none
 
 ## Problem
 
@@ -153,6 +153,12 @@ None. Agreed 2026-11-20:
 - A new point made in an empty tempo lane also puts a point at bar 1 holding the song's tempo, so a click at bar 9
   changes the tempo from bar 9 on, not for the whole song.
 - The master row's pill and picker now name the master volume "Master › Volume" (it said "Track › Volume").
+- The Live set export: no set saved by Live is in the repository's fixtures, so how Live interpolates between tempo
+  envelope events was not checked against one. The export writes a step as two events at one beat and adds an event
+  every sixteenth inside a ramp (and warp markers at the same places in rendered audio), which keeps every beat
+  within 1 ms of Device's timing whether the envelope is read as straight lines in beats or in time.
+- MIDI export writes each ramp sixteenth as the average tempo over that sixteenth, so each step ends exactly where it
+  does on the map (the tempo at the step's start would drift a little over a long ramp).
 - A count-in follows the song's tempo map: the song plays during the count-in bars, so the click there keeps time with
   the music. That is the tempo at the punch point whenever no change falls inside the count-in bars, and before bar 1
   the first tempo holds.
