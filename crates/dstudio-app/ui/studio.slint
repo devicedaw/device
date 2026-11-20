@@ -1101,6 +1101,13 @@ export global Studio {
     in-out property <int> settings-search-focus;
     callback settings-search-edited(string);
     pure callback settings-row-hit(string, string) -> bool;
+    // Settings help (roadmap G12): the sentence for a setting's (i), from src/settings_search.rs,
+    // and the one showing (the (i) under the pointer; "" = none) with the (i)'s bottom-left
+    // corner in window coordinates.
+    pure callback settings-help(string) -> string;
+    in-out property <string> settings-tip;
+    in-out property <length> settings-tip-x;
+    in-out property <length> settings-tip-y;
     callback settings-dropdown(int);
     callback settings-menu-pick(int);
     callback settings-menu-dismiss();

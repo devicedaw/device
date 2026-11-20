@@ -624,6 +624,8 @@ impl Controller {
     pub(crate) fn push_settings(&self, s: &Studio) {
         s.set_settings_open(self.settings.open);
         if !self.settings.open {
+            // A setting's help tip doesn't outlive the window (its (i) may be under the pointer).
+            s.set_settings_tip("".into());
             if self.settings.release_focus.take() {
                 s.set_search_focused(false);
             }

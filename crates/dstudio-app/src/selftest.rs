@@ -13850,6 +13850,75 @@ fn settings_search_steps() -> Vec<Step> {
     ]
 }
 
+/// Moves the pointer along a settings row's label (panel-relative y of the label's top) from its
+/// start until its (i) shows a tip, as a person hovering it would.
+fn hover_settings_info(a: &AppWindow, label_y: f32) {
+    let y = set_y() + label_y + 7.0;
+    for dx in 0..300 {
+        dispatch(a.window(), WindowEvent::PointerMoved { position: LogicalPosition::new(set_x() + 187.0 + 20.5 + dx as f32, y) });
+        if !a.global::<Studio>().get_settings_tip().is_empty() {
+            return;
+        }
+    }
+}
+
+/// Help on every setting (roadmap G12): hovering a row's (i) shows its sentence under it, leaving
+/// it or changing page hides it, and a greyed row says it isn't available.
+fn settings_help_steps() -> Vec<Step> {
+    use Step::*;
+    let tip = |a: &AppWindow| a.global::<Studio>().get_settings_tip().to_string();
+    vec![
+        DoC(
+            "settings help: open Settings › Audio, hover Buffer size's (i)",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().open_settings();
+                a.global::<Studio>().invoke_settings_page_select(1);
+                hover_settings_info(a, 292.5);
+            }),
+        ),
+        Check(
+            "settings help: the tip shows Buffer size's sentence, under its (i), inside Settings",
+            Box::new(move |_, a| {
+                let s = a.global::<Studio>();
+                let (x, y) = (s.get_settings_tip_x(), s.get_settings_tip_y());
+                (tip(a) == crate::settings_search::help("Buffer size")
+                    && x > set_x() + 187.0 + 40.0
+                    && x < set_x() + set_w()
+                    && (y - (set_y() + 292.5 + 11.25)).abs() < 2.0)
+                    .then_some(())
+                    .ok_or(format!("tip {:?} at {x}, {y}", tip(a)))
+            }),
+        ),
+        Do(
+            "settings help: move the pointer back to the start of the label",
+            Box::new(|a| {
+                dispatch(
+                    a.window(),
+                    WindowEvent::PointerMoved { position: LogicalPosition::new(set_x() + 187.0 + 22.0, set_y() + 292.5 + 7.0) },
+                )
+            }),
+        ),
+        Check("settings help: the tip is gone", Box::new(move |_, a| tip(a).is_empty().then_some(()).ok_or(tip(a)))),
+        Do("settings help: hover Mute audio input's (i)", Box::new(|a| hover_settings_info(a, 199.0))),
+        Check(
+            "settings help: Mute audio input's sentence",
+            Box::new(move |_, a| (tip(a) == crate::settings_search::help("Mute audio input")).then_some(()).ok_or(tip(a))),
+        ),
+        Do("settings help: open General", Box::new(|a| a.global::<Studio>().invoke_settings_page_select(0))),
+        Check("settings help: changing page hides the tip", Box::new(move |_, a| tip(a).is_empty().then_some(()).ok_or(tip(a)))),
+        Do("settings help: hover Talk key's (i) (greyed)", Box::new(|a| hover_settings_info(a, 512.0))),
+        Check(
+            "settings help: a greyed row says it isn't available",
+            Box::new(move |_, a| (tip(a) == "Not available in Device.").then_some(()).ok_or(tip(a))),
+        ),
+        DoC("settings help: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
+        Check(
+            "settings help: Settings closed, no tip left",
+            Box::new(move |c, a| (!c.settings.open && tip(a).is_empty()).then_some(()).ok_or(tip(a))),
+        ),
+    ]
+}
+
 /// Mouse & modifiers: ⌥-drag copies a clip, ⇧-drag on its right edge time-stretches it, the
 /// top-right corner loops it, ⌥ + scroll changes the track heights, and a double-click deletes
 /// a piano roll note. Driven through the controller's pointer entry points.
@@ -17958,6 +18027,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(plugin_folder_steps());
     all.extend(default_instrument_steps());
     all.extend(settings_search_steps());
+    all.extend(settings_help_steps());
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());
