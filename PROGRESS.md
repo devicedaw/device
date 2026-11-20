@@ -631,3 +631,14 @@ and play and record through the driver, at the driver's buffer sizes and latenci
 `windows_audio_device.cpp` picks WASAPI or ASIO per setup (`asio:` ids), `asio_device.cpp` drives the driver,
 `asio_convert.hpp` converts its sample formats. Checked with FlexASIO on the Windows test PC (its WASAPI backend; the
 default DirectSound backend stalls after a second, a FlexASIO issue). No hardware ASIO driver tried yet.
+
+### 2026-11-20: edit tools
+
+The timeline header's tool button opens its menu: Selector, Marquee tool and Scissors (spec 012). T toggles Scissors
+with the tool used before. The Marquee tool drags a time range across tracks (snapped, drawn over their lanes);
+Delete, ⌘X, ⌘C, ⌘V, ⌘D, ⌘E and ⌘L act on it, each one undo step. Range edits live in `dstudio_core::range`: they split
+clips at the edges on a copy of the project first, so the batch carries every id and redo is exact, and clips that
+can't be split (warped, reversed, patterns) stay whole. Scissors click splits the clip under the pointer at the snapped
+position. App side: `src/tools.rs`; review states `review-tool-menu` and `review-marquee-range`; self-test section
+`tool_steps`; core tests `tests/range.rs`.
+

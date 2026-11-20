@@ -12054,6 +12054,171 @@ fn snap_steps() -> Vec<Step> {
     ]
 }
 
+/// Edit tools (spec 012): the tool menu picks Scissors, T toggles it, a Scissors click splits a
+/// clip (one undo step), a Marquee drag over two tracks then Delete cuts a hole through both,
+/// ⌘Z restores it, Escape clears the range but keeps the tool.
+fn tool_steps() -> Vec<Step> {
+    use crate::tools::Tool;
+    use Step::*;
+    use dstudio_core::{ClipId, Command, MidiClip, Track, TrackId};
+    const B: i64 = dstudio_core::PPQ;
+    fn spans(c: &Controller, track: usize) -> Vec<(i64, i64)> {
+        c.project().tracks.get(track).map(|t| t.midi_clips.iter().map(|k| (k.start, k.end())).collect()).unwrap_or_default()
+    }
+    // A point low in track `track`'s lane at `beat` (clear of the clip name).
+    fn lane_at(c: &Controller, track: usize, beat: f64) -> (f32, f32) {
+        (lane_x() + c.view.x_of(beat), lane_y0() + c.view.track_top(track) + c.view.pitch(track) * 0.8)
+    }
+    let ids = Rc::new(Cell::new(0u64));
+    let (i1, i2) = (ids.clone(), ids.clone());
+    vec![
+        DoC(
+            "tools: two instrument tracks on top, each with a MIDI clip on beats 0-8",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.mixer_open {
+                    c.toggle_mixer();
+                }
+                let n = c.project().next_id;
+                let track = |id: u64, name: &str| {
+                    Track::new(TrackId(id), dstudio_core::TrackKind::Instrument, name, dstudio_core::ColorIndex::FIRST)
+                };
+                c.execute(Command::Batch {
+                    label: "tools test".into(),
+                    commands: vec![
+                        Command::AddTrack { index: Some(0), track: track(n, "Tools A") },
+                        Command::AddTrack { index: Some(1), track: track(n + 1, "Tools B") },
+                        Command::AddMidiClip { track: TrackId(n), clip: MidiClip { id: ClipId(n + 2), ..MidiClip::empty(0, 8 * B) } },
+                        Command::AddMidiClip { track: TrackId(n + 1), clip: MidiClip { id: ClipId(n + 3), ..MidiClip::empty(0, 8 * B) } },
+                    ],
+                });
+                i1.set(n);
+                c.view.scroll_y = 0.0;
+                c.view.start_beats = 0.0;
+                c.snap.on = true;
+                c.snap.grid = None;
+                c.select_clip(None);
+                c.ui_dirty = true;
+            }),
+        ),
+        Do(
+            "tools: open the tool menu and pick Scissors",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_tool_menu_toggle(900.0, 40.0);
+                s.invoke_tool_pick(2);
+            }),
+        ),
+        Check(
+            "tools: Scissors is the tool, the header shows it, the menu closed",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                (c.tools.tool == Tool::Scissors && s.get_tool() == 2 && !s.get_tool_menu_open()).then_some(()).ok_or(format!(
+                    "tool {:?} header {} open {}",
+                    c.tools.tool,
+                    s.get_tool(),
+                    s.get_tool_menu_open()
+                ))
+            }),
+        ),
+        Do("tools: T", Box::new(|a| key(a, "t", false, false))),
+        Check(
+            "tools: T went back to Selector",
+            Box::new(|c, _| (c.tools.tool == Tool::Selector).then_some(()).ok_or(format!("tool {:?}", c.tools.tool))),
+        ),
+        Do("tools: T again", Box::new(|a| key(a, "t", false, false))),
+        DoC(
+            "tools: a Scissors click at beat 4 of the first clip",
+            Box::new(|a, ctl| {
+                let (x, y) = lane_at(&ctl.borrow(), 0, 4.0);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "tools: the clip is cut in two at beat 4, one Split Clip step",
+            Box::new(|c, _| {
+                (spans(c, 0) == [(0, 4 * B), (4 * B, 8 * B)] && c.doc.undo_label() == Some("Split Clip")).then_some(()).ok_or(format!(
+                    "spans {:?} undo {:?}",
+                    spans(c, 0),
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        Do(
+            "tools: pick the Marquee tool",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_tool_menu_toggle(900.0, 40.0);
+                s.invoke_tool_pick(1);
+            }),
+        ),
+        DoC(
+            "tools: drag a range from beat 2 on the first track to beat 6 on the second",
+            Box::new(|a, ctl| {
+                let ((x0, y0), (x1, y1)) = {
+                    let c = ctl.borrow();
+                    (lane_at(&c, 0, 2.0), lane_at(&c, 1, 6.0))
+                };
+                drag(a, x0, y0, x1, y1);
+            }),
+        ),
+        Check(
+            "tools: the range covers beats 2-6 on both tracks and shows",
+            Box::new(move |c, a| {
+                let n = i2.get();
+                let want = Some(dstudio_core::range::TimeRange { start: 2 * B, end: 6 * B, tracks: vec![TrackId(n), TrackId(n + 1)] });
+                (c.tools.range == want && a.global::<Studio>().get_range_on()).then_some(()).ok_or(format!("range {:?}", c.tools.range))
+            }),
+        ),
+        Do("tools: Delete", Box::new(|a| key(a, Key::Delete, false, false))),
+        Check(
+            "tools: both tracks lost beats 2-6 in one Delete Range step",
+            Box::new(|c, _| {
+                let want = [(0, 2 * B), (6 * B, 8 * B)];
+                (spans(c, 0) == want && spans(c, 1) == want && c.doc.undo_label() == Some("Delete Range")).then_some(()).ok_or(format!(
+                    "spans {:?} {:?} undo {:?}",
+                    spans(c, 0),
+                    spans(c, 1),
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        Do("tools: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check(
+            "tools: undo brought the clips back",
+            Box::new(|c, _| {
+                (spans(c, 0) == [(0, 4 * B), (4 * B, 8 * B)] && spans(c, 1) == [(0, 8 * B)]).then_some(()).ok_or(format!(
+                    "spans {:?} {:?}",
+                    spans(c, 0),
+                    spans(c, 1)
+                ))
+            }),
+        ),
+        Do("tools: Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check(
+            "tools: Escape cleared the range and kept the Marquee tool",
+            Box::new(|c, _| {
+                (c.tools.range.is_none() && c.tools.tool == Tool::Marquee)
+                    .then_some(())
+                    .ok_or(format!("range {:?} tool {:?}", c.tools.range, c.tools.tool))
+            }),
+        ),
+        DoC(
+            "tools: back to Selector, remove the test tracks",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.set_tool(Tool::Selector);
+                let n = ids.get();
+                c.execute(Command::Batch {
+                    label: "tools test cleanup".into(),
+                    commands: vec![Command::RemoveTrack { track: TrackId(n + 1) }, Command::RemoveTrack { track: TrackId(n) }],
+                });
+                c.ui_dirty = true;
+            }),
+        ),
+    ]
+}
+
 /// The transport bar's project fields: tempo drag (one undo step), typed tempo, tap tempo (one
 /// undo step per series), the Sig menu and the key picker. Puts 120 BPM, 4/4 and no key back.
 fn transport_fields_steps() -> Vec<Step> {
@@ -16742,6 +16907,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
+    all.extend(tool_steps());
     all.extend(transport_fields_steps());
     all.extend(track_rename_steps());
     all.extend(track_menu_steps());

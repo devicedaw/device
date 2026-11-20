@@ -914,6 +914,24 @@ export global Studio {
     callback snap-menu-toggle(length, length);
     callback snap-menu-pick(int);
     callback snap-menu-dismiss();
+    // Timeline edit tools (src/tools.rs): 0 Selector, 1 Marquee tool, 2 Scissors; the header menu;
+    // the Marquee range and the Scissors cut line, in lane coordinates.
+    in property <int> tool;
+    in property <bool> tool-menu-open;
+    in property <length> tool-menu-x;
+    in property <length> tool-menu-y;
+    in property <bool> range-on;
+    in property <length> range-x;
+    in property <length> range-y;
+    in property <length> range-w;
+    in property <length> range-h;
+    in property <bool> cut-on;
+    in property <length> cut-x;
+    in property <length> cut-y;
+    in property <length> cut-h;
+    callback tool-menu-toggle(length, length);
+    callback tool-pick(int);
+    callback tool-menu-dismiss();
     // ---- return tracks, sends and Out (src/routing.rs) ----
     in-out property <int> strip-tab;               // channel strip tab: 0 Input, 1 Sends (view state)
     in property <bool> returns-shown;             // Timeline Returns pill lit (return rows show)
