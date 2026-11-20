@@ -113,7 +113,7 @@ impl MenuAction {
             MenuAction::Disable | MenuAction::Enable => "0",
             MenuAction::Ask => "⌘ K",
             MenuAction::Paste => "⌘ V",
-            MenuAction::InsertMidiClip => "⇧⌘ M",
+            MenuAction::InsertMidiClip => "⌘⇧ M",
             MenuAction::SectionDelete | MenuAction::TrackDelete => "Del",
             MenuAction::TrackDuplicate => "⌘ D",
             MenuAction::TrackDuplicateClips => "⌘⇧ D",
@@ -145,6 +145,7 @@ impl MenuAction {
                 | MenuAction::TrackDelete
                 | MenuAction::AddAudioTrack
                 | MenuAction::TrackRename
+                | MenuAction::InsertMidiClip
         )
     }
     fn submenu(self) -> bool {
