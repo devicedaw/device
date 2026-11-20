@@ -236,7 +236,7 @@ struct Router {
                 const SendNode& send = g.sends[s];
                 if (send.pre_fader != pre) continue;
                 DelayLine* const line = send_line(s);
-                if (!track.send_live) {
+                if (!track.send_live || !send.live) {
                     if (line != nullptr) line->discard(frames, gen);
                     continue;
                 }

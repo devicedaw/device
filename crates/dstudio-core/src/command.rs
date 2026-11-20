@@ -720,6 +720,14 @@ impl Command {
                 }
                 let t = p.tracks.remove(i);
                 p.tracks.insert(index, t);
+                // A return sends only down the list (spec 016): refuse a move that would turn one
+                // of its sends, or a send into it, upward.
+                if let Some((from, to)) = p.return_order_conflict() {
+                    let t = p.tracks.remove(index);
+                    p.tracks.insert(i, t);
+                    let name = |id: TrackId| p.track(id).map(|t| t.name.clone()).unwrap_or_default();
+                    return Err(invalid("index", format!("{} sends into {}: remove that send to move it here", name(from), name(to))));
+                }
                 Ok(Command::MoveTrack { track, index: i })
             }
             Command::SetTrackColor { track, color } => {
@@ -1418,14 +1426,16 @@ impl Command {
                 Ok(Command::SetAutomationLane { track, target, lane: old })
             }
             Command::SetSends { track, sends } => {
-                let t = p.track(track).ok_or(EditError::TrackNotFound(track))?;
-                validate_routing(p, track, t.kind, &sends, t.output)?;
+                let at = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
+                let t = &p.tracks[at];
+                validate_routing(p, track, t.kind, at, &sends, t.output)?;
                 let old = std::mem::replace(&mut p.track_mut(track).expect("checked").sends, sends);
                 Ok(Command::SetSends { track, sends: old })
             }
             Command::SetTrackOutput { track, output } => {
-                let t = p.track(track).ok_or(EditError::TrackNotFound(track))?;
-                validate_routing(p, track, t.kind, &[], output)?;
+                let at = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
+                let t = &p.tracks[at];
+                validate_routing(p, track, t.kind, at, &[], output)?;
                 let old = std::mem::replace(&mut p.track_mut(track).expect("checked").output, output);
                 Ok(Command::SetTrackOutput { track, output: old })
             }
@@ -1522,23 +1532,33 @@ fn kind_name(k: TrackKind) -> &'static str {
     }
 }
 
-/// Sends and output of track `id` (of `kind`; id 0 = a track not added yet): sends only from
-/// ordinary tracks, each into a different return track at 0 ..= +6 dB; the output is the master
-/// or, for ordinary tracks, a return or group track. Returns and groups play into the master and
-/// send nothing (groups don't nest).
-fn validate_routing(p: &Project, id: TrackId, kind: TrackKind, sends: &[TrackSend], output: Option<TrackId>) -> Result<(), EditError> {
+/// Sends and output of track `id` (of `kind`; id 0 = a track not added yet), which sits at (or
+/// is inserted at) index `at` of the track list: each send into a different return track at
+/// 0 ..= +6 dB, and from a return only into a return after it (spec 016), so sends never loop;
+/// the output is the master or, for ordinary tracks, a return or group track. Returns and groups
+/// play into the master (groups don't nest).
+fn validate_routing(
+    p: &Project,
+    id: TrackId,
+    kind: TrackKind,
+    at: usize,
+    sends: &[TrackSend],
+    output: Option<TrackId>,
+) -> Result<(), EditError> {
     let is_return_track = |t: TrackId| t != id && p.track(t).is_some_and(|t| t.is_return());
     let is_bus_track = |t: TrackId| t != id && p.track(t).is_some_and(|t| t.is_bus());
-    // Group tracks may send into returns (returns never send, so sends form no loop).
-    if kind == TrackKind::Return && !sends.is_empty() {
-        return Err(invalid("track", "a return track has no sends"));
-    }
+    // A track already in the list is passed over; one being inserted pushes the later ones down.
+    let present = p.track_index(id).is_some();
+    let later = |t: TrackId| p.track_index(t).is_some_and(|j| if present { j > at } else { j >= at });
     if matches!(kind, TrackKind::Return | TrackKind::Group) && output.is_some() {
         return Err(invalid("track", "a return or group track plays into the master"));
     }
     for (i, s) in sends.iter().enumerate() {
         if !is_return_track(s.target) {
             return Err(invalid("sends", format!("{} is not a return track", s.target.0)));
+        }
+        if kind == TrackKind::Return && !later(s.target) {
+            return Err(invalid("sends", format!("a return track sends only into a later return, not {}", s.target.0)));
         }
         if !(0.0..=TrackSend::MAX_LEVEL).contains(&s.level) {
             return Err(invalid("sends", format!("level {} is outside 0..={}", s.level, TrackSend::MAX_LEVEL)));
@@ -1623,7 +1643,7 @@ fn add_track(p: &mut Project, index: Option<usize>, mut track: Track, restore: b
     if idx < lo || idx > hi {
         return Err(invalid("index", format!("{idx} is outside {lo}..={hi}")));
     }
-    validate_routing(p, track.id, track.kind, &track.sends, track.output)?;
+    validate_routing(p, track.id, track.kind, idx, &track.sends, track.output)?;
     if track.id.0 == 0 {
         track.id = TrackId(p.alloc_id());
     }

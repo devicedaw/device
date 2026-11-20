@@ -541,21 +541,63 @@ int32_t apply_routing(RenderGraph& g, const se_session_desc_v9& desc9, std::stri
             }
         }
     }
-    // Mute and solo.
+    // Mute and solo, one rule for every bus (returns and groups, spec 016).
+    // With no bus soloed, buses are solo-safe: each plays and sends while
+    // unmuted. With a bus soloed, `heard` is the soloed buses and every bus
+    // they reach through unmuted buses' sends: those play on the master.
+    // `feeds` is every bus that reaches a soloed one: it keeps sending (so the
+    // soloed bus sounds as in the full mix) without being heard. A bus that is
+    // heard only downstream of a soloed one takes only what comes down that
+    // path (SendNode::live). Ordinary tracks follow spec 002 as before.
     bool solo_track = false, solo_return = false;
     for (std::size_t t = 0; t < n; ++t)
         (g.tracks[t].is_return ? solo_return : solo_track) |= desc.tracks[t].solo != 0;
+    std::vector<uint8_t> soloed(g.bus_count, 0), heard(g.bus_count, 0), feeds(g.bus_count, 0);
+    if (solo_return) {
+        std::vector<std::size_t> bus_track(g.bus_count, 0);
+        for (std::size_t t = 0; t < n; ++t)
+            if (g.tracks[t].bus >= 0) bus_track[static_cast<std::size_t>(g.tracks[t].bus)] = t;
+        for (uint32_t b = 0; b < g.bus_count; ++b) soloed[b] = heard[b] = desc.tracks[bus_track[b]].solo != 0;
+        // The bus graph is acyclic (checked above) and small: repeat until nothing changes.
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (uint32_t b = 0; b < g.bus_count; ++b) {
+                const TrackNode& node = g.tracks[bus_track[b]];
+                if (static_mute(desc.tracks[bus_track[b]])) continue;
+                for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s) {
+                    const auto to = static_cast<std::size_t>(g.sends[s].bus);
+                    if (heard[b] && !heard[to]) {
+                        heard[to] = 1;
+                        changed = true;
+                    }
+                    if (!feeds[b] && (soloed[to] || feeds[to])) {
+                        feeds[b] = 1;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    // Heard only downstream of a soloed bus: fed by that path alone.
+    const auto downstream_only = [&](int32_t bus) {
+        const auto b = static_cast<std::size_t>(bus);
+        return solo_return && heard[b] && !soloed[b] && !feeds[b];
+    };
     for (std::size_t t = 0; t < n; ++t) {
         TrackNode& node = g.tracks[t];
         const se_track_desc_v6& td = desc.tracks[t];
         const bool on = !static_mute(td);
+        const bool on_path = node.is_return && heard[static_cast<std::size_t>(node.bus)];
         if (node.is_return) {
-            node.main_on = on && (!solo_return || td.solo != 0);
-            node.send_live = node.main_on;
+            node.main_on = on && (!solo_return || on_path);
+            node.send_live = on && (!solo_return || on_path || feeds[static_cast<std::size_t>(node.bus)]);
         } else {
             node.send_live = on && (!solo_track || td.solo != 0);
-            node.main_on = node.out_bus >= 0 ? node.send_live : on && ((!solo_track && !solo_return) || td.solo != 0);
+            node.main_on = node.out_bus >= 0 ? node.send_live && !downstream_only(node.out_bus)
+                                             : on && ((!solo_track && !solo_return) || td.solo != 0);
         }
+        for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s)
+            g.sends[s].live = on_path || !downstream_only(g.sends[s].bus);
         node.audible = node.main_on || (node.send_live && node.send_count > 0);
         node.plain = node.send_count == 0 && node.out_bus < 0 && node.bus < 0;
     }

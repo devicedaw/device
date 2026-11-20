@@ -87,7 +87,8 @@ struct Result {
 // `pdc` on/off. routing (se_session_publish_v9, plugins 0): 1 = two return
 // tracks, every track sending to both (one post-, one pre-fader); 2 = the
 // same with a DStudioTestLatency (N = `latency`) on the first return, so every
-// track's output also runs through an edge delay line. strip
+// track's output also runs through an edge delay line; 3 = routing 1 plus a
+// send from the first return into the second (spec 016). strip
 // (se_session_publish_v10, plugins 0, routing 0): 1 = trim and width on every
 // track; 2 = trim and mono on every track.
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
@@ -260,6 +261,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
             r6.push_back(d);
             routes.push_back({id, 0, 1, {}});
         }
+        if (routing == 3) sends.push_back({9001, 9002, 0.5f, 0, {}}); // Return A into Return B
         sd9.v8.v7.v6 = se_session_desc_v6{r6.data(), static_cast<uint32_t>(r6.size()), 0.5f, nullptr, 0, 0};
         sd9.routes = routes.data();
         sd9.route_count = static_cast<uint32_t>(routes.size());
@@ -765,9 +767,12 @@ int main(int argc, char** argv) {
                 clips_per_track);
     std::printf("%22s %14s %14s %14s %16s\n", "routing", "avg us/block", "p99 us/block", "max us/block",
                 "realtime ratio");
-    for (const int routing : {0, 1, 2}) {
+    for (const int routing : {0, 1, 3, 2}) {
         const Result r = run(32, clips_per_track, blocks, files, features, 0, 1024, true, false, 0.0f, {}, routing);
-        const char* name = routing == 0 ? "none (same tracks)" : routing == 1 ? "2 returns, 64 sends" : "+ 1024-frame return";
+        const char* name = routing == 0   ? "none (same tracks)"
+                           : routing == 1 ? "2 returns, 64 sends"
+                           : routing == 3 ? "+ A into B"
+                                          : "+ 1024-frame return";
         std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
                     r.us_per_block_max, r.rt_ratio);
     }

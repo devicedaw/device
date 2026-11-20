@@ -588,8 +588,25 @@ impl Project {
         self.returns().position(|t| t.id == id)
     }
 
+    /// Track `from` may send into `to` (spec 016): an ordinary or group track into any return
+    /// track, a return track into a return after it. Signal always flows down the return list,
+    /// so return sends can't form a loop.
+    pub fn send_allowed(&self, from: TrackId, to: TrackId) -> bool {
+        let (Some(f), Some(t)) = (self.track_index(from), self.track_index(to)) else { return false };
+        from != to && self.tracks[t].is_return() && (!self.tracks[f].is_return() || t > f)
+    }
+
+    /// The first send from a return into a return before it, as (sender, target): what a return
+    /// move must not leave behind. None in a valid project.
+    pub fn return_order_conflict(&self) -> Option<(TrackId, TrackId)> {
+        self.tracks.iter().enumerate().filter(|(_, t)| t.is_return()).find_map(|(i, r)| {
+            r.sends.iter().find(|s| self.track_index(s.target).is_some_and(|j| j <= i)).map(|s| (r.id, s.target))
+        })
+    }
+
     /// Repairs routing a hand-edited or damaged file could hold: return tracks move after the
-    /// ordinary tracks (keeping their order) and lose any sends, output, input, arm or monitor.
+    /// ordinary tracks (keeping their order) and lose any output, input, arm or monitor, and any
+    /// send that isn't into a later return (spec 016).
     /// A return holding clips or an instrument, or beyond the first [MAX_RETURNS], loads as an
     /// ordinary track instead, so nothing in the file is lost. Sends and outputs that don't name a
     /// return track and duplicate sends are dropped, levels are clamped. Valid projects are unchanged.
@@ -647,8 +664,18 @@ impl Project {
             }
         }
         self.tracks = ordinary;
-        for mut r in returns {
-            r.sends.clear();
+        for (i, mut r) in returns.into_iter().enumerate() {
+            // A return keeps its sends into later returns (one per target); anything else would
+            // send up the list or into a track that isn't a return.
+            let mut seen = Vec::new();
+            r.sends.retain(|s| {
+                let ok = return_ids[i + 1..].contains(&s.target) && !seen.contains(&s.target);
+                seen.push(s.target);
+                ok
+            });
+            for s in &mut r.sends {
+                s.level = if s.level.is_finite() { s.level.clamp(0.0, TrackSend::MAX_LEVEL) } else { 0.0 };
+            }
             r.output = None;
             self.tracks.push(r);
         }
