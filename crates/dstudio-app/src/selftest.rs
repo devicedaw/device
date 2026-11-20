@@ -12506,6 +12506,250 @@ fn tool_steps() -> Vec<Step> {
     ]
 }
 
+/// Tempo changes (spec 015): the master row's picker chooses Song › Tempo; clicking the line at
+/// bar 3 and dragging up adds a faster point (the song keeps 120 before it), one more point at
+/// bar 5, a point's menu makes it ramp; the transport field shows the tempo at the playhead at two
+/// positions; the ruler shows a mark per point and clicking one shows the lane; undo takes every
+/// step back to one tempo.
+fn tempo_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::{AutomationTarget, TempoPoint};
+    const B: i64 = dstudio_core::PPQ;
+    let start: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    let s1 = start.clone();
+    fn master_row(c: &Controller) -> Option<crate::automation::Row> {
+        c.auto_rows().into_iter().find(|r| r.master)
+    }
+    // Window point on the master row's tempo line (or a point's value) at `beat`.
+    fn on_line(c: &Controller, beat: f64, bpm: Option<f64>) -> (f32, f32) {
+        let r = master_row(c).expect("master row");
+        let v = bpm.map_or_else(
+            || {
+                c.lane(None, &AutomationTarget::Tempo)
+                    .and_then(|l| l.value_at((beat * B as f64) as i64))
+                    .unwrap_or(c.project().transport.bpm as f32)
+            },
+            |b| b as f32,
+        );
+        (lane_x() + c.view.x_of(beat), lane_y0() + r.y_of(crate::automation::norm_of(&AutomationTarget::Tempo, v)))
+    }
+    fn tempo(c: &Controller) -> Vec<TempoPoint> {
+        c.project().transport.tempo.clone()
+    }
+    fn right_click(a: &AppWindow, x: f32, y: f32) {
+        let w = a.window();
+        let p = LogicalPosition::new(x, y);
+        dispatch(w, WindowEvent::PointerMoved { position: p });
+        dispatch(w, WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        dispatch(w, WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+    }
+    vec![
+        DoC(
+            "tempo: 120 BPM, no changes, lanes shown, mixer closed, timeline at bar 1",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.mixer_open {
+                    c.toggle_mixer();
+                }
+                c.execute(dstudio_core::Command::SetTempo { bpm: 120.0, at: None });
+                s1.set(c.doc.history_labels().len());
+                if !c.auto.shown {
+                    c.auto_toggle_shown();
+                }
+                c.view.start_beats = 0.0;
+                c.view.px_per_beat = 30.0;
+                c.snap.on = true;
+                c.seek_beats(0.0);
+                c.ui_dirty = true;
+            }),
+        ),
+        DoC(
+            "tempo: the master pill's picker: Song › Tempo",
+            Box::new(|a, _| {
+                let s = a.global::<Studio>();
+                s.invoke_auto_open_picker(-1, 200.0, 500.0);
+                s.invoke_picker_pick(0);
+                s.invoke_picker_sub_pick(0);
+            }),
+        ),
+        Check(
+            "tempo: the master row shows Song › Tempo at 120.00 BPM",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let labels = s.get_auto_labels();
+                let text = (0..labels.row_count()).filter_map(|i| labels.row_data(i)).map(|l| l.text.to_string()).collect::<Vec<_>>();
+                (c.auto_target(None) == AutomationTarget::Tempo
+                    && s.get_master_auto_cat() == "Song"
+                    && s.get_master_auto_param() == "Tempo"
+                    && text.iter().any(|t| t == "120.00 BPM"))
+                .then_some(())
+                .ok_or(format!(
+                    "target {:?} pill {} {} labels {text:?}",
+                    c.auto_target(None),
+                    s.get_master_auto_cat(),
+                    s.get_master_auto_param()
+                ))
+            }),
+        ),
+        DoC(
+            "tempo: click the line at bar 3 and drag the new point up",
+            Box::new(|a, ctl| {
+                let (x, y) = on_line(&ctl.borrow(), 8.0, None);
+                drag(a, x, y, x, y - 18.0);
+            }),
+        ),
+        Check(
+            "tempo: a faster whole-BPM point at bar 3, 120 kept from bar 1, one Edit Tempo Automation step",
+            Box::new(|c, _| {
+                let t = tempo(c);
+                (t.len() == 2
+                    && t[0] == TempoPoint { time: 0, bpm: 120.0, ramp: false }
+                    && t[1].time == 8 * B
+                    && t[1].bpm > 125.0
+                    && t[1].bpm.fract() == 0.0
+                    && c.project().transport.bpm == 120.0
+                    && c.doc.undo_label() == Some("Edit Tempo Automation"))
+                .then_some(())
+                .ok_or(format!("tempo {t:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "tempo: click the line at bar 5 and drag that point down",
+            Box::new(|a, ctl| {
+                let (x, y) = on_line(&ctl.borrow(), 16.0, None);
+                drag(a, x, y, x, y + 25.0);
+            }),
+        ),
+        DoC(
+            "tempo: right-click the bar 3 point, Ramp to Next Point",
+            Box::new(|a, ctl| {
+                let (x, y) = {
+                    let c = ctl.borrow();
+                    on_line(&c, 8.0, Some(tempo(&c)[1].bpm))
+                };
+                right_click(a, x, y);
+                let s = a.global::<Studio>();
+                let items = s.get_menu_items();
+                if let Some(i) =
+                    (0..items.row_count()).find(|&i| items.row_data(i).is_some_and(|m| m.label == "Ramp to Next Point" && m.enabled))
+                {
+                    s.invoke_menu_activate(i as i32);
+                }
+            }),
+        ),
+        Check(
+            "tempo: three points, the bar 3 point ramps down to the slower bar 5 point",
+            Box::new(|c, _| {
+                let t = tempo(c);
+                (t.len() == 3
+                    && t[1].ramp
+                    && !t[2].ramp
+                    && t[2].time == 16 * B
+                    && t[2].bpm < t[1].bpm
+                    && c.doc.undo_label() == Some("Edit Tempo Automation"))
+                .then_some(())
+                .ok_or(format!("tempo {t:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        DoC("tempo: playhead to beat 4", Box::new(|_, ctl| ctl.borrow_mut().seek_beats(4.0))),
+        Check(
+            "tempo: the transport field shows 120 before the change",
+            Box::new(|_, a| {
+                let t = a.global::<Studio>().get_bpm_text();
+                (t == "120").then_some(()).ok_or(format!("text {t}"))
+            }),
+        ),
+        DoC("tempo: playhead to beat 12, halfway down the ramp", Box::new(|_, ctl| ctl.borrow_mut().seek_beats(12.0))),
+        Check(
+            "tempo: the transport field shows the tempo halfway down the ramp",
+            Box::new(|c, a| {
+                let t = tempo(c);
+                let want = crate::transport_fields::fmt_bpm((t[1].bpm + t[2].bpm) / 2.0);
+                let text = a.global::<Studio>().get_bpm_text();
+                (text == want.as_str()).then_some(()).ok_or(format!("text {text} want {want}"))
+            }),
+        ),
+        DoC("tempo: type 100 in the field at beat 12", Box::new(|a, _| a.global::<Studio>().invoke_tempo_text("100".into()))),
+        Check(
+            "tempo: the point in effect (bar 3) is 100, a Tempo Change step",
+            Box::new(|c, _| {
+                let t = tempo(c);
+                (t[1].bpm == 100.0 && t[0].bpm == 120.0 && c.doc.undo_label() == Some("Tempo Change"))
+                    .then_some(())
+                    .ok_or(format!("tempo {t:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        Check(
+            "tempo: the ruler marks every point, the ramp with an arrow",
+            Box::new(|c, a| {
+                let marks = a.global::<Studio>().get_tempo_marks();
+                let text = (0..marks.row_count()).filter_map(|i| marks.row_data(i)).map(|m| m.text.to_string()).collect::<Vec<_>>();
+                let t = tempo(c);
+                let want = vec![
+                    crate::tempo_lane::mark_text(120.0, None),
+                    crate::tempo_lane::mark_text(t[1].bpm, Some(t[2].bpm)),
+                    crate::tempo_lane::mark_text(t[2].bpm, None),
+                ];
+                (text == want).then_some(()).ok_or(format!("marks {text:?} want {want:?}"))
+            }),
+        ),
+        DoC(
+            "tempo: hide the lanes, click the bar 3 mark on the ruler",
+            Box::new(|a, ctl| {
+                let m = {
+                    let mut c = ctl.borrow_mut();
+                    c.auto_toggle_shown();
+                    c.auto.targets.insert(None, AutomationTarget::Volume);
+                    c.tempo_marks()[1].clone()
+                };
+                click(a, lane_x() + m.text_x + 4.0, lane_y0() + 5.0);
+            }),
+        ),
+        Check(
+            "tempo: the lanes show with Song › Tempo",
+            Box::new(|c, _| {
+                (c.auto.shown && c.auto_target(None) == AutomationTarget::Tempo).then_some(()).ok_or(format!(
+                    "shown {} target {:?}",
+                    c.auto.shown,
+                    c.auto_target(None)
+                ))
+            }),
+        ),
+        DoC(
+            "tempo: undo every step",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                while c.doc.history_labels().len() > start.get() {
+                    c.undo();
+                }
+            }),
+        ),
+        Check(
+            "tempo: one tempo again, 120 BPM, no marks",
+            Box::new(|c, a| {
+                let marks = a.global::<Studio>().get_tempo_marks().row_count();
+                (tempo(c).is_empty() && c.project().transport.bpm == 120.0 && marks == 0).then_some(()).ok_or(format!(
+                    "tempo {:?} bpm {} marks {marks}",
+                    tempo(c),
+                    c.project().transport.bpm
+                ))
+            }),
+        ),
+        DoC(
+            "tempo: master row back to Volume, lanes hidden, playhead at 0",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.auto.targets.insert(None, AutomationTarget::Volume);
+                if c.auto.shown {
+                    c.auto_toggle_shown();
+                }
+                c.seek_beats(0.0);
+                c.ui_dirty = true;
+            }),
+        ),
+    ]
+}
+
 /// The transport bar's project fields: tempo drag (one undo step), typed tempo, tap tempo (one
 /// undo step per series), the Sig menu and the key picker. Puts 120 BPM, 4/4 and no key back.
 fn transport_fields_steps() -> Vec<Step> {
@@ -17474,6 +17718,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(tool_steps());
     all.extend(zoom_slider_steps());
     all.extend(transport_fields_steps());
+    all.extend(tempo_steps());
     all.extend(track_rename_steps());
     all.extend(track_menu_steps());
     all.extend(group_steps());

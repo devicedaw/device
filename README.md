@@ -48,6 +48,9 @@ wgpu.
   several and move, duplicate, copy, paste, disable or delete them together. Drag the square handles at an audio
   clip's top corners to fade it in and out. Set the tempo in the
   transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
+  For a song that changes tempo, pick Song › Tempo on the master row's lane: click the line to add a tempo change,
+  drag it, and right-click a point to ramp smoothly to the next one. The ruler marks every change, and the transport
+  bar shows and edits the tempo at the playhead.
   A new key for a project with MIDI clips offers to transpose them with it.
   Markers label the parts of a song on the ruler; right-click one to cut, copy, paste, colour or rename it, or to insert
   a marker before or after it. Turn on Settings › General › Sections move clips and moving, resizing, copying or
@@ -226,7 +229,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Automation | ✅ | |
 | Delay compensation | ✅ | |
 | Export | ✅ | |
-| Tempo changes | 🚧 | Projects with tempo changes play, record and render on the map; editing them in the app (the tempo lane) and writing them to MIDI files and Live sets are next |
+| Tempo changes | 🚧 | Writing them to MIDI files and Live sets |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
 | Windows and Linux audio | 🚧 | Windows: playback, recording, buffer sizes down to 128 samples and switching outputs checked on one PC's built-in sound card (WASAPI shared mode); ASIO drivers play and record, checked with FlexASIO only (no hardware ASIO driver yet); no exclusive mode. Linux plays through PipeWire or straight through ALSA in CI on a headless PipeWire server, but has not run on a physical sound card |
 | Releases and branding | 🚧 | 0.2.0 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is not notarised yet and Windows packages are not signed |

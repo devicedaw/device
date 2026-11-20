@@ -164,6 +164,11 @@ pub enum AutomationTarget {
     Width,
     /// Channel-strip mono fold: 1 = mono (stepped).
     Mono,
+    /// The song tempo in BPM (spec 015). Not a lane the project stores: the app shows the tempo
+    /// map (`Transport::tempo`) through it on the master row, a point's `curve` 0 holding its tempo
+    /// and anything else ramping linearly to the next point, and commits `Command::SetTempoMap`.
+    /// `SetAutomationLane` refuses it.
+    Tempo,
 }
 
 pub const VOLUME_MIN_DB: f32 = -60.0;
@@ -180,6 +185,7 @@ impl AutomationTarget {
             AutomationTarget::Mute | AutomationTarget::DeviceOn { .. } | AutomationTarget::Mono => (0.0, 1.0),
             AutomationTarget::Trim => crate::Track::TRIM_RANGE_DB,
             AutomationTarget::Width => crate::Track::WIDTH_RANGE,
+            AutomationTarget::Tempo => (crate::command::MIN_BPM as f32, crate::command::MAX_BPM as f32),
         }
     }
 
@@ -239,6 +245,7 @@ impl AutomationTarget {
             AutomationTarget::Width => ("Track".into(), "Width".into()),
             AutomationTarget::Mono => ("Track".into(), "Mono".into()),
             AutomationTarget::DeviceOn { name, .. } => (name.clone(), "On".into()),
+            AutomationTarget::Tempo => ("Song".into(), "Tempo".into()),
         }
     }
 }
@@ -301,8 +308,12 @@ impl AutomationLane {
         if b.time == a.time {
             return Some(b.value);
         }
-        if self.target.stepped() {
+        if self.target.stepped() || (self.target == AutomationTarget::Tempo && a.curve == 0.0) {
             return Some(a.value);
+        }
+        if self.target == AutomationTarget::Tempo {
+            // A tempo ramp is linear in BPM over beats (ticks).
+            return Some(a.value + (b.value - a.value) * ((t - a.time) as f64 / (b.time - a.time) as f64) as f32);
         }
         let s = shape((t - a.time) as f32 / (b.time - a.time) as f32, a.curve);
         Some(lerp_value(a.value, b.value, s, self.target.logarithmic()))

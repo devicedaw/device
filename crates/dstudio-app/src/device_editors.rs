@@ -727,7 +727,7 @@ impl Controller {
     }
 
     fn step_ms(&self, rate: usize) -> f32 {
-        (60000.0 / self.project().transport.bpm.max(1.0) * tg::RATE_QUARTERS[rate.min(tg::RATES.len() - 1)]) as f32
+        (60000.0 / self.bpm_now().max(1.0) * tg::RATE_QUARTERS[rate.min(tg::RATES.len() - 1)]) as f32
     }
 
     fn adsr(&self, d: &Device, def: &DeviceDef) -> Adsr {
@@ -1017,7 +1017,7 @@ impl Controller {
 
     /// The Time lane's longest repeat in quarter notes at the project tempo.
     fn time_max_beats(&self) -> f64 {
-        sh::TIME_MAX_SECONDS * self.project().transport.bpm / 60.0
+        sh::TIME_MAX_SECONDS * self.bpm_now() / 60.0
     }
 
     pub(crate) fn shaper_lane(&self, id: DeviceId) -> usize {

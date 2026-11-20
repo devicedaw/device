@@ -122,6 +122,7 @@ impl Hue {
                 let (device, param) = target.labels();
                 Hue::key(&device, &param)
             }
+            AutomationTarget::Tempo => Hue::key("Song", "Tempo"),
         }
     }
 
@@ -259,6 +260,10 @@ pub fn norm_of(t: &AutomationTarget, v: f32) -> f32 {
         }
         AutomationTarget::Plugin { .. } => v,
         AutomationTarget::Builtin { .. } => t.builtin_param().map_or(v, |p| p.to_normalized(v)),
+        AutomationTarget::Tempo => {
+            let (lo, hi) = tempo_scale();
+            (v - lo) / (hi - lo)
+        }
     };
     n.clamp(0.0, 1.0)
 }
@@ -281,9 +286,92 @@ pub fn value_of(t: &AutomationTarget, n: f32) -> f32 {
         }
         AutomationTarget::Plugin { .. } => n,
         AutomationTarget::Builtin { .. } => t.builtin_param().map_or(n, |p| p.snap(p.from_normalized(n))),
+        AutomationTarget::Tempo => {
+            let (lo, hi) = tempo_scale();
+            ((lo + (hi - lo) * n) * 100.0).round() / 100.0
+        }
     };
     let (lo, hi) = t.range();
     v.clamp(lo, hi)
+}
+
+// ------------------------------------------------------------------ the tempo lane (spec 015)
+
+thread_local! {
+    /// The tempo lane's vertical scale in BPM (bottom, top). Fitted to the map after each change
+    /// ([fit_tempo_scale]), not during a drag, so the lane holds still under the pointer.
+    static TEMPO_SCALE: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((100.0, 140.0)) };
+}
+
+/// Narrowest tempo scale (BPM from bottom to top).
+pub const TEMPO_MIN_SPAN: f32 = 40.0;
+
+/// The tempo lane's current scale (bottom, top) in BPM.
+pub fn tempo_scale() -> (f32, f32) {
+    TEMPO_SCALE.with(|s| s.get())
+}
+
+/// The scale that fits `bpms` with some headroom and is at least [TEMPO_MIN_SPAN] wide, inside
+/// the tempo range.
+pub fn tempo_scale_for(bpms: impl Iterator<Item = f32>) -> (f32, f32) {
+    let (mut lo, mut hi) = bpms.fold((f32::MAX, f32::MIN), |(lo, hi), b| (lo.min(b), hi.max(b)));
+    if lo > hi {
+        (lo, hi) = (120.0, 120.0);
+    }
+    let pad = ((hi - lo) * 0.15).max(5.0);
+    (lo, hi) = (lo - pad, hi + pad);
+    if hi - lo < TEMPO_MIN_SPAN {
+        let mid = (lo + hi) / 2.0;
+        (lo, hi) = (mid - TEMPO_MIN_SPAN / 2.0, mid + TEMPO_MIN_SPAN / 2.0);
+    }
+    let (min, max) = AutomationTarget::Tempo.range();
+    if lo < min {
+        (lo, hi) = (min, (hi + min - lo).min(max));
+    }
+    if hi > max {
+        (lo, hi) = ((lo - (hi - max)).max(min), max);
+    }
+    (lo, hi)
+}
+
+/// Sets the tempo lane's scale to fit a song's tempo map (or its one tempo).
+pub fn fit_tempo_scale(p: &dstudio_core::Project) {
+    let s = if p.transport.tempo.is_empty() {
+        tempo_scale_for(std::iter::once(p.transport.bpm as f32))
+    } else {
+        tempo_scale_for(p.transport.tempo.iter().map(|q| q.bpm as f32))
+    };
+    TEMPO_SCALE.with(|c| c.set(s));
+}
+
+/// A point that ramps to the next one carries this curve in the tempo lane (any non-zero curve
+/// ramps; 0 holds).
+pub const TEMPO_RAMP: f32 = 1.0;
+
+/// The tempo map as the lane the automation code edits.
+pub fn tempo_lane(points: &[dstudio_core::TempoPoint]) -> AutomationLane {
+    let mut l = AutomationLane::new(AutomationTarget::Tempo);
+    l.points =
+        points.iter().map(|q| AutoPoint { time: q.time, value: q.bpm as f32, curve: if q.ramp { TEMPO_RAMP } else { 0.0 } }).collect();
+    l
+}
+
+/// The tempo map a tempo lane stands for: one point per tick (the last of points sharing one),
+/// tempos rounded to hundredths of a BPM. A song's first change made in the lane keeps the tempo
+/// it had before up to that point: without a point at bar 1, one holding `song_bpm` is added.
+pub fn tempo_points(lane: &AutomationLane, song_bpm: f64, first_edit: bool) -> Vec<dstudio_core::TempoPoint> {
+    let mut out: Vec<dstudio_core::TempoPoint> = Vec::with_capacity(lane.points.len() + 1);
+    for p in &lane.points {
+        let q = dstudio_core::TempoPoint { time: p.time.max(0), bpm: ((p.value as f64) * 100.0).round() / 100.0, ramp: p.curve != 0.0 };
+        match out.last_mut() {
+            Some(last) if last.time == q.time => *last = q,
+            _ => out.push(q),
+        }
+    }
+    if first_edit && out.first().is_some_and(|q| q.time > 0) {
+        out.insert(0, dstudio_core::TempoPoint { time: 0, bpm: song_bpm, ramp: false });
+    }
+    out
 }
 
 /// Lane value label ("+0.0" dB, "C"/"50L", synth units, plugin text).
@@ -426,6 +514,9 @@ pub struct AutoUi {
     pub hover: Option<(LaneKey, AutomationTarget, usize)>,
     /// Write passes committed (counter for tests / diagnostics).
     pub writes_committed: usize,
+    /// The song's tempo map as a lane (None without tempo changes), refreshed after every change
+    /// (`Controller::refresh_tempo_lane`).
+    pub tempo_lane: Option<AutomationLane>,
     /// Display names of every plugin device the project has had (`remember_device_names`, after
     /// each change), so a lane whose plugin was removed (its lanes stay in the project) keeps the
     /// colour it had. Device ids are not reused within a project; cleared with the project.
@@ -445,6 +536,7 @@ impl AutoUi {
         self.pending = None;
         self.hover = None;
         self.writes.clear();
+        self.tempo_lane = None;
     }
 }
 
@@ -463,6 +555,9 @@ impl Controller {
 
     /// Model lane for a target (ignores the preview).
     pub fn model_lane(&self, key: LaneKey, target: &AutomationTarget) -> Option<&AutomationLane> {
+        if *target == AutomationTarget::Tempo {
+            return if key.is_none() { self.auto.tempo_lane.as_ref() } else { None };
+        }
         let p = self.project();
         let lanes = match key {
             None => &p.master_automation,
@@ -486,6 +581,9 @@ impl Controller {
     pub fn static_value(&self, key: LaneKey, target: &AutomationTarget) -> f32 {
         let p = self.project();
         let clamp_db = |g: f32| gain_to_db(g).clamp(VOLUME_MIN_DB, VOLUME_MAX_DB);
+        if *target == AutomationTarget::Tempo {
+            return p.transport.bpm as f32;
+        }
         let Some(t) = key.and_then(|k| p.track(k)) else {
             return clamp_db(p.master_gain);
         };
@@ -514,7 +612,15 @@ impl Controller {
                 .and_then(|d| dstudio_core::builtin::def_of(d).and_then(|def| def.param(param).map(|q| def.value(d, q))))
                 .or_else(|| target.builtin_param().map(|q| q.default))
                 .unwrap_or(0.0),
+            AutomationTarget::Tempo => p.transport.bpm as f32,
         }
+    }
+
+    /// After a change: the tempo map as a lane, and the lane's scale fitted to it.
+    pub fn refresh_tempo_lane(&mut self) {
+        let p = self.doc.project();
+        self.auto.tempo_lane = (!p.transport.tempo.is_empty()).then(|| tempo_lane(&p.transport.tempo));
+        fit_tempo_scale(p);
     }
 
     /// Record the display name of every plugin device in the project. Called after every change
@@ -558,6 +664,7 @@ impl Controller {
 
     pub fn auto_label(&self, key: LaneKey, target: &AutomationTarget, v: f32) -> String {
         match target {
+            AutomationTarget::Tempo => format!("{v:.2} BPM"),
             AutomationTarget::Volume => volume_label(v),
             AutomationTarget::Pan => fmt_pan(v),
             AutomationTarget::Mute => (if v >= 0.5 { "Muted" } else { "Unmuted" }).into(),
@@ -745,7 +852,7 @@ impl Controller {
         }
         rows.push(Row {
             key: None,
-            target: AutomationTarget::Volume,
+            target: self.auto_target(None),
             y0: h - v.master_h + 1.0,
             h: v.master_h - 1.0,
             master: true,
@@ -968,6 +1075,11 @@ impl Controller {
             },
             _ => self.auto_target(key),
         };
+        if target == AutomationTarget::Tempo {
+            // The song always has a tempo: the map can be removed, not switched off.
+            self.set_status("The tempo lane is always on: delete its points to keep one tempo", 3);
+            return;
+        }
         match self.model_lane(key, &target).cloned() {
             Some(mut l) => {
                 l.enabled = !l.enabled;
@@ -991,8 +1103,14 @@ impl Controller {
 
     fn pick_categories(&self, key: LaneKey) -> Vec<(String, Vec<PickEntry>)> {
         let e = |label: &str, target: AutomationTarget| PickEntry { label: label.into(), target: Some(target) };
+        let Some(t) = key.and_then(|k| self.project().track(k)) else {
+            // The master row: the song's tempo, then the master volume.
+            return vec![
+                ("Song".to_string(), vec![e("Tempo", AutomationTarget::Tempo)]),
+                ("Master".to_string(), vec![e("Volume", AutomationTarget::Volume)]),
+            ];
+        };
         let mut cats = vec![("Track".to_string(), vec![e("Volume", AutomationTarget::Volume)])];
-        let Some(t) = key.and_then(|k| self.project().track(k)) else { return cats };
         cats[0].1.push(e("Pan", AutomationTarget::Pan));
         for (label, target) in [
             ("Mute", AutomationTarget::Mute),
@@ -1113,6 +1231,17 @@ impl Controller {
     }
 
     // ---------------------------------------------------------------- lane gestures
+
+    /// The point of lane (`key`, `target`) under lane-local (x, y), when lanes are shown and a
+    /// row shows that lane.
+    pub(crate) fn auto_point_at(&self, key: LaneKey, target: &AutomationTarget, x: f32, y: f32) -> Option<usize> {
+        if !self.auto.shown {
+            return None;
+        }
+        let row = self.row_at(y).filter(|r| r.key == key && r.target == *target)?;
+        let lane = self.lane(key, target)?;
+        self.point_hit(&row, &lane, x, y)
+    }
 
     fn row_at(&self, y: f32) -> Option<Row> {
         if y < timeline::RULER_H {
@@ -1243,7 +1372,7 @@ impl Controller {
         }
         self.auto.last_down = None;
         let on_line = (self.line_y(&row, &base, x) - y).abs() <= HIT;
-        if on_line && shift && base.points.len() >= 2 {
+        if on_line && shift && base.points.len() >= 2 && row.target != AutomationTarget::Tempo {
             let t = self.ticks_at(x, false);
             let seg = base.points.partition_point(|p| p.time <= t);
             if seg >= 1 && seg < base.points.len() {
@@ -1298,6 +1427,11 @@ impl Controller {
                     let p = &mut lane.points[i];
                     p.time = (p.time + delta).max(0);
                     p.value = value_of(&row.target, norm_of(&row.target, base.points[i].value) + dn);
+                    if row.target == AutomationTarget::Tempo && !alt && dn != 0.0 {
+                        // Whole BPM steps; ⌥ drags in hundredths.
+                        let (lo, hi) = row.target.range();
+                        p.value = p.value.round().clamp(lo, hi);
+                    }
                 }
                 lane.points.sort_by_key(|p| p.time);
                 self.auto.pending = Some((row.key, lane));
@@ -1379,6 +1513,14 @@ impl Controller {
     pub fn auto_commit(&mut self, key: LaneKey, lane: AutomationLane) -> bool {
         if self.model_lane(key, &lane.target) == Some(&lane) {
             return false;
+        }
+        if lane.target == AutomationTarget::Tempo {
+            let p = self.project();
+            let points = tempo_points(&lane, p.transport.bpm, p.transport.tempo.is_empty());
+            if points == p.transport.tempo {
+                return false;
+            }
+            return self.execute(Command::SetTempoMap { points, bpm: None });
         }
         let target = lane.target.clone();
         self.execute(Command::SetAutomationLane { track: key, target, lane: Some(lane) })
@@ -1813,8 +1955,12 @@ impl Controller {
             }
         }
         sync_model(&self.auto_extras_model, extras);
-        let ms = self.auto_style(None, &AutomationTarget::Volume).code();
-        s.set_master_auto_state(ms);
+        let master = self.auto_target(None);
+        s.set_master_auto_state(self.auto_style(None, &master).code());
+        let (cat, param) = if master == AutomationTarget::Volume { ("Master".to_string(), "Volume".to_string()) } else { master.labels() };
+        s.set_master_auto_cat(cat.into());
+        s.set_master_auto_param(param.into());
+        s.set_master_auto_accent(self.lane_hue(&master).slint_bright());
         self.push_picker(s);
         self.push_auto_feedback(s);
     }
@@ -2014,7 +2160,12 @@ mod tests {
         let last = cats[comp].1.last().unwrap();
         assert_eq!(last.label, "On");
         assert!(matches!(&last.target, Some(AutomationTarget::DeviceOn { device, .. }) if *device == d));
-        assert_eq!(c.pick_categories(None).len(), 1, "the master only has volume");
+        let master: Vec<_> = c.pick_categories(None).into_iter().map(|(cat, e)| (cat, e.into_iter().map(|e| e.label).collect::<Vec<_>>())).collect();
+        assert_eq!(
+            master,
+            [("Song".to_string(), vec!["Tempo".to_string()]), ("Master".to_string(), vec!["Volume".to_string()])],
+            "the master row: the song's tempo, then its volume"
+        );
     }
 
     #[test]

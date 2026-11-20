@@ -109,6 +109,7 @@ mod splitters;
 mod stepseq;
 mod synth;
 mod takes;
+mod tempo_lane;
 mod text_measure;
 mod timeline;
 mod tools;
@@ -246,6 +247,10 @@ struct Args {
     key_change_review: bool,
     /// review-count-in-menu: count-in set to 1 bar, the record button's count-in menu open.
     count_in_menu_review: bool,
+    /// review-tempo-lane: a song with tempo changes (120, a ramp from 140 at bar 3 down to 96 at
+    /// bar 5), the master row on Song › Tempo, a MIDI clip across the changes, the playhead in the
+    /// ramp (spec 015).
+    tempo_review: bool,
     /// review-track-menu: track 1's header menu open with its Color submenu.
     /// review-track-drag: track 1's header dragged below track 2, the drop line showing.
     track_menu_review: u8,
@@ -699,6 +704,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.count_in_menu_review = true;
                 }
+                "review-tempo-lane" => {
+                    a.reference_default = true;
+                    a.tempo_review = true;
+                }
                 "review-clip-selection" => {
                     a.reference_default = true;
                     a.clip_selection_review = true;
@@ -812,7 +821,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -2533,6 +2542,39 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut c = ctl.borrow_mut();
         c.snap.pick(5);
         c.snap_menu_toggle(1211.0, 98.0);
+    }
+    if args.tempo_review {
+        let mut c = ctl.borrow_mut();
+        let ppq = dstudio_core::PPQ;
+        let tp = |beat: i64, bpm: f64, ramp: bool| dstudio_core::TempoPoint { time: beat * ppq, bpm, ramp };
+        c.execute(dstudio_core::Command::SetTempoMap {
+            points: vec![tp(0, 120.0, false), tp(8, 140.0, true), tp(16, 96.0, false)],
+            bpm: None,
+        });
+        let p = c.project();
+        let (n, inst) = (p.next_id, p.tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id));
+        if let Some(inst) = inst {
+            let notes = (0..24).map(|i| dstudio_core::Note {
+                id: i + 1,
+                pitch: 60 + (i as u8 * 5) % 12,
+                start: i as i64 * ppq,
+                length: ppq / 2,
+                velocity: 100,
+            });
+            c.execute(dstudio_core::Command::AddMidiClip {
+                track: inst,
+                clip: dstudio_core::MidiClip {
+                    id: dstudio_core::ClipId(n),
+                    notes: notes.collect(),
+                    ..dstudio_core::MidiClip::empty(0, 24 * ppq)
+                },
+            });
+        }
+        if !c.auto.shown {
+            c.auto_toggle_shown();
+        }
+        c.auto_choose(None, dstudio_core::AutomationTarget::Tempo);
+        c.seek_beats(12.0);
     }
     if args.count_in_menu_review {
         // Opened just below the record button of the default 1440 x 820 window (layout anchors are not
