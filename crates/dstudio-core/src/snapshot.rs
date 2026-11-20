@@ -192,6 +192,16 @@ pub fn build_full(
 ) -> (SessionSnapshot, Vec<u64>) {
     let mut skipped = Vec::new();
     let map = project.tempo_map();
+    // Notes are the bulk of a snapshot: with one tempo, convert them with the same arithmetic as
+    // before tempo maps existed (bit for bit, and as cheap), else through the map.
+    let bpm = project.transport.bpm;
+    let note_frames = |t: crate::model::Ticks| -> i64 {
+        if map.is_constant() {
+            (t as f64 / crate::PPQ as f64 * 60.0 / bpm * engine_rate).round() as i64
+        } else {
+            map.ticks_to_frames(t, engine_rate)
+        }
+    };
     let tracks = project
         .tracks
         .iter()
@@ -312,8 +322,8 @@ pub fn build_full(
                         c.playing_notes().into_iter().map(move |n| (c.start + n.start, c.start + n.start + n.length, n.pitch, n.velocity))
                     })
                     .map(|(s, e, pitch, velocity)| NoteSnapshot {
-                        start: map.ticks_to_frames(s, engine_rate),
-                        end: map.ticks_to_frames(e, engine_rate),
+                        start: note_frames(s),
+                        end: note_frames(e),
                         pitch,
                         velocity,
                     })
