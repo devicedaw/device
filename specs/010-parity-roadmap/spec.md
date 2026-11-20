@@ -87,7 +87,7 @@ target behaviour.
 
 ## P1: everyday UI and behaviour
 
-- [ ] **G12. Help on every setting.** Each settings row has a small (i) button whose hover shows one sentence
+- [x] **G12. Help on every setting.** (#146). Each settings row has a small (i) button whose hover shows one sentence
   explaining the setting ("Restore the last session on launch.", "Plugin loaded on new instrument tracks.",
   "Folders scanned for VST3 and AU plugins.", …). Device's settings pages have none. Add the icon and tooltips
   to General, Audio, MIDI, Plugins and Privacy.
