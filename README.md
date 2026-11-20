@@ -78,7 +78,8 @@ wgpu.
   note, or clicking a key, plays it through the track's instrument for its length (up to a second). A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Printing clips.** Consolidate joins clips into one, Bounce to new track (⌘B, or Resample in the clip menu and the
-  audio clip editor) renders a clip through its track's devices onto a new track, and Export audio saves one clip as a
+  audio clip editor) renders a clip through its track's devices onto a new track, Bounce track in place prints a whole
+  track to one audio clip and turns it into an audio track (its devices kept, switched off), and Export audio saves one clip as a
   WAV. Renders run in the background while you keep working, and each is one undo step. Export MIDI saves a MIDI clip as
   a standard MIDI file, and Send to Sampler puts an audio clip on a new track, played by a Sampler.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency

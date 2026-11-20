@@ -52,7 +52,7 @@ target behaviour.
   automation when shown) / Group track (⌘G) / Delete track (Del) / Audio track (⌘T) / Instrument track (⇧⌘T) /
   Sampler track / Drum track / Return track / and an inline colour grid at the bottom (see G5). The add-track
   rows insert the new track below the clicked one. Keys shown in the menu must be the ones that work.
-- [ ] **G4. Bounce track in place** (spec). Greyed in the clip Bounce submenu (`src/clipedit.rs`, `BOUNCE`) and
+- [x] **G4. Bounce track in place** (spec, [017](../017-bounce-in-place/spec.md), #127). Greyed in the clip Bounce submenu (`src/clipedit.rs`, `BOUNCE`) and
   missing from the track menu. Renders the whole track through its devices to audio, replaces its clips with
   the rendered audio, and turns an instrument track into an audio track, keeping name, colour, sends, output
   and automation of volume and pan; the instrument and effects are kept but switched off so the change can be

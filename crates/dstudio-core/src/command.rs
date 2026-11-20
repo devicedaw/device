@@ -88,6 +88,13 @@ pub enum Command {
         index: usize,
         track: Track,
     },
+    /// Swap a track for another version of itself, at the same place and with the same id
+    /// (Bounce Track in Place). Audio and instrument tracks only; the kind may change between
+    /// them, and an audio track holds no MIDI clips. The new version may reuse the old one's clip
+    /// and device ids. The inverse is the same command with the old track.
+    ReplaceTrack {
+        track: Track,
+    },
     /// A new name, trimmed, 1..=128 characters.
     RenameTrack {
         track: TrackId,
@@ -490,6 +497,7 @@ impl Command {
     pub fn label(&self) -> String {
         match self {
             Command::AddTrack { track, .. } | Command::RestoreTrack { track, .. } => format!("Add {} Track", kind_name(track.kind)),
+            Command::ReplaceTrack { .. } => "Replace Track".into(),
             Command::RemoveTrack { .. } => "Delete Track".into(),
             Command::RenameTrack { .. } | Command::RestoreTrackName { .. } => "Rename Track".into(),
             Command::MoveTrack { .. } => "Move Track".into(),
@@ -603,6 +611,7 @@ impl Command {
         match self {
             Command::AddTrack { index, track } => add_track(p, index, track, false),
             Command::RestoreTrack { index, track } => add_track(p, Some(index), track, true),
+            Command::ReplaceTrack { track } => replace_track(p, track),
             Command::RemoveTrack { track } => {
                 let idx = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
                 // Sends to a removed return go with it, outputs routed to it fall back to the master.
@@ -1729,6 +1738,42 @@ fn add_track(p: &mut Project, index: Option<usize>, mut track: Track, restore: b
         crate::builtin::synth_v2::upgrade_track(p, idx);
     }
     Ok(Command::RemoveTrack { track: id })
+}
+
+fn replace_track(p: &mut Project, track: Track) -> Result<Command, EditError> {
+    let i = p.track_index(track.id).ok_or(EditError::TrackNotFound(track.id))?;
+    if p.tracks[i].is_bus() || track.is_bus() {
+        return Err(invalid("track", "only audio and instrument tracks can be replaced"));
+    }
+    if track.kind == TrackKind::Audio && !track.midi_clips.is_empty() {
+        return Err(invalid("track", "an audio track has no MIDI clips"));
+    }
+    validate_gain("gain", track.gain)?;
+    validate_pan(track.pan)?;
+    validate_trim(track.trim_db)?;
+    validate_width(track.width)?;
+    for c in &track.clips {
+        validate_clip(p, c)?;
+    }
+    // Ids and routing are checked as if the old version were gone, so it may lend its ids.
+    let mut without = p.clone();
+    without.tracks.remove(i);
+    validate_new_track_content(&without, &track)?;
+    if track.clips.iter().map(|c| c.id).chain(track.midi_clips.iter().map(|c| c.id)).any(|id| id.0 == 0)
+        || track.devices.iter().chain(track.instrument_plugin.as_ref()).any(|d| d.id.0 == 0)
+    {
+        return Err(invalid("track", "every clip and device needs its id"));
+    }
+    validate_routing(p, track.id, track.kind, i, &track.sends, track.output)?;
+    let ids = track
+        .clips
+        .iter()
+        .map(|c| c.id.0)
+        .chain(track.midi_clips.iter().map(|c| c.id.0))
+        .chain(track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id.0));
+    p.next_id = ids.fold(p.next_id, |n, id| n.max(id + 1));
+    let old = std::mem::replace(&mut p.tracks[i], track);
+    Ok(Command::ReplaceTrack { track: old })
 }
 
 /// A new track's MIDI clips are valid, and its clip and device ids (other than 0, which
