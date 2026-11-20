@@ -14962,13 +14962,6 @@ fn track_menu_steps() -> Vec<Step> {
             .find(|m| m.label == label && m.enabled)
             .map(|m| (s.get_menu_x() + 40.0, s.get_menu_y() + m.y + crate::clipedit::MENU_ROW / 2.0))
     }
-    fn sub_row(a: &AppWindow, label: &str) -> Option<(f32, f32)> {
-        let s = a.global::<Studio>();
-        let items = s.get_sub_items();
-        (0..slint::Model::row_count(&items)).filter_map(|i| slint::Model::row_data(&items, i)).find(|m| m.label == label).map(|m| {
-            (s.get_menu_x() + crate::clipedit::MENU_W - 4.0 + 40.0, s.get_menu_y() + s.get_sub_y() + m.y + crate::clipedit::MENU_ROW / 2.0)
-        })
-    }
     // Middle of track `i`'s header row, over its number (no control there).
     fn row_xy(c: &Controller, i: usize) -> (f32, f32) {
         (tracks_x() + 15.0, track0_y() + c.view.track_offset(i) + c.view.pitch(i) / 2.0 - c.view.scroll_y as f32)
