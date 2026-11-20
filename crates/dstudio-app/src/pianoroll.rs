@@ -1004,6 +1004,18 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// Double-click on a clip editor zoom slider: rows back to their automatic height (axis 0),
+    /// or the whole clip in view (axis 1).
+    pub fn pr_zoom_reset(&mut self, axis: i32) {
+        if axis == 0 {
+            self.pr.vzoom = None;
+        } else {
+            self.pr.hstart = 0.0;
+            self.pr.hzoom = 0.0;
+        }
+        self.ui_dirty = true;
+    }
+
     /// Notes as displayed (gesture preview while dragging).
     pub fn pr_notes(&self) -> Vec<Note> {
         match (&self.pr.drag, &self.pr.value_drag) {

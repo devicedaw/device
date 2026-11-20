@@ -16,7 +16,7 @@ import "fonts/Inter-Medium.ttf";
 import "fonts/Inter-SemiBold.ttf";
 import "fonts/Inter-Bold.ttf";
 import { Tokens } from "tokens.slint";
-import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switch, Label, Raised, Field, Inset } from "widgets.slint";
+import { Panel, Icon, Icons, Pill, IconButton, ZoomSlider, SmallButton, HSlider, Knob, Switch, Label, Raised, Field, Inset } from "widgets.slint";
 
 export { Tokens }
 
@@ -639,17 +639,23 @@ component Timeline inherits Panel {
                 clicked => { Studio.tool-menu-toggle(parent.absolute-position.x, (parent.absolute-position.y - Studio.menu-dy) + parent.height); }
             }
         }
-        // vertical zoom (placeholder), horizontal zoom (mirrors the real zoom level)
+        // Zoom sliders: track heights and time (src/fit.rs); double-click resets.
         if !root.zoom-hidden: Rectangle {
             width: 172px;
             Icon { x: 0; y: 7px; width: 13px; height: 13px; d: Icons.v-resize; ink: #727377; }
-            Rectangle { x: 18.4px; y: 13px; width: 68px; height: 2px; border-radius: 1px; background: #2f3036; }
-            Rectangle { x: 18.4px; y: 13px; width: 8px; height: 2px; background: #e5e5e8; }
-            Rectangle { x: 24.5px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
+            ZoomSlider {
+                x: 18.4px; y: 4px; width: 68px; value: Studio.tl-vzoom; fill: true;
+                accessible-label: "Track height";
+                changed(z) => { Studio.tl-zoom(0, z); }
+                reset => { Studio.tl-zoom-reset(0); }
+            }
             Icon { x: 91.4px; y: 7px; width: 13px; height: 13px; d: Icons.h-resize; ink: #727377; }
-            Rectangle { x: 110.2px; y: 13px; width: 68px; height: 2px; border-radius: 1px; background: #2f3036; }
-            Rectangle { x: 110.2px; y: 13px; width: 8px; height: 2px; background: #e5e5e8; }
-            Rectangle { x: 116px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
+            ZoomSlider {
+                x: 110.2px; y: 4px; width: 68px; value: Studio.tl-hzoom; fill: true;
+                accessible-label: "Timeline zoom";
+                changed(z) => { Studio.tl-zoom(1, z); }
+                reset => { Studio.tl-zoom-reset(1); }
+            }
         }
         // Snap: the readout toggles snapping, the chevron opens the grid-size menu (S76).
         Rectangle {

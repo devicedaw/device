@@ -52,7 +52,8 @@ wgpu.
   Markers label the parts of a song on the ruler; right-click one to cut, copy, paste, colour or rename it, or to insert
   a marker before or after it. Turn on Settings › General › Sections move clips and moving, resizing, copying or
   deleting a marker takes its clips and automation with it.
-  Press W to fit the song (or the selected clips) to the width of the timeline, and H to fit every track into its height.
+  Press W to fit the song (or the selected clips) to the width of the timeline, and H to fit every track into its height;
+  the two zoom sliders in the timeline header set the zoom and the track height directly (double-click resets them).
   The tool button in the timeline header picks the Selector, the Marquee tool (drag a stretch of time across tracks,
   then delete, cut, copy, paste, duplicate, split or loop it with the usual keys) or Scissors (T toggles them; click a
   clip to cut it at the pointer).
