@@ -519,7 +519,7 @@ export global Studio {
     callback tree-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
     callback tree-scroll-by(float);
     // ---- browser sections, Back / Forward and the Files section (src/files.rs) ----
-    in property <int> browser-section: 2;      // 2 Devices, 3 Files (Search and Library have no content)
+    in property <int> browser-section: 2;      // 2 Devices, 3 Files
     in property <bool> browser-can-back;
     in property <bool> browser-can-forward;
     in property <int> files-tab;               // 0 Projects, 1 Folders
