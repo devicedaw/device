@@ -622,3 +622,12 @@ quantises it to four colours from the app's tokens with an 8x8 Bayer matrix and 
 `docs/art/textures/`. `art.css` shows each texel as a crisp 3 px square (`image-rendering: pixelated`), so the pattern
 survives GitHub scaling the images down. The generated bitmap and its prompt are gone. The website uses
 `dither-site.png` from the same script and draws its sine waves dithered too. App views are unchanged.
+
+### 2026-11-20: ASIO on Windows
+
+Windows gets a second audio backend: installed ASIO drivers are listed in Settings › Audio as "<driver> (ASIO)"
+and play and record through the driver, at the driver's buffer sizes and latencies (spec 011). The Steinberg ASIO SDK
+(GPLv3 since 2025-10) is downloaded by CMake and checked by SHA-256; only its headers are used.
+`windows_audio_device.cpp` picks WASAPI or ASIO per setup (`asio:` ids), `asio_device.cpp` drives the driver,
+`asio_convert.hpp` converts its sample formats. Checked with FlexASIO on the Windows test PC (its WASAPI backend; the
+default DirectSound backend stalls after a second, a FlexASIO issue). No hardware ASIO driver tried yet.

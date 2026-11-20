@@ -117,6 +117,24 @@ dstudio_verify_pin(dstudio_signalsmith_stretch ${DSTUDIO_STRETCH_TAG_COMMIT})
 dstudio_verify_pin(dstudio_signalsmith_linear ${DSTUDIO_LINEAR_TAG_COMMIT})
 dstudio_verify_pin(dstudio_dr_libs ${DSTUDIO_DR_LIBS_COMMIT})
 dstudio_verify_pin(dstudio_stb ${DSTUDIO_STB_COMMIT})
+# ASIO SDK (Windows): the IASIO interface for src/platform/asio_device.cpp. Steinberg
+# publishes it only as a versioned zip, so it is pinned by URL and SHA-256 rather than by
+# commit. Used under its GPLv3 option (see third_party_licenses.md); headers only.
+# DSTUDIO_ENGINE_ASIO=OFF builds a Windows engine with WASAPI only.
+if(WIN32)
+  option(DSTUDIO_ENGINE_ASIO "Build the ASIO audio backend (downloads the Steinberg ASIO SDK)" ON)
+  if(DSTUDIO_ENGINE_ASIO)
+    set(DSTUDIO_ASIOSDK_URL https://download.steinberg.net/sdk_downloads/ASIO-SDK_2.3.4_2025-10-15.zip)
+    set(DSTUDIO_ASIOSDK_SHA256 d5ebf0c20dd2c5f43771fd0c1418f4b361bf52434ee670097cfa6b3a335e2eca)
+    FetchContent_Declare(dstudio_asiosdk
+      URL ${DSTUDIO_ASIOSDK_URL}
+      URL_HASH SHA256=${DSTUDIO_ASIOSDK_SHA256}
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+      SOURCE_SUBDIR _dstudio_headers_only)
+    FetchContent_MakeAvailable(dstudio_asiosdk)
+    set(DSTUDIO_ASIOSDK_INCLUDE "${dstudio_asiosdk_SOURCE_DIR}/common")
+  endif()
+endif()
 set(DSTUDIO_DECODER_INCLUDE "${dstudio_dr_libs_SOURCE_DIR}" "${dstudio_stb_SOURCE_DIR}")
 set(DSTUDIO_STRETCH_INCLUDE "${dstudio_signalsmith_stretch_SOURCE_DIR}" "${dstudio_signalsmith_linear_SOURCE_DIR}/include")
 set(DSTUDIO_CLAP_INCLUDE "${dstudio_clap_SOURCE_DIR}/include")
@@ -254,6 +272,8 @@ add_library(dstudio_engine STATIC
   src/platform/pipewire_device.cpp
   src/platform/alsa_device.cpp
   src/platform/wasapi_device.cpp
+  src/platform/asio_device.cpp
+  src/platform/windows_audio_device.cpp
   src/platform/midi_backend_stub.cpp
   src/platform/alsa_midi_input.cpp
   src/platform/coremidi_input.cpp
@@ -305,6 +325,12 @@ if(WIN32)
   # ole32: COM (WASAPI, MMDevice); shell32: CommandLineToArgvW; avrt: MMCSS;
   # user32: plugin editor windows; winmm: MIDI input.
   target_link_libraries(dstudio_engine PUBLIC ole32 shell32 avrt user32 winmm)
+  if(DSTUDIO_ENGINE_ASIO)
+    # advapi32: the ASIO driver list in the registry.
+    target_link_libraries(dstudio_engine PUBLIC advapi32)
+    target_include_directories(dstudio_engine SYSTEM PRIVATE ${DSTUDIO_ASIOSDK_INCLUDE})
+    target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_ASIO=1)
+  endif()
 elseif(NOT APPLE)
   target_link_libraries(dstudio_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()
@@ -508,6 +534,8 @@ if(DSTUDIO_ENGINE_BUILD_TESTS)
     tests/test_automation.cpp
     tests/test_frame_ring.cpp
     tests/test_wasapi_period.cpp
+    tests/test_asio_convert.cpp
+    tests/test_windows_audio.cpp
     tests/test_linux_audio.cpp
     tests/test_warp.cpp
     tests/test_clip_loop.cpp

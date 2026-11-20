@@ -112,7 +112,7 @@ POSIX signal or Windows NTSTATUS exception code).
 
 | | macOS (arm64) | Windows (x64, MSVC) | Linux (x64, GCC) |
 |---|---|---|---|
-| Audio backend | Core Audio (AUHAL; private aggregate for duplex) | WASAPI shared mode, event-driven, float32 (`wasapi_device.cpp`) | PipeWire streams (`pipewire_device.cpp`) or ALSA PCMs (`alsa_device.cpp`), picked by `linux_audio_device.cpp` |
+| Audio backend | Core Audio (AUHAL; private aggregate for duplex) | WASAPI shared mode, event-driven, float32 (`wasapi_device.cpp`), or an ASIO driver (`asio_device.cpp`), picked by `windows_audio_device.cpp` | PipeWire streams (`pipewire_device.cpp`) or ALSA PCMs (`alsa_device.cpp`), picked by `linux_audio_device.cpp` |
 | Duplex input | aggregate device, HAL drift compensation | separate capture client → `FrameRing` | PipeWire: capture stream → `FrameRing`; ALSA: linked capture PCM read in the same cycle |
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
 | Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | X11 top-level window hosting the plugin window (VST3 `kPlatformTypeX11EmbedWindowID`, CLAP `x11`), XWayland on Wayland; see [Plugins on Windows and Linux](#plugins-on-windows-and-linux) |
@@ -214,9 +214,51 @@ elsewhere that test checks determinism and the on/off identities.
   1056 frames (22 ms) by default, 280 frames (5.8 ms) at 128.
 * **Not implemented:** exclusive mode,
   endpoint change notifications (a removed device ends the stream;
-  `is_running()` turns false). **ASIO is future work**: the Steinberg ASIO
-  SDK has its own licence and is deliberately not added; a backend would sit
-  beside WASAPI behind the same `AudioDevice` interface.
+  `is_running()` turns false).
+
+### Windows audio: ASIO
+
+`windows_audio_device.cpp` is the Windows `AudioDevice`: it sends a setup
+whose output id starts with `asio:` to `asio_device.cpp` and everything else
+to WASAPI (`windows_audio.hpp`, `choose_backend`, tested on every OS).
+
+* **SDK.** The `IASIO` interface and its types come from Steinberg's ASIO SDK
+  2.3.4, used under its GPLv3 option (`third_party_licenses.md`). CMake
+  downloads the zip and checks its SHA-256; only the headers are used.
+  `-DDSTUDIO_ENGINE_ASIO=OFF` builds without it (no ASIO devices listed).
+* **Drivers.** Read from `HKLM\SOFTWARE\ASIO` (64-bit view) and loaded with
+  `CoCreateInstance` on the calling thread (COM apartment-threaded, or the
+  thread's existing apartment). `se_device_list` has one entry per driver
+  that loads: `"<name> (ASIO)"`, id `asio:<CLSID>`, its input and output
+  counts and the standard rates `canSampleRate` accepts. Listing loads each
+  driver once; the result is cached for the process and a driver is never
+  loaded twice while one streams.
+* **Stream.** Output and input are one driver: as input, the same id or the
+  default input (empty id) means that driver's inputs; an ASIO driver paired
+  with a WASAPI endpoint is `SE_ERR_INVALID_ARG`. The driver runs at the
+  engine rate (`setSampleRate`; ASIO does not convert, so a driver that cannot
+  is refused). Buffers: the first `channels` outputs and up to 64 inputs,
+  `createBuffers` with the size picked rounded to the driver's granularity
+  (`asio_convert.hpp`, `choose_buffer_size`; 0 = the driver's preferred size,
+  read after the rate is set). `bufferSwitch` / `bufferSwitchTimeInfo`
+  convert the driver's buffers to planar float (16/24/32-bit integer, aligned
+  32-bit containers, 32/64-bit float, little-endian), call the engine, convert
+  back and call `outputReady` when the driver supports it. No locks or
+  allocation on the driver's thread. Status: the driver's buffer size and
+  `getLatencies` input and output latencies.
+* **One stream per process.** The SDK's callbacks carry no context, so the
+  running device is a process-wide pointer; a second ASIO start fails with
+  `SE_ERR_STATE`.
+* **Reset requests.** A driver's `kAsioResetRequest` or rate change (its
+  control panel, for instance) ends the stream: `is_running()` turns false,
+  as for a removed WASAPI device. No automatic restart.
+* **Checked** with FlexASIO 1.10 (its WASAPI backend) on the PC above: every
+  buffer size from 64 to 2048 plays with 0 xruns and the expected callback
+  count, duplex recording at 128, 256 and 512 with 0 overruns, switching
+  between ASIO and WASAPI outputs while playing, and the app starts on the
+  driver from saved preferences. FlexASIO's default DirectSound backend stops
+  calling back after about a second (a FlexASIO issue, dechamps/FlexASIO#176);
+  use its WASAPI backend. No hardware ASIO driver has been tried yet.
 
 ### Linux audio: PipeWire and ALSA
 
@@ -1789,8 +1831,10 @@ the timeline, so looped and warped clips fade where they play.
   `alsa_device.cpp`): WASAPI was checked by hand on one Windows sound card
   (inbox HD Audio driver); Linux has never run against real audio hardware
   (CI runners have no devices; ALSA runs there against its null PCM and
-  pipewire-alsa); no ASIO, no WASAPI exclusive mode, no native JACK;
-  device-change notifications are not handled on any platform.
+  pipewire-alsa); ASIO (`asio_device.cpp`) was checked with FlexASIO only, no
+  hardware ASIO driver yet, and has no control panel button, clock source
+  choice or restart after a driver reset; no WASAPI exclusive mode, no native
+  JACK; device-change notifications are not handled on any platform.
 * **Plugin editors:** Windows editors ignore per-monitor DPI. Linux editors
   are X11 only (Wayland desktops run them through XWayland); no HiDPI scale
   is passed to plugins, and plugin timers run at the idle rate (16 ms in the app).

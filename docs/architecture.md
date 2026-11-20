@@ -26,7 +26,7 @@ Status: milestone 1 (functional audio vertical slice). Decisions marked **ADR** 
 │ Audio engine (C++23)                           engine/ (static library)  │
 │  • non-RT side: asset decode + resample, graph build, retire queue       │
 │  • RT side: audio callback → render graph, transport, meters, stats      │
-│  • platform devices: Core Audio │ WASAPI (ASIO: future) │ PipeWire       │
+│  • platform devices: Core Audio │ WASAPI, ASIO │ PipeWire, ALSA        │
 │  • plugin hosting: VST3 / CLAP (all OSes), AU (macOS), OOP scanner       │
 └──────────────────────────────────────────────────────────────────────────┘
  Optional services (AI, cloud catalog) sit beside the core and talk to it only through Commands.
@@ -111,7 +111,8 @@ Status per platform, what CI covers and what is untested on real hardware:
   - macOS: Core Audio (AUHAL; private aggregate device for duplex).
   - Windows: WASAPI shared mode, event-driven, float32, converted to the engine rate by
     `AUTOCONVERTPCM`; duplex through a separate capture client and a drift-tolerant
-    `FrameRing`. ASIO is future work (separately licensed SDK, not added).
+    `FrameRing`. ASIO drivers through the Steinberg ASIO SDK (GPLv3 option): one driver for
+    output and input, picked by an `asio:` device id (`windows_audio_device.cpp`).
   - Linux: PipeWire playback/capture streams (same `FrameRing` duplex). JACK is future work for
     jackd-only systems (PipeWire already serves JACK clients).
   - Real-time thread priority: Core Audio's IO thread; MMCSS "Pro Audio" on the WASAPI thread;
