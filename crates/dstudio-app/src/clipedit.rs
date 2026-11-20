@@ -74,6 +74,8 @@ impl MenuAction {
             MenuAction::InsertMidiClip => "Insert MIDI clip",
             MenuAction::AutoLaneDelete => "Delete automation",
             MenuAction::AutoLaneClose => "Close lane",
+            MenuAction::TempoRamp => "Ramp to Next Point",
+            MenuAction::TempoHold => "Hold Until Next Point",
             MenuAction::SectionRename => "Rename…",
             MenuAction::SectionColor => "Color",
             MenuAction::SectionInsert => "Insert",
@@ -595,7 +597,7 @@ impl Controller {
     /// Right-click on the lanes (lane-local x/y for hit-testing, window wx/wy for placement).
     pub fn lane_context(&mut self, x: f32, y: f32, wx: f32, wy: f32, win: (f32, f32)) {
         use crate::timeline::{Hit, hit_test};
-        if self.section_context(x, y, wx, wy, win) {
+        if self.section_context(x, y, wx, wy, win) || self.tempo_point_context(x, y, wx, wy, win) {
             return;
         }
         let hit = hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y);
@@ -696,6 +698,7 @@ impl Controller {
         self.menu.track = None;
         self.menu.count_in = false;
         self.menu.auto_lane = None;
+        self.menu.tempo_point = None;
         self.ui_dirty = true;
     }
 
@@ -720,6 +723,7 @@ impl Controller {
             self.menu.track = None;
             self.menu.count_in = false;
             self.menu.auto_lane = None;
+            self.menu.tempo_point = None;
             self.ui_dirty = true;
         }
     }
@@ -739,6 +743,11 @@ impl Controller {
         }
         if self.menu.count_in {
             self.count_in_menu_activate(action);
+            return;
+        }
+        if let Some(i) = self.menu.tempo_point {
+            self.menu_close();
+            self.tempo_set_ramp(i, action == MenuAction::TempoRamp);
             return;
         }
         if let Some((track, i)) = self.menu.auto_lane {

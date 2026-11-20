@@ -1097,7 +1097,7 @@ impl Controller {
         let get = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
         let input = device_fields::Input {
             get: &get,
-            bpm: self.project().transport.bpm as f32,
+            bpm: self.bpm_now() as f32,
             n: (pw.round() as usize).max(64),
             cycles: self.devices.panel.lfo.get(&d.id).map(|l| l.1),
             win: false,

@@ -877,6 +877,8 @@ fn lane_desc(l: &LaneSnapshot, points: &[ffi::se_auto_point]) -> ffi::se_auto_la
         AutomationTarget::Trim => (ffi::SE_AUTO_TRIM, 0, 0, 0),
         AutomationTarget::Width => (ffi::SE_AUTO_WIDTH, 0, 0, 0),
         AutomationTarget::Mono => (ffi::SE_AUTO_MONO, 0, 0, 0),
+        // Never in a snapshot (SetAutomationLane refuses it); an unknown target fails the publish.
+        AutomationTarget::Tempo => (u8::MAX, 0, 0, 0),
     };
     ffi::se_auto_lane_desc {
         target,

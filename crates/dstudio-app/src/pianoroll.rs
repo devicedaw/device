@@ -1661,7 +1661,7 @@ impl Controller {
             "reverse" => ("Reverse Notes", Self::replace_notes(&clip, &midi::reverse(&target))),
             "legato" => ("Legato", Self::replace_notes(&clip, &midi::legato(&target, clip.length))),
             "smart_quantize" => {
-                let done = dstudio_core::smart_quantize::smart_quantize(&target, self.project().transport.bpm);
+                let done = dstudio_core::smart_quantize::smart_quantize(&target, self.project().bpm_at(clip.start));
                 let mut notes: Vec<Note> = clip.notes.iter().filter(|n| !target.iter().any(|t| t.id == n.id)).copied().collect();
                 notes.extend(done.notes);
                 if !self.commit_notes(clip.id, notes, Some("Smart Quantize")) {

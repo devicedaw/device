@@ -1405,6 +1405,9 @@ impl Command {
                 Ok(Command::ReplaceDevice { device: new_id, with: old })
             }
             Command::SetAutomationLane { track, target, lane } => {
+                if target == AutomationTarget::Tempo {
+                    return Err(invalid("target", "the tempo is edited with set_tempo_map"));
+                }
                 if let Some(l) = &lane {
                     if l.target != target {
                         return Err(invalid("lane", "lane.target must equal target"));

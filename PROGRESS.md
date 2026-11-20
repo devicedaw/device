@@ -734,3 +734,16 @@ for the metronome and for the tempo and song position built-in devices and plugi
 converts and renders exactly as before. Tests: `crates/dstudio-core/tests/tempo_map.rs`, `engine/tests/test_tempo.cpp`,
 `rt_tempo_map_does_not_allocate`, `crates/dstudio-engine/tests/tempo.rs`; benchmarks: a "Tempo map" table in
 `dstudio_engine_bench`, `cargo bench -p dstudio-core --bench tempo`.
+
+### 2026-11-20: the tempo lane
+
+Tempo changes get their editor (spec 015, second of three pull requests). The master row's lane picker lists
+Song › Tempo above Master › Volume; the lane draws the tempo map in BPM on a scale fitted to its points (at least
+40 BPM wide) and uses the lane gestures: click the line to add a point (the first one keeps the old tempo from bar 1
+up to it), drag points in whole BPM (⌥ for hundredths and free time), Delete, Draw mode. A point's right-click menu
+switches between "Ramp to Next Point" and "Hold Until Next Point". Each gesture is one `SetTempoMap` ("Edit Tempo
+Automation"). The ruler shows a mark and the BPM at every point (an arrow on a ramp) whenever the song has changes;
+clicking one shows the lane. The transport field shows the tempo at the playhead, follows it in playback and edits the
+point in effect there ("Tempo Change"). Device readouts, "warp on", Smart Quantize and the recording's live clip use the
+tempo at the playhead or the clip's start. App side: `src/tempo_lane.rs` and the Tempo target in `src/automation.rs`;
+review state `review-tempo-lane`; self-test section `tempo_steps`.

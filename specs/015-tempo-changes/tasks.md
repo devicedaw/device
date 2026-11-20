@@ -30,15 +30,15 @@ Tick a task only when its verification passed.
 
 ## PR B: tempo-lane (app)
 
-- [ ] T11. Lane: "Song › Tempo" in the master picker, drawing in BPM with fitted scale, gestures,
+- [x] T11. Lane: "Song › Tempo" in the master picker, drawing in BPM with fitted scale, gestures,
   ramp/hold menu, one `SetTempoMap` per gesture — verify: self-test `tempo_steps`
-- [ ] T12. Ruler marks with BPM and ramp arrow; click shows the lane — verify: self-test
-- [ ] T13. Transport field at the playhead (display, follow, edit via `SetTempo { at }`) —
+- [x] T12. Ruler marks with BPM and ramp arrow; click shows the lane — verify: self-test
+- [x] T13. Transport field at the playhead (display, follow, edit via `SetTempo { at }`) —
   verify: self-test (field text at two positions)
-- [ ] T14. Tempo-dependent readouts at the playhead or clip start (device panels, Echo, live
+- [x] T14. Tempo-dependent readouts at the playhead or clip start (device panels, Echo, live
   recording clip, warp on, Smart Quantize) — verify: `cargo test -p dstudio-app`
-- [ ] T15. Review state `review-tempo-lane`, screenshots before/after — verify: `--state`
-- [ ] T16. Docs: README features, PROGRESS.md — verify: read against the change
+- [x] T15. Review state `review-tempo-lane`, screenshots before/after — verify: `--state`
+- [x] T16. Docs: README features, PROGRESS.md — verify: read against the change
 
 ## PR C: tempo-export
 

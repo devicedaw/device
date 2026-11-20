@@ -555,7 +555,8 @@ impl Controller {
         }
         let st = self.engine.recording_state();
         let p = self.doc.project();
-        let fpb = self.rate * 60.0 / p.transport.bpm;
+        // Frames per beat at the playhead (for the peak resolution; positions use the tempo map).
+        let fpb = self.rate * 60.0 / self.bpm_now();
         // About one peak pair per logical point at the current zoom; the engine works in
         // multiples of 64 frames, so round to that and scale the pair width to match.
         let frames_per_pt = fpb / self.view.px_per_beat;
@@ -563,7 +564,11 @@ impl Controller {
         for (k, t) in st.takes.iter().enumerate() {
             let Some(ti) = p.track_index(TrackId(t.track_id)) else { continue };
             let start_beats = p.frames_to_ticks(t.start_frame, self.rate) as f64 / PPQ as f64;
-            let len_beats = t.frames as f64 / fpb;
+            let len_beats = if p.has_tempo_changes() {
+                (p.frames_to_ticks(t.start_frame + t.frames as i64, self.rate) as f64 / PPQ as f64) - start_beats
+            } else {
+                t.frames as f64 / fpb
+            };
             let max_pairs = ((t.frames as f64 / fpp as f64).ceil() as usize + 1).min(8192);
             // recording_peaks() serves the newest take of a track (a seek starts a new take).
             let newest = !st.takes[k + 1..].iter().any(|n| n.track_id == t.track_id);

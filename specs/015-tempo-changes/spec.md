@@ -146,6 +146,13 @@ None. Agreed 2026-11-20:
   frames: mirroring frames would move the tempo changes inside the clip.
 - Inside a ramp, devices and plugins get the tempo of each block's first frame; the song position they ask for is exact
   at every frame. At 256 frames and 48 kHz the tempo they see lags the ramp by at most 5 ms.
+- The tempo lane keeps the lane gestures every other lane has: a double-click on a point deletes it (as on every
+  lane) rather than opening a text field; a value is typed in the transport field, which edits the point in effect
+  at the playhead. Drags move points in whole BPM; ⌥ drags in hundredths (and, as on every lane, without snapping
+  time). The tempo lane has no power switch (the song always has a tempo) and no curve handle.
+- A new point made in an empty tempo lane also puts a point at bar 1 holding the song's tempo, so a click at bar 9
+  changes the tempo from bar 9 on, not for the whole song.
+- The master row's pill and picker now name the master volume "Master › Volume" (it said "Track › Volume").
 - A count-in follows the song's tempo map: the song plays during the count-in bars, so the click there keeps time with
   the music. That is the tempo at the punch point whenever no change falls inside the count-in bars, and before bar 1
   the first tempo holds.

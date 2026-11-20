@@ -375,6 +375,9 @@ pub enum MenuAction {
     /// An expanded automation row's menu (src/automation.rs).
     AutoLaneDelete,
     AutoLaneClose,
+    /// A tempo point's menu (src/tempo_lane.rs): ramp to the next point, or hold until it.
+    TempoRamp,
+    TempoHold,
     /// Record button menu (src/count_in.rs): count-in off, one bar, two bars.
     CountInOff,
     CountIn1,
@@ -395,6 +398,8 @@ pub struct MenuState {
     pub count_in: bool,
     /// An expanded automation row's menu: the track and row index.
     pub auto_lane: Option<(TrackId, usize)>,
+    /// A tempo point's menu: the point's index in the tempo map.
+    pub tempo_point: Option<usize>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
     /// The entry whose submenu `sub_open` shows (Transpose or Bounce).
@@ -488,6 +493,7 @@ pub struct Controller {
     pub(crate) tracks_model: Rc<VecModel<TrackRow>>,
     ruler_model: Rc<VecModel<RulerLabel>>,
     section_label_model: Rc<VecModel<crate::SectionLabel>>,
+    tempo_mark_model: Rc<VecModel<crate::TempoMark>>,
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64, i64),
     pub(crate) mm: crate::minimap::State,
@@ -684,6 +690,7 @@ impl Controller {
             dm: crate::devminimap::State::new(),
             ptr: crate::pointer::Queue::default(),
             section_label_model: Rc::new(VecModel::default()),
+            tempo_mark_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
             ruler_key: (i64::MIN, 0, 0, 0),
             clip_vis: Vec::new(),
@@ -784,6 +791,8 @@ impl Controller {
         s.set_snap_menu_items(ModelRc::from(self.snap.model.clone()));
         s.set_sig_menu_items(ModelRc::from(self.tf.sig_model.clone()));
         s.set_section_labels(ModelRc::from(self.section_label_model.clone()));
+        s.set_tempo_marks(ModelRc::from(self.tempo_mark_model.clone()));
+        s.set_tempo_mark_color(crate::automation::Hue::key("Song", "Tempo").slint_bright());
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
         s.set_strip_meters(ModelRc::from(self.strip_meters_model.clone()));
@@ -954,6 +963,7 @@ impl Controller {
     /// Publish a new engine snapshot if the document changed.
     pub fn after_change(&mut self) {
         self.remember_device_names();
+        self.refresh_tempo_lane();
         let p = self.doc.project();
         if let Some(t) = self.selected_track
             && p.track(t).is_none()
@@ -988,6 +998,18 @@ impl Controller {
     /// The session the engine should play right now: the document plus any
     /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
+        // A tempo lane drag: the song plays on the map being drawn (every position moves with it).
+        if let Some((None, lane)) = &self.auto.pending
+            && lane.target == dstudio_core::AutomationTarget::Tempo
+        {
+            let mut p = self.doc.project().clone();
+            let points = crate::automation::tempo_points(lane, p.transport.bpm, p.transport.tempo.is_empty());
+            if dstudio_core::tempo::validate(&points).is_ok() {
+                p.transport.bpm = points.first().map_or(p.transport.bpm, |q| q.bpm);
+                p.transport.tempo = points;
+            }
+            return snapshot::build_full(&p, self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset()).0;
+        }
         let (mut snap, _skipped) =
             snapshot::build_full(self.doc.project(), self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset());
         // Automation drag / write preview: the pending lane replaces the model lane.
@@ -1773,7 +1795,7 @@ impl Controller {
             if !w.markers.is_empty() {
                 return None;
             }
-            w.original_bpm = (self.project().transport.bpm / w.varispeed()).clamp(MIN_ORIGINAL_BPM, MAX_ORIGINAL_BPM);
+            w.original_bpm = (self.project().bpm_at(c.start) / w.varispeed()).clamp(MIN_ORIGINAL_BPM, MAX_ORIGINAL_BPM);
             w.speed = 1.0;
             w.enabled = true;
         }
@@ -1813,6 +1835,9 @@ impl Controller {
                 let hit = timeline::hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y);
                 match hit {
                     Hit::Ruler => {
+                        if self.tempo_mark_click(x, y) {
+                            return;
+                        }
                         self.seek_beats(beat);
                         self.drag = Some(Drag::Scrub);
                     }
@@ -2633,6 +2658,9 @@ impl Controller {
             })
             .collect();
         crate::controller::sync_model(&self.section_label_model, section_labels);
+        let marks: Vec<crate::TempoMark> =
+            self.tempo_marks().into_iter().map(|m| crate::TempoMark { x: m.x, text_x: m.text_x, text: m.text.into() }).collect();
+        crate::controller::sync_model(&self.tempo_mark_model, marks);
         let key = (
             (v.start_beats * 4096.0) as i64,
             (v.px_per_beat * 4096.0) as i64,
