@@ -1,7 +1,7 @@
 // Settings window as an in-app modal panel (see src/settings.rs for why), drawn at the
 // settings window rect: x 255, y 6.5, 960 pt wide (216.75 / 5.5 / 816 in 85 % units), running
 // off the bottom of the main window. Sidebar 187; the General, Audio, MIDI, Plugins, Shortcuts
-// and Privacy pages are real, Downloads says "Not available yet".
+// and Privacy pages are real; Downloads says there is nothing to download yet.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
 import { Studio, ChoiceItem, MidiInputRow, PluginRow, ShortcutKey, ShortcutRow } from "studio.slint";
@@ -593,6 +593,24 @@ component PluginsPage inherits Rectangle {
     }
 }
 
+// Settings › Downloads (roadmap G15): optional content to download, such as the sound library
+// of the multi-sample instrument (roadmap G27). There is none yet, so the page says so and shows
+// nothing else. The list goes here when there is: one row per item with its name, version and
+// size and a Download / Re-download button with progress, from a model the controller pushes.
+component DownloadsPage inherits Rectangle {
+    FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Downloads"; font-size: 17.25px; font-weight: 700; }
+    SearchHit { y: 66px; width: root.width - 24px; height: 44px; label: "Downloadable content"; }
+    Text {
+        x: 20.5px; y: 71px; width: root.width - 41px; height: 14px;
+        text: "There is nothing to download yet."; color: #e5e5e8; font-size: 10.25px; letter-spacing: 0.15px; vertical-alignment: center;
+    }
+    Text {
+        x: 20.5px; y: 89px; width: root.width - 41px; height: 14px;
+        text: "Optional content, such as a sound library for the sampler, will be listed here with its version and size.";
+        color: Tokens.text-tertiary; font-size: 9.5px; vertical-alignment: center; overflow: elide;
+    }
+}
+
 // Settings › Privacy (spec 018, roadmap G14). Send crash reports works (src/crash.rs, saved in
 // the preferences); Usage tracking stays off and disabled, because Device collects nothing.
 component PrivacyPage inherits Rectangle {
@@ -683,12 +701,7 @@ export component SettingsPanel inherits Rectangle {
     if Studio.settings-page == 2: MidiPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 4: ShortcutsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 6: PrivacyPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
-    if Studio.settings-page == 5: Rectangle {
-        x: 187px; y: 0; width: root.width - 187px; height: root.height;
-        Text { x: 20.5px; y: 33px; height: 24px; text: Studio.settings-pages[Studio.settings-page]; color: #ececee; font-size: 17.25px; font-weight: 700; vertical-alignment: center; }
-        // PLACEHOLDER pages
-        Text { x: 20.5px; y: 72px; height: 14px; text: "Not available yet"; color: Tokens.text-tertiary; font-size: 10px; vertical-alignment: center; }
-    }
+    if Studio.settings-page == 5: DownloadsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     // Dropdown list (click outside closes).
     if Studio.settings-menu-open: Rectangle {
         TouchArea { clicked => { Studio.settings-menu-dismiss(); } }

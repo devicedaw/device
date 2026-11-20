@@ -215,8 +215,8 @@ struct Args {
     settings_search_review: Option<&'static str>,
     /// review-settings-help: Settings › Audio with Buffer size's (i) hovered, its help showing.
     settings_help_review: bool,
-    /// review-settings-privacy: Settings › Privacy.
-    settings_privacy_review: bool,
+    /// review-settings-privacy: Settings › Privacy (6); review-settings-downloads: Downloads (5).
+    settings_page_review: Option<usize>,
     /// Settings › Shortcuts: 1 the page, 2 recording keys for Tap tempo, 3 Tap tempo unmapped,
     /// 4-6 searching "track", "notes", "transpose".
     shortcuts_review: u8,
@@ -862,9 +862,9 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_midi_review = true;
                 }
-                "review-settings-privacy" => {
+                st @ ("review-settings-privacy" | "review-settings-downloads") => {
                     a.reference_default = true;
-                    a.settings_privacy_review = true;
+                    a.settings_page_review = Some(if st.ends_with("privacy") { settings_search::PRIVACY_PAGE } else { 5 });
                 }
                 "review-settings-help" => {
                     a.reference_default = true;
@@ -3104,10 +3104,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.settings.prefs.shortcuts = shortcuts::changes(&c.settings.keys.map, &c.settings.prefs.shortcut_preset);
         }
     }
-    if args.settings_privacy_review {
+    if let Some(page) = args.settings_page_review {
         let mut c = ctl.borrow_mut();
         c.open_settings();
-        c.settings_page(settings_search::PRIVACY_PAGE);
+        c.settings_page(page);
     }
     if args.settings_help_review {
         let mut c = ctl.borrow_mut();

@@ -14193,6 +14193,49 @@ fn privacy_steps() -> Vec<Step> {
     ]
 }
 
+/// Settings › Downloads (roadmap G15): the sidebar opens it, and searching "sound library" finds it.
+fn downloads_steps() -> Vec<Step> {
+    use Step::*;
+    vec![
+        DoC("downloads: open Settings", Box::new(|_, ctl| ctl.borrow_mut().open_settings())),
+        Do(
+            "downloads: click Downloads in the sidebar",
+            Box::new(|a| {
+                let (x, y) = settings_row(5);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "downloads: the Downloads page is open",
+            Box::new(|c, a| {
+                (c.settings.page == 5 && a.global::<Studio>().get_settings_page() == 5)
+                    .then_some(())
+                    .ok_or(format!("page {}", c.settings.page))
+            }),
+        ),
+        Do(
+            "downloads: search \"sound library\" from General",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_settings_page_select(0);
+                s.set_settings_search("sound library".into());
+                s.invoke_settings_search_edited("sound library".into());
+            }),
+        ),
+        Check(
+            "downloads: only Downloads is listed, and it is open",
+            Box::new(|c, a| {
+                let m = a.global::<Studio>().get_settings_page_slots();
+                let slots: Vec<i32> = (0..m.row_count()).filter_map(|i| m.row_data(i)).collect();
+                (c.settings.page == 5 && slots == [-1, -1, -1, -1, -1, 0, -1])
+                    .then_some(())
+                    .ok_or(format!("page {} slots {slots:?}", c.settings.page))
+            }),
+        ),
+        DoC("downloads: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
+    ]
+}
+
 /// Mouse & modifiers: ⌥-drag copies a clip, ⇧-drag on its right edge time-stretches it, the
 /// top-right corner loops it, ⌥ + scroll changes the track heights, and a double-click deletes
 /// a piano roll note. Driven through the controller's pointer entry points.
@@ -18491,6 +18534,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(settings_search_steps());
     all.extend(settings_help_steps());
     all.extend(privacy_steps());
+    all.extend(downloads_steps());
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());

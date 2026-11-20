@@ -887,3 +887,11 @@ after their effects as before. The notes list both, with the reason, and any set
 `live_devices.rs` holds the mappings; `live_set.rs` writes them; `dialogs.rs::live_chain` decides per track
 and `make_dry` renders before the effects. Tests: `live_devices` unit tests, a structure check test, and the
 self-test section `live_convert_steps`.
+
+### 2026-11-21: Settings › Downloads
+
+Roadmap G15. Settings › Downloads replaces "Not available yet" with two plain sentences: there is nothing to download
+yet, and optional content such as a sound library for the sampler will be listed there with its version and size. It
+shows nothing else until there is content (the multi-sample instrument's library, roadmap G27, would be the first);
+the page's comment in `ui/settings.slint` says where the list goes. Search settings finds it ("sound library",
+"download"). Review state `review-settings-downloads`; self-test section `downloads_steps`.
