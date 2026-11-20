@@ -321,12 +321,7 @@ pub fn build_full(
                     .flat_map(|c| {
                         c.playing_notes().into_iter().map(move |n| (c.start + n.start, c.start + n.start + n.length, n.pitch, n.velocity))
                     })
-                    .map(|(s, e, pitch, velocity)| NoteSnapshot {
-                        start: note_frames(s),
-                        end: note_frames(e),
-                        pitch,
-                        velocity,
-                    })
+                    .map(|(s, e, pitch, velocity)| NoteSnapshot { start: note_frames(s), end: note_frames(e), pitch, velocity })
                     .filter(|n| n.end > n.start)
                     .collect();
                 v.sort_by_key(|n| (n.start, n.pitch));
