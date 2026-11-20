@@ -1081,6 +1081,9 @@ impl Controller {
         if e.folder && self.devices.search.trim().is_empty() && !self.devices.expanded.remove(&e.key) {
             self.devices.expanded.insert(e.key.clone());
         }
+        if let Some(Item::BuiltinSynth(Some(i))) = e.item {
+            self.preview_sound(i as usize);
+        }
         self.devices.selected = Some(e.key);
         self.ui_dirty = true;
     }

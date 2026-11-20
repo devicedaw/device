@@ -2075,6 +2075,30 @@ fn synth_steps() -> Vec<Step> {
                 (p.as_deref() == Some("Analog Kick")).then_some(()).ok_or(format!("preset {p:?}"))
             }),
         ),
+        DoC(
+            "click Analog Kick in Devices › Instruments › Synth › Drums",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.browser_tab(0);
+                for k in ["i/builtin", "i/b/synth", "i/b/synth/Drums"] {
+                    c.devices.expanded.insert(k.into());
+                }
+                c.update_ui(a);
+                if let Some(i) = c.devices.entries.iter().position(|e| e.key == "i/b/synth/Drums/Analog Kick") {
+                    c.tree_click(i);
+                }
+            }),
+        ),
+        Check(
+            "synth: a clicked sound plays in the preview bar, rendered to a file",
+            Box::new(|c, _| {
+                let a = &c.files.audition;
+                let path = a.path.as_ref().ok_or(format!("nothing in the bar (loading {:?})", a.loading))?;
+                (path.to_string_lossy().contains("Sound previews") && a.asset.is_some_and(|(_, n)| n > 0) && path.exists())
+                    .then_some(())
+                    .ok_or(format!("path {path:?} asset {:?}", a.asset))
+            }),
+        ),
         Do(
             "Cmd+Z x3 (sound, add, remove)",
             Box::new(|a| {
