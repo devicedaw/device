@@ -5,8 +5,9 @@
 //! A return track is a shared effect track; a send is how much of one track goes into it. Every
 //! ordinary track has one send slot per return track: the Sends tab shows a knob for each return
 //! and the mixer's Sends section a row for each. A slot with no stored send is silent (−∞), and
-//! moving its knob stores it. Returns are added from Add track, the Returns pill (when there are
-//! none), and the "+" beside Sends.
+//! moving its knob stores it. A return track has a slot for each return after it (spec 016), so
+//! signal only flows down the return list. Returns are added from Add track, the Returns pill
+//! (when there are none), and the "+" beside Sends.
 //!
 //! Every edit is a core command: `SetSends` (wrapped in a labelled `Batch` for Add Send, Remove
 //! Send and Send Pre-Fader / Post-Fader; level drags coalesce as "Send Level Change"),
@@ -201,10 +202,10 @@ impl Controller {
         self.set_sends(if pre { "Send Pre-Fader" } else { "Send Post-Fader" }, track, sends)
     }
 
-    /// `track` can send to `target`: an ordinary or group track and an existing return track.
+    /// `track` can send to `target`: an ordinary or group track into any return track, a return
+    /// track into a return after it.
     fn can_send(&self, track: TrackId, target: TrackId) -> bool {
-        let p = self.project();
-        p.track(track).is_some_and(|t| !t.is_return()) && p.track(target).is_some_and(|r| r.is_return())
+        self.project().send_allowed(track, target)
     }
 
     /// Set a send's level (linear gain, clamped to −∞..+6 dB). A silent slot (no send stored yet)
@@ -260,11 +261,9 @@ impl Controller {
     }
 
     /// The "+" beside Sends (channel strip Sends tab, mixer strip): a new return track, its slot
-    /// silent on every track; `track` stays selected.
+    /// silent on every track (and on every return, since it comes last); `track` stays selected.
     pub fn sends_add_return(&mut self, track: TrackId) -> Option<TrackId> {
-        if self.project().track(track).is_none_or(|t| t.is_return()) {
-            return None;
-        }
+        self.project().track(track)?;
         self.add_return_track(false)
     }
 
@@ -374,15 +373,20 @@ impl Controller {
 
     // ---------------------------------------------------------------- view models
 
-    /// One send slot per return track, in return order (none on a return track): the stored
-    /// send, or a silent one.
-    pub(crate) fn send_rows(&self, track: &Track) -> Vec<SendRow> {
+    /// The returns `track` has a send slot for, with their index among the returns: every return
+    /// for an ordinary or group track, the later ones for a return.
+    pub(crate) fn send_slots<'a>(&'a self, track: &'a Track) -> impl Iterator<Item = (usize, &'a Track)> + 'a {
+        // The same rule as `Project::send_allowed`, without a lookup per pair.
         let p = self.project();
-        if track.is_return() {
-            return Vec::new();
-        }
-        p.returns()
-            .enumerate()
+        let after = if track.is_return() { p.return_index(track.id).map_or(usize::MAX, |i| i + 1) } else { 0 };
+        p.returns().enumerate().skip(after)
+    }
+
+    /// One send slot per return track `track` can send into, in return order: the stored send,
+    /// or a silent one. `row` is the return's index, so a return's rows line up with the same
+    /// returns' rows on the other strips.
+    pub(crate) fn send_rows(&self, track: &Track) -> Vec<SendRow> {
+        self.send_slots(track)
             .map(|(ri, r)| {
                 let s = track.sends.iter().find(|s| s.target == r.id);
                 let level = s.map_or(0.0, |s| s.level);
@@ -410,7 +414,7 @@ impl Controller {
         // The pill is lit while return rows actually show (not in a project without returns).
         s.set_returns_shown(self.returns_shown() && p.returns().next().is_some());
         s.set_sends_open(self.routing.sends_open);
-        let rows: Vec<SendRow> = p.tracks.iter().filter(|t| !t.is_return()).flat_map(|t| self.send_rows(t)).collect();
+        let rows: Vec<SendRow> = p.tracks.iter().flat_map(|t| self.send_rows(t)).collect();
         s.set_strip_sends_max(p.returns().count() as i32);
         sync_model(&self.routing.strip_sends_model, rows);
         let sel = self.selected_track.and_then(|id| p.track(id));
@@ -424,7 +428,7 @@ impl Controller {
         };
         s.set_sel_out_text(out.into());
         sync_model(&self.routing.sel_sends_model, sel.map(|t| self.send_rows(t)).unwrap_or_default());
-        s.set_sel_can_send(sel.is_some_and(|t| !t.is_return()));
+        s.set_sel_can_send(sel.is_some());
         s.set_sel_can_route(sel.is_some_and(|t| !t.is_bus()));
         s.set_can_add_return(p.returns().count() < MAX_RETURNS);
         match &self.routing.menu {
@@ -479,8 +483,34 @@ mod tests {
         assert_eq!(slots, [(a.0 as i32, "Return A".into(), true, true), (b.0 as i32, "Return B".into(), false, false)]);
         let other = c.project().tracks[1].clone();
         assert_eq!(c.send_rows(&other).len(), 2, "a slot per return on every ordinary track");
+        // A return has a slot for each later return only, on that return's row.
         let ret = c.project().track(a).unwrap().clone();
-        assert!(c.send_rows(&ret).is_empty());
+        let rows = c.send_rows(&ret);
+        assert_eq!(rows.iter().map(|r| (r.target, r.row)).collect::<Vec<_>>(), [(b.0 as i32, 1)]);
+        let last = c.project().track(b).unwrap().clone();
+        assert!(c.send_rows(&last).is_empty(), "the last return sends nowhere");
+    }
+
+    /// Spec 016: a return sends into a later return from its Sends tab and the mixer row's menu;
+    /// "+" on a return adds a later return.
+    #[test]
+    fn a_return_sends_into_a_later_return() {
+        let mut c = controller();
+        let t = c.project().tracks[0].id;
+        let a = c.sends_add_return(t).unwrap();
+        let b = c.sends_add_return(a).unwrap();
+        assert!(c.set_send_level(a, b, 0.5));
+        c.send_gesture_end();
+        assert_eq!(c.doc.undo_label(), Some("Send Level Change"));
+        assert!(c.set_send_pre(a, b, true));
+        assert_eq!(c.doc.undo_label(), Some("Send Pre-Fader"));
+        c.open_send_options(a, b, 0.0, 0.0);
+        assert_eq!(c.route_menu_labels(), ["Post-fader", "Pre-fader", "Reset to 0 dB", "Remove send"]);
+        c.route_menu_close();
+        assert!(c.remove_send(a, b));
+        assert!(!c.set_send_level(b, a, 1.0), "not into an earlier return");
+        c.open_send_options(b, a, 0.0, 0.0);
+        assert!(c.route_menu_labels().is_empty());
     }
 
     /// Moving a silent slot stores a post-fader send; undo makes it silent again. A silent slot
@@ -497,7 +527,7 @@ mod tests {
         assert_eq!(c.doc.undo_label(), Some("Send Level Change"));
         c.undo();
         assert!(c.project().tracks[0].sends.is_empty());
-        assert!(!c.set_send_level(r, r, 1.0), "a return track has no sends");
+        assert!(!c.set_send_level(r, r, 1.0), "a return doesn't send into itself");
     }
 
     /// The Returns pill adds Return A when there is none; afterwards it shows and hides the rows.

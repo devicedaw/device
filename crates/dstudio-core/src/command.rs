@@ -718,16 +718,13 @@ impl Command {
                 if index < lo || index >= hi {
                     return Err(invalid("index", format!("{index} is outside {lo}..{hi}")));
                 }
-                let t = p.tracks.remove(i);
-                p.tracks.insert(index, t);
                 // A return sends only down the list (spec 016): refuse a move that would turn one
                 // of its sends, or a send into it, upward.
-                if let Some((from, to)) = p.return_order_conflict() {
-                    let t = p.tracks.remove(index);
-                    p.tracks.insert(i, t);
-                    let name = |id: TrackId| p.track(id).map(|t| t.name.clone()).unwrap_or_default();
-                    return Err(invalid("index", format!("{} sends into {}: remove that send to move it here", name(from), name(to))));
+                if let Some((from, to)) = p.return_move_conflict(track, index) {
+                    return Err(invalid("index", return_move_refusal(p, from, to)));
                 }
+                let t = p.tracks.remove(i);
+                p.tracks.insert(index, t);
                 Ok(Command::MoveTrack { track, index: i })
             }
             Command::SetTrackColor { track, color } => {
@@ -1573,6 +1570,13 @@ fn validate_routing(
         return Err(invalid("output", format!("{} is not a return or group track", o.0)));
     }
     Ok(())
+}
+
+/// Why a return move is refused, for the status line: "Return B sends into Return C: remove that
+/// send to move it here".
+fn return_move_refusal(p: &Project, from: TrackId, to: TrackId) -> String {
+    let name = |id: TrackId| p.track(id).map(|t| t.name.clone()).unwrap_or_default();
+    format!("{} sends into {}: remove that send to move it here", name(from), name(to))
 }
 
 fn validate_gain(field: &'static str, g: f32) -> Result<(), EditError> {

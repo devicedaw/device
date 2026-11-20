@@ -880,7 +880,8 @@ component Inspector inherits Rectangle {
     // chip above (once the send is stored), the level knob, its dB value and the return's name.
     // A silent slot (nothing sent yet, or all the way down) is dim; moving its knob sends.
     // Double-clicking a knob sets 0 dB. With no return tracks, a dim "Return A" placeholder
-    // creates the return and sends to it at 0 dB.
+    // creates the return and sends to it at 0 dB. A return track has a knob for each return
+    // after it (spec 016); the last return says so.
     if root.tab == 1: sends-list := Rectangle {
         x: 0; y: 128 * StripMetrics.u; width: 170px; height: 324 * StripMetrics.u - self.y - 4px;
         clip: true;
@@ -890,8 +891,8 @@ component Inspector inherits Rectangle {
         property <length> max-scroll: max(0px, self.rows * self.cell-h + 6px - self.height);
         property <length> scroll: min(self.scroll-raw, self.max-scroll);
         property <length> scroll-raw: 0px;
-        if !Studio.sel-can-send: Text {
-            x: 10px; y: 10px; width: 150px; text: Studio.has-selection ? "Return tracks have no sends." : ""; color: #63656d; font-size: 9.5px; font-weight: 600; wrap: word-wrap;
+        if Studio.sel-return && Studio.sel-sends.length == 0: Text {
+            x: 10px; y: 10px; width: 150px; text: "A return sends into the returns after it. This is the last one."; color: #63656d; font-size: 9.5px; font-weight: 600; wrap: word-wrap;
         }
         TouchArea {
             scroll-event(e) => {
@@ -900,7 +901,7 @@ component Inspector inherits Rectangle {
                 accept
             }
         // Placeholder: no return tracks yet.
-        if Studio.sel-can-send && Studio.sel-sends.length == 0: Rectangle {
+        if Studio.sel-can-send && !Studio.sel-return && Studio.sel-sends.length == 0: Rectangle {
             x: 10px; y: 6px; width: 74px; height: sends-list.cell-h;
             Knob { x: 18px; y: 14px; width: 38px; height: 38px; body: 20.5px; groove: true; show-arc: false; value-angle: -135; tick-color: #63656d; arc-color: #63656d; }
             Text { x: 0; y: 50px; width: parent.width; height: 13px; text: "−∞"; color: #4a4b50; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }

@@ -596,11 +596,30 @@ impl Project {
         from != to && self.tracks[t].is_return() && (!self.tracks[f].is_return() || t > f)
     }
 
-    /// The first send from a return into a return before it, as (sender, target): what a return
-    /// move must not leave behind. None in a valid project.
+    /// The first send from a return into a return before it, as (sender, target). None in a
+    /// valid project.
     pub fn return_order_conflict(&self) -> Option<(TrackId, TrackId)> {
-        self.tracks.iter().enumerate().filter(|(_, t)| t.is_return()).find_map(|(i, r)| {
-            r.sends.iter().find(|s| self.track_index(s.target).is_some_and(|j| j <= i)).map(|s| (r.id, s.target))
+        self.upward_return_send(&(0..self.tracks.len()).collect::<Vec<_>>())
+    }
+
+    /// The send from a return into an earlier return that moving `track` to `index` (as
+    /// `Command::MoveTrack` does) would leave, as (sender, target). None when the move keeps every
+    /// return send pointing down the list, or `track` doesn't exist.
+    pub fn return_move_conflict(&self, track: TrackId, index: usize) -> Option<(TrackId, TrackId)> {
+        let from = self.track_index(track)?;
+        let mut order: Vec<usize> = (0..self.tracks.len()).collect();
+        let moved = order.remove(from);
+        order.insert(index.min(order.len()), moved);
+        self.upward_return_send(&order)
+    }
+
+    /// With the tracks in `order` (indices into `tracks`): the first return send whose target
+    /// isn't after its sender.
+    fn upward_return_send(&self, order: &[usize]) -> Option<(TrackId, TrackId)> {
+        let pos = |id: TrackId| order.iter().position(|&k| self.tracks[k].id == id);
+        order.iter().enumerate().filter(|&(_, &k)| self.tracks[k].is_return()).find_map(|(at, &k)| {
+            let r = &self.tracks[k];
+            r.sends.iter().find(|s| pos(s.target).is_some_and(|j| j <= at)).map(|s| (r.id, s.target))
         })
     }
 

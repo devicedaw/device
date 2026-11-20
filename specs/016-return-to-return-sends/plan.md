@@ -27,8 +27,8 @@ a per-send solo flag in the C ABI (the engine has everything it needs to compute
 
 - **Core** (`crates/dstudio-core`):
   - `model.rs`: `Project::send_allowed(from, to)` (ordinary or group track into any return; a return
-    into a return after it); `Project::return_order_conflict()` returning the first return send that
-    points up (for `MoveTrack`); `sanitize_routing` keeps a return's sends into later returns (deduped,
+    into a return after it); `Project::return_move_conflict(track, index)` returning the first return send that
+    a move would turn upward (for `MoveTrack`); `sanitize_routing` keeps a return's sends into later returns (deduped,
     levels clamped) instead of clearing them.
   - `command.rs`: `validate_routing` takes the position the track has (or will have) in the list and
     accepts a return's sends into later returns; `add_track` passes the insert index. `MoveTrack` of a
@@ -50,7 +50,10 @@ a per-send solo flag in the C ABI (the engine has everything it needs to compute
     with `row` = the target's return index, so mixer rows line up across strips; `sends_add_return`
     and `sel_can_send` accept returns. A `send_slot_count` helper feeds the strip ranges.
   - `controller.rs`: strips' `send_count` from the helper; `push_routing` includes return strips.
-  - `track_menu.rs`: a return header drag that `return_order_conflict` refuses shows the status line.
+  - Return rows are pinned above the master row and can't be dragged in the timeline today, so a
+    return moves only through `MoveTrack` (scripts, the assistant); its refusal reaches the status
+    line through `Controller::execute` ("Edit rejected: ... Return A sends into Return B: remove
+    that send to move it here").
   - `ui/mixer.slint`: return strips get the Sends row and section (the "Return" caption goes).
   - `ui/app.slint`: Sends tab of a return: knobs for later returns; no "Return A" placeholder; the
     last return shows a one-line hint.
@@ -61,8 +64,9 @@ a per-send solo flag in the C ABI (the engine has everything it needs to compute
     sends, clamped and rescaled sends in the notes.
   - `live_set.rs`: `SetReturn::sends`; return sends with a level are written active; `validate`
     counts them (`SetSummary::return_sends`).
-  - Review state `review-return-sends` (mixer open with Sends expanded, Return A selected on its
-    Sends tab, A sending into B); self-test `return_send_steps`.
+  - Review states `review-return-sends` (mixer open, Sends expanded, A sending into B, A selected)
+    and `review-return-sends-strip` (Return A's Sends tab); self-test `return_send_steps`, and the
+    Project export self-test section gains a third return and sends between returns.
 - **Docs**: README › Features (mixer / returns), PROGRESS.md entry, `docs/` mentions of "returns
   have no sends", roadmap G36.
 
@@ -90,10 +94,12 @@ a per-send solo flag in the C ABI (the engine has everything it needs to compute
 - Engine (`engine/tests/test_routing.cpp`): A→B pre and post; muted A; the three solo cases with
   A→B and with a group feeding a return; export equals live with an RT allocation guard; PDC with
   latent plugins on A and B.
-- App unit tests: `send_rows` of returns, `stem_snapshot` of a chained return, Live set XML.
+- App unit tests: `send_rows` of returns, `stem_snapshot` of a chained return, Live set XML
+  (`live_set.rs`); the written set from a real export is checked in the self-test's Project export.
 - Self-test: Sends tab knob, mixer row and tag menu, last return empty, refused move status.
 - Benchmarks: `bench_render` Returns section gets "+ A into B" (routing 3) against routing 1.
-- Screenshots: `review-return-sends` on origin/main and on the branch.
+- Screenshots: `review-return-sends` and `review-return-sends-strip` on the branch, and on
+  origin/main with only those two review states patched in (main refuses the A into B send).
 
 ## Risks
 

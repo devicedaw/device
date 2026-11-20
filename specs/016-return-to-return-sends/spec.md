@@ -166,6 +166,18 @@ a hand edit is repaired on load: the sends that break the rule are dropped.
 - Changing how the Live export handles groups (spec 006).
 - More than 16 buses.
 
+## Decided while building
+
+- Return rows are pinned above the master row and can't be dragged in the timeline (true before
+  this spec), so the refused move can only come from `MoveTrack` itself (scripts, the assistant).
+  The core's refusal carries the text, and the status line shows it as "Edit rejected: invalid
+  value for index: Return A sends into Return B: remove that send to move it here". A7's refused
+  move is checked that way in the self-test.
+- A8's checks on the written set from a real export (A into C active, A into a rendered B left out,
+  rendered B carrying its send into C, the notes) run in the self-test's Project export section,
+  which renders through the engine; the XML writer and structure check have unit tests.
+- The structure check refuses an active return send into the same or an earlier return.
+
 ## Open questions
 
 None. Agreed 2026-11-20: a return offers sends to later returns only; a move that would break that
