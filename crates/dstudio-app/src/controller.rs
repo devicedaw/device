@@ -600,6 +600,7 @@ pub struct Controller {
     pub(crate) files_model: Rc<VecModel<crate::FileRow>>,
     pub(crate) files_guides_model: Rc<VecModel<crate::FileGuide>>,
     pub(crate) cards_model: Rc<VecModel<DeviceCard>>,
+    pub(crate) chain_gaps_model: Rc<VecModel<crate::ChainGap>>,
     pub(crate) window_cards_model: Rc<VecModel<DeviceCard>>,
     pub(crate) add_results_model: Rc<VecModel<MenuItem>>,
     pub(crate) devmenu_model: Rc<VecModel<MenuItem>>,
@@ -752,6 +753,7 @@ impl Controller {
             files_model: Rc::new(VecModel::default()),
             files_guides_model: Rc::new(VecModel::default()),
             cards_model: Rc::new(VecModel::default()),
+            chain_gaps_model: Rc::new(VecModel::default()),
             window_cards_model: Rc::new(VecModel::default()),
             add_results_model: Rc::new(VecModel::default()),
             devmenu_model: Rc::new(VecModel::default()),
@@ -815,6 +817,7 @@ impl Controller {
         s.set_files(ModelRc::from(self.files_model.clone()));
         s.set_files_guides(ModelRc::from(self.files_guides_model.clone()));
         s.set_device_cards(ModelRc::from(self.cards_model.clone()));
+        s.set_chain_gaps(ModelRc::from(self.chain_gaps_model.clone()));
         s.set_device_window_cards(ModelRc::from(self.window_cards_model.clone()));
         s.set_add_results(ModelRc::from(self.add_results_model.clone()));
         s.set_devmenu_items(ModelRc::from(self.devmenu_model.clone()));
@@ -2343,6 +2346,9 @@ impl Controller {
             s.set_sel_peak_text(peak_text.into());
         }
         let mut metering = ml > 1e-5 || mr > 1e-5;
+
+        // Meters between the device chain's cards (src/chain_gaps.rs).
+        metering |= self.chain_meters_tick();
 
         // Track-header meters (always shown) and the mixer meters share one ballistics state.
         metering |= self.ballistics.update(&self.meters);

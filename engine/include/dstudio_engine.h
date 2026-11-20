@@ -1297,6 +1297,20 @@ int32_t se_builtin_set_metering(se_engine* engine, uint64_t device_id, uint8_t o
  * -> SE_ERR_INVALID_ARG. */
 int32_t se_builtin_levels(se_engine* engine, uint64_t device_id, float* out);
 
+/* Output meter of a live device in a track's chain (any format, the
+ * instrument included): the level meter drawn after the device's card. Off
+ * by default; while it is on, the audio thread keeps the peak of the
+ * device's output in every block (the audio passing through while the
+ * device is bypassed). Turning it off clears the held peaks.
+ * MAIN THREAD. Unknown device -> SE_ERR_NOT_FOUND. */
+int32_t se_device_set_output_metering(se_engine* engine, uint64_t device_id, uint8_t on);
+
+/* Output peaks of `count` devices since the previous call, as linear
+ * amplitude: out[2*i] left and out[2*i+1] right of device_ids[i]. Reading
+ * resets them. Zero for unknown devices and while metering is off.
+ * MAIN THREAD. NULL device_ids or out with count > 0 -> SE_ERR_INVALID_ARG. */
+int32_t se_device_output_peaks(se_engine* engine, const uint64_t* device_ids, size_t count, float* out);
+
 /* Stereo correlation of a live built-in device's input (out[0]) and output
  * (out[1]) since the previous call: -1 cancels in mono, 0 uncorrelated, +1 in
  * phase; 2 where that side was silent or metering is off. Reading resets it.

@@ -124,6 +124,12 @@ float kernel_peak(const float* __restrict buf, uint32_t n) noexcept {
     return m;
 }
 
+// RT: the chain meter after a device's card (PluginInstance::set_output_metering).
+void meter_output(PluginInstance& p, const float* l, const float* r, uint32_t frames) noexcept {
+    if (!p.output_metering()) return;
+    p.store_output_peaks(kernel_peak(l, frames), kernel_peak(r, frames));
+}
+
 namespace {
 
 #if defined(_MSC_VER)
@@ -709,6 +715,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             if (track.imod_count > 0) np = plugin_mod_events(track.imod_begin, track.imod_count, np, 0);
             np = add_restores(track.instrument_device_id, np);
             iplug->run(pl, pr, frames, ev, ne, *inst.transport, ctx.param_events(), np);
+            meter_output(*iplug, pl, pr, frames);
             if (track.audible) {
                 if (any) {
                     kernel_add_scaled(tl, pl, 1.0f, frames);
@@ -783,6 +790,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 } else if (bypass != nullptr) {
                     bypass->process(tl, tr, frames, slot->pdc_bypass_delay, gen); // same timing as the plugin
                 }
+                if (slot->inst != nullptr) meter_output(*slot->inst, tl, tr, frames);
             }
         }
         if (main_line != nullptr && !track.pdc_pre) delay_track(main_line, track.pdc_delay);

@@ -702,6 +702,36 @@ int main(int argc, char** argv) {
         }
         row(names[with], summarize(t));
     }
+    // Chain meters (the level meter after each device's card): metering on for
+    // all 64 compressors, the UI reading every peak about once per frame.
+    {
+        std::vector<uint64_t> ids;
+        for (uint32_t t = 0; t < 32; ++t) {
+            tracks[t].devices = &devs[3 * t + 1];
+            tracks[t].device_count = 2;
+            ids.push_back(1000 + 2 * t);
+            ids.push_back(1000 + 2 * t + 1);
+        }
+        se_session_publish_v5(e, &s);
+        for (uint64_t id : ids) se_device_set_output_metering(e, id, 1);
+        se_transport_seek(e, 0);
+        se_transport_play(e);
+        std::vector<float> peaks(2 * ids.size());
+        std::vector<double> t;
+        for (uint32_t b = 0; b < session_blocks + 50; ++b) {
+            const auto t0 = Clock::now();
+            se_render_offline(e, buf.data(), kBlock);
+            const auto t1 = Clock::now();
+            if (b >= 50) t.push_back(us(t1 - t0));
+            if (b % 4 == 0) se_device_output_peaks(e, ids.data(), ids.size(), peaks.data());
+        }
+        row("2 compressors/track, chain meters on", summarize(t));
+        const int n = 20000;
+        const auto r0 = Clock::now();
+        for (int i = 0; i < n; ++i) se_device_output_peaks(e, ids.data(), ids.size(), peaks.data());
+        std::printf("  %-32s %10.3f us/call\n", "se_device_output_peaks (64 ids)", us(Clock::now() - r0) / n);
+        for (uint64_t id : ids) se_device_set_output_metering(e, id, 0);
+    }
     se_engine_destroy(e);
     std::filesystem::remove(wav);
     return 0;

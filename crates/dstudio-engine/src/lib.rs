@@ -627,6 +627,26 @@ impl Engine {
         check(unsafe { ffi::se_builtin_levels(self.raw, device_id, out.as_mut_ptr()) })
     }
 
+    /// Turns the chain output meter of a live device (any format) on or off.
+    pub fn device_set_output_metering(&self, device_id: u64, on: bool) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_device_set_output_metering(self.raw, device_id, u8::from(on)) })
+    }
+
+    /// Output peaks (linear, left / right) of `ids` since the previous call, into `out`
+    /// (resized to `ids.len()`). Zero for unknown devices and while metering is off.
+    pub fn device_output_peaks(&self, ids: &[u64], out: &mut Vec<[f32; 2]>) {
+        out.clear();
+        out.resize(ids.len(), [0.0; 2]);
+        if ids.is_empty() {
+            return;
+        }
+        // SAFETY: `out` holds 2 * ids.len() contiguous floats.
+        let rc = unsafe { ffi::se_device_output_peaks(self.raw, ids.as_ptr(), ids.len(), out.as_mut_ptr().cast::<f32>()) };
+        if rc != 0 {
+            out.iter_mut().for_each(|p| *p = [0.0; 2]);
+        }
+    }
+
     /// Stereo correlation of a live built-in device's input and output since the previous
     /// call (-1..1; 2 where that side was silent or metering is off).
     pub fn builtin_correlation(&self, device_id: u64, out: &mut [f32; 2]) -> Result<(), EngineError> {

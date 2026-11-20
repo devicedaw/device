@@ -42,6 +42,7 @@ mod appmenu;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;
+mod chain_gaps;
 mod chain_presets;
 mod clip_bench;
 mod clip_render;
@@ -228,6 +229,8 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect.
     device_chain_review: bool,
+    /// review-chain-gaps (1: instrument track, 2: audio track): meters and "+" between cards.
+    chain_gaps_review: u8,
     /// review-devices-minimap: Instrument track with the Synth and a long chain of built-in effects (the Devices minimap shows).
     devices_minimap_review: bool,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
@@ -619,6 +622,10 @@ fn parse_args() -> Result<Args, String> {
                 "reference-devices-effects" => {
                     a.reference_default = true;
                     a.devices_effects_state = true;
+                }
+                st @ ("review-chain-gaps" | "review-chain-gaps-audio") => {
+                    a.reference_default = true;
+                    a.chain_gaps_review = if st.ends_with("audio") { 2 } else { 1 };
                 }
                 "review-device-chain" => {
                     a.reference_default = true;
@@ -2312,6 +2319,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // reference-devices-effects: default project, browser Devices › Effects (the catalogue as scanned).
         ctl.borrow_mut().browser_tab(1);
     }
+    if args.chain_gaps_review > 0 {
+        // Review only: two built-in effects after the instrument track's Synth (1) or on the
+        // audio track (2), with fixed levels on the meters between the cards.
+        let mut c = ctl.borrow_mut();
+        let kind = if args.chain_gaps_review == 1 { dstudio_core::TrackKind::Instrument } else { dstudio_core::TrackKind::Audio };
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == kind).map(|t| t.id) {
+            c.select_track(t);
+            for id in ["channeleq", "compressor"] {
+                if let Some(def) = dstudio_core::builtin::find(id) {
+                    c.add_item_to_track(&devices::Item::Builtin(def), t, None);
+                }
+            }
+        }
+        c.set_bottom_tab(BottomTab::Devices);
+        c.devices.windows.clear();
+        c.review_chain_levels(vec![(0.5, 0.42), (0.32, 0.36), (0.2, 0.18)]);
+    }
     if args.device_chain_review {
         // Review only: Instrument track selected, Devices tab, the built-in
         // Synth followed by one Audio Unit effect (Apple's AULowpass, named by its AU identity).
@@ -3407,6 +3431,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         on!(on_macro_select, |c, d: i32, i: i32| c.macro_select(id(d), i));
         on!(on_macro_rename, |c, d: i32, i: i32, t: slint::SharedString| c.macro_rename(id(d), i, &t));
         on!(on_chain_add_effect, |c, d: i32, x: f32, y: f32| c.chain_add_effect(id(d), x, y));
+        on!(on_chain_insert_menu, |c, g: i32, x: f32, y: f32| c.chain_insert_menu(g.max(0) as usize, x, y));
         on!(on_card_add_menu, |c, d: i32, x: f32, y: f32| c.card_add_menu(id(d), x, y));
         on!(on_card_page, |c, d: i32, dir: i32| c.card_page(id(d), dir));
     }

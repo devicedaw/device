@@ -66,6 +66,9 @@ pub struct Preferences {
     /// Docked assistant width in design units (drag its splitter); 0 = default.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub assistant_width: f32,
+    /// Device chain "+" menu › Recent: effects added lately, newest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_devices: Vec<dstudio_core::PluginRef>,
     /// File › Open Recent: project folders, newest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent_projects: Vec<String>,
@@ -227,6 +230,7 @@ mod tests {
             browser_folders: vec!["/tmp/kit".into()],
             preview_volume: Some(0.5),
             assistant_width: 400.0,
+            recent_devices: vec![dstudio_core::builtin::find("delay").unwrap().plugin_ref()],
             recent_projects: vec!["/tmp/Song.dsproj".into()],
             recent_resolved: vec!["/private/tmp/Song.dsproj".into()],
             general: GeneralPrefs {
