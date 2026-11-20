@@ -70,7 +70,7 @@ struct RtTransport {
     // Quarter notes from bar 1 at `position`: on the tempo map, else at a
     // constant tempo from frame 0.
     double beats() const noexcept {
-        if (map != nullptr) return map->quarter_at(static_cast<double>(position));
+        if (map != nullptr) [[unlikely]] return map->quarter_at(static_cast<double>(position));
         return static_cast<double>(position) / sample_rate * tempo_bpm / 60.0;
     }
 };

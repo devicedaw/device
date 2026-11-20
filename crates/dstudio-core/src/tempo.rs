@@ -157,6 +157,7 @@ impl TempoMap {
     }
 
     /// No tempo changes: one tempo for the whole song.
+    #[inline]
     pub fn is_constant(&self) -> bool {
         self.segments.is_empty()
     }
@@ -167,6 +168,7 @@ impl TempoMap {
     }
 
     /// Tempo at bar 1 (the single tempo without changes).
+    #[inline]
     pub fn first_bpm(&self) -> f64 {
         self.bpm
     }
@@ -182,6 +184,7 @@ impl TempoMap {
     }
 
     /// Seconds from bar 1 at tick `t` (fractional ticks allowed).
+    #[inline]
     pub fn seconds_at(&self, t: f64) -> f64 {
         if self.segments.is_empty() {
             return t / PPQ as f64 * 60.0 / self.bpm;
@@ -194,6 +197,7 @@ impl TempoMap {
     }
 
     /// Tick (fractional) at `s` seconds from bar 1.
+    #[inline]
     pub fn ticks_at(&self, s: f64) -> f64 {
         if self.segments.is_empty() || s < 0.0 {
             return s * self.bpm / 60.0 * PPQ as f64;
@@ -203,6 +207,7 @@ impl TempoMap {
     }
 
     /// Tempo in BPM at tick `t`.
+    #[inline]
     pub fn bpm_at(&self, t: f64) -> f64 {
         if self.segments.is_empty() || t < 0.0 {
             return self.bpm;
@@ -211,24 +216,29 @@ impl TempoMap {
         g.bpm_in((t - g.tick as f64) / PPQ as f64)
     }
 
+    #[inline]
     pub fn ticks_to_seconds(&self, t: Ticks) -> f64 {
         self.seconds_at(t as f64)
     }
 
+    #[inline]
     pub fn seconds_to_ticks(&self, s: f64) -> Ticks {
         self.ticks_at(s).round() as Ticks
     }
 
     /// Ticks → frames at `rate` (rounded to the nearest frame).
+    #[inline]
     pub fn ticks_to_frames(&self, t: Ticks, rate: f64) -> i64 {
         (self.ticks_to_seconds(t) * rate).round() as i64
     }
 
+    #[inline]
     pub fn frames_to_ticks(&self, frames: i64, rate: f64) -> Ticks {
         self.seconds_to_ticks(frames as f64 / rate)
     }
 
     /// Fractional ticks → frames at `rate`, unrounded.
+    #[inline]
     pub fn frame_at(&self, t: f64, rate: f64) -> f64 {
         self.seconds_at(t) * rate
     }

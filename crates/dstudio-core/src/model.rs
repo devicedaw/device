@@ -773,16 +773,19 @@ impl Project {
     }
 
     /// The song has tempo changes.
+    #[inline]
     pub fn has_tempo_changes(&self) -> bool {
         !self.transport.tempo.is_empty()
     }
 
     /// Tempo in BPM at tick `t`.
+    #[inline]
     pub fn bpm_at(&self, t: Ticks) -> f64 {
         if self.transport.tempo.is_empty() { self.transport.bpm } else { self.tempo_map().bpm_at(t as f64) }
     }
 
     /// Ticks → seconds from bar 1, through the tempo map.
+    #[inline]
     pub fn ticks_to_seconds(&self, t: Ticks) -> f64 {
         if self.transport.tempo.is_empty() {
             return t as f64 / PPQ as f64 * 60.0 / self.transport.bpm;
@@ -790,6 +793,7 @@ impl Project {
         self.tempo_map().ticks_to_seconds(t)
     }
 
+    #[inline]
     pub fn seconds_to_ticks(&self, s: f64) -> Ticks {
         if self.transport.tempo.is_empty() {
             return (s * self.transport.bpm / 60.0 * PPQ as f64).round() as Ticks;
@@ -798,10 +802,12 @@ impl Project {
     }
 
     /// Ticks → frames at `rate` (rounded to nearest frame).
+    #[inline]
     pub fn ticks_to_frames(&self, t: Ticks, rate: f64) -> i64 {
         (self.ticks_to_seconds(t) * rate).round() as i64
     }
 
+    #[inline]
     pub fn frames_to_ticks(&self, frames: i64, rate: f64) -> Ticks {
         self.seconds_to_ticks(frames as f64 / rate)
     }
