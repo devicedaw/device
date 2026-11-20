@@ -170,7 +170,7 @@ next to the target on the same window size.
 
 ## P2: content and polish
 
-- [x] **G40. Preview a preset from the Devices browser.** (#PRNUM) Clicking a sound in an instrument's browser folder
+- [x] **G40. Preview a preset from the Devices browser.** (#149) Clicking a sound in an instrument's browser folder
   plays a short note through the instrument with that sound, without adding it to a track (G35 shows the
   sounds; double-click and drag add them).
 - [x] **G25. Synth factory library** [devices] (#140; the browser's category folders come with G35). The Synth has 12 named sounds and numbered placeholders
