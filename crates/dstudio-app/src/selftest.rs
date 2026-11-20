@@ -16427,6 +16427,11 @@ fn api_key_steps() -> Vec<Step> {
                 if let Some(p) = s2.borrow_mut().take() {
                     ctl.borrow_mut().provider = p;
                 }
+            }),
+        ),
+    ]
+}
+
 /// Rename the project from the title bar (roadmap G10): an unsaved project keeps the name for
 /// its first save; a saved one's folder is renamed on disk with Open Recent following; a name
 /// that is taken or can't name a folder is refused with a message and changes nothing.
