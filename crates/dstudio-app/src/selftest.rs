@@ -86,6 +86,9 @@ enum Step {
 }
 
 thread_local! {
+    /// Right after the audition click: the previewed pitch, its scheduled length (s) and whether
+    /// its note-off was set (midi steps).
+    static AUDITION_SEEN: Cell<(Option<u8>, Option<f64>, bool)> = const { Cell::new((None, None, false)) };
     /// Audio loop start before the footer Position drag (audio loop section).
     static AUDIO_LOOP_START: Cell<i64> = const { Cell::new(0) };
     /// Track count and the open clip before the audio clip editor's Resample.
@@ -646,32 +649,39 @@ fn midi_steps() -> Vec<Step> {
             }),
         ),
         DoC(
-            "audition: click the longest note in the clip (no drag)",
+            "audition: click the longest note in the clip (no drag); note what sounds right after",
             Box::new(|a, ctl| {
                 let n = notes_of(&ctl.borrow()).into_iter().max_by_key(|n| n.length);
                 if let Some(n) = n {
                     let beat = (n.start as f64 + n.length as f64 / 2.0) / dstudio_core::PPQ as f64;
                     let (x, y) = pr_xy(ctl, beat, n.pitch as i32);
                     click(a, x, y);
+                    // Read at once: a slow machine may reach the next step after a short note ended.
+                    let c = ctl.borrow();
+                    AUDITION_SEEN.with(|s| {
+                        s.set((c.pr.preview.map(|p| p.1), c.pr.preview_len.map(|(_, secs)| secs), c.pr.preview_off_at.is_some()))
+                    });
                 }
             }),
         ),
         Check(
-            "audition: the clicked note still sounds after the click, with its note-off scheduled; no edit",
+            "audition: the click sounded the note, for its length (capped), with its note-off scheduled; no edit",
             Box::new(|c, _| {
                 let n = notes_of(c).into_iter().max_by_key(|n| n.length).ok_or("no notes")?;
-                let off = c.pr.preview_off_at.map(|t| t.saturating_duration_since(std::time::Instant::now()));
-                let ok = c.pr.preview.map(|p| p.1) == Some(n.pitch)
-                    && off.is_some_and(|d| d.as_secs_f64() <= crate::pianoroll::AUDITION_CAP_S)
-                    && c.engine.preview().notes == 1;
-                ok.then_some(()).ok_or(format!("preview {:?} off in {off:?} pitch {}", c.pr.preview, n.pitch))
+                let want = c.project().ticks_to_seconds(n.length).min(crate::pianoroll::AUDITION_CAP_S).max(0.05);
+                let (pitch, secs, off) = AUDITION_SEEN.with(Cell::get);
+                let ok = pitch == Some(n.pitch) && secs.is_some_and(|s| (s - want).abs() < 1e-6) && off;
+                ok.then_some(()).ok_or(format!("pitch {pitch:?} (want {}) secs {secs:?} (want {want}) off {off}", n.pitch))
             }),
         ),
         DoC(
-            "audition: wait out the cap",
+            "audition: its time is up (no waiting: the note-off is moved to now), then the poll timer's tick",
             Box::new(|_, ctl| {
-                std::thread::sleep(std::time::Duration::from_secs_f64(crate::pianoroll::AUDITION_CAP_S + 0.05));
-                ctl.borrow_mut().pr_preview_tick();
+                let mut c = ctl.borrow_mut();
+                if c.pr.preview_off_at.is_some() {
+                    c.pr.preview_off_at = Some(std::time::Instant::now());
+                }
+                c.pr_preview_tick();
             }),
         ),
         Check(
