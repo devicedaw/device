@@ -74,7 +74,7 @@ target behaviour.
   instrument tracks always get the Synth; `ui/settings.slint`, MidiPage). It must list the built-in instruments
   and installed instrument plugins, be saved as a preference, and be what Instrument track (⇧⌘T), the add-track
   menu and dropped MIDI files create.
-- [ ] **G9. Note audition in the piano roll.** Clicking, drawing or dragging a note (pitch change) and clicking a
+- [x] **G9. Note audition in the piano roll** (#128). Clicking, drawing or dragging a note (pitch change) and clicking a
   key on the keyboard must play the note through the track's instrument for its length (capped), without
   recording anything. The README status table lists this as missing.
 - [ ] **G10. Rename the project from the title bar.** Clicking the project name in the window title turns it

@@ -4056,6 +4056,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if !c.pr.preview_offs.is_empty() {
                 c.pr_retry_note_offs();
             }
+            c.pr_preview_tick();
             if c.pending_jobs > 0 {
                 c.poll_jobs();
                 if let Some(a) = aw.upgrade() {

@@ -680,4 +680,12 @@ scale from half the default zoom to the closest), the vertical one sets every sh
 the default row), both as view changes, not undo steps. Double-click resets either; the clip editor's pair gains the
 same double-click. `ZoomSlider` moved to `ui/widgets.slint` for both headers; mapping in `src/fit.rs`. Self-test
 section `zoom_slider_steps`.
+### 2026-11-20: note audition
+
+The piano roll already previewed a pressed key, a note being drawn and a note dragged to another pitch, but only
+while the mouse was down, and a plain click on a note was silent. Now a click on a note plays it too, and a released
+preview keeps sounding until the note has played its length, capped at one second (`AUDITION_CAP_S`); a click on the
+keyboard sounds at least a quarter of a second. Previews go through the engine's preview path, so nothing is recorded
+or added to the undo history. `pr_audition`, `pr_preview_release` and `pr_preview_tick` in `src/pianoroll.rs`; the
+poll timer ends released previews. Self-test: the audition steps in `midi_steps`.
 
