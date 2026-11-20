@@ -204,6 +204,8 @@ struct Args {
     default_instrument_review: u8,
     /// Settings › Search settings with this text typed (review-settings-search*).
     settings_search_review: Option<&'static str>,
+    /// review-settings-help: Settings › Audio with Buffer size's (i) hovered, its help showing.
+    settings_help_review: bool,
     /// Settings › Shortcuts: 1 the page, 2 recording keys for Tap tempo, 3 Tap tempo unmapped,
     /// 4-6 searching "track", "notes", "transpose".
     shortcuts_review: u8,
@@ -790,6 +792,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_midi_review = true;
                 }
+                "review-settings-help" => {
+                    a.reference_default = true;
+                    a.settings_help_review = true;
+                }
                 st @ ("review-settings-search" | "review-settings-search-none") => {
                     a.reference_default = true;
                     a.settings_search_review = Some(if st.ends_with("none") { "zzz" } else { "latency" });
@@ -829,7 +835,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
                     ));
                 }
             },
@@ -2938,6 +2944,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.settings.prefs.shortcuts = shortcuts::changes(&c.settings.keys.map, &c.settings.prefs.shortcut_preset);
         }
     }
+    if args.settings_help_review {
+        let mut c = ctl.borrow_mut();
+        c.open_settings();
+        c.settings_page(1);
+        drop(c);
+        // Hover Buffer size's (i) as a person would: the pointer runs along the label until the
+        // tip shows (window coordinates: below any in-window menu bar).
+        let aw = app.as_weak();
+        slint::Timer::single_shot(Duration::ZERO, move || {
+            use slint::platform::WindowEvent;
+            let Some(a) = aw.upgrade() else { return };
+            let g = a.get_anchors();
+            let full = a.window().size().to_logical(a.window().scale_factor()).height;
+            let y = g.settings_y + 292.5 + 7.0 + (full - a.get_content_height()).max(0.0);
+            for dx in 0..300 {
+                let position = slint::LogicalPosition::new(g.settings_x + 187.0 + 20.5 + dx as f32, y);
+                a.window().dispatch_event(WindowEvent::PointerMoved { position });
+                if !a.global::<Studio>().get_settings_tip().is_empty() {
+                    break;
+                }
+            }
+        });
+    }
     if let Some(q) = args.settings_search_review {
         let mut c = ctl.borrow_mut();
         c.open_settings();
@@ -3199,6 +3228,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_shortcuts_search, |c, text: slint::SharedString| c.shortcuts_search(text.as_str()));
     on!(on_settings_search_edited, |c, text: slint::SharedString| c.settings_search(text.as_str()));
     studio.on_settings_row_hit(|query, label| settings_search::row_hit(&query, &label));
+    studio.on_settings_help(|label| settings_search::help(&label).into());
     on!(on_settings_dropdown, |c, f: i32| c.settings_dropdown(f));
     on!(on_settings_menu_pick, |c, i: i32| c.settings_menu_pick(i.max(0) as usize));
     on!(on_settings_menu_dismiss, |c| c.settings_menu_dismiss());

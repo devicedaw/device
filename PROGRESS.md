@@ -781,3 +781,12 @@ composer's context chip and the cursor in the composer (`Controller::ask_about_c
 Ask opens it, so the focus request waits for the next interface update (`AssistantState::focus_pending`) before it
 bumps `chat-focus-epoch`, which the panel's composer follows. Self-test section `ask_clip_steps`.
 
+
+### 2026-11-21: help on every setting
+
+Roadmap G12. Every working setting on Settings › General, Audio, MIDI and Plugins has an (i) after its name; hovering
+it shows one sentence saying what the setting does, under the (i), in the step sequencer's tooltip style (long
+sentences wrap). Greyed rows (the assistant and voice ones) say "Not available in Device." The sentences live in
+`src/settings_search.rs` next to the search keywords, so search and help share one table; a test checks that every
+row on those pages has one, in one short sentence, and that the table and `ui/settings.slint` name the same rows.
+Review state `review-settings-help`; self-test section `settings_help_steps`.
