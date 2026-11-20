@@ -82,6 +82,26 @@ component Header inherits Rectangle {
             }
         }
     }
+    // "Update available" with the new version, left of Report a bug, when a newer release exists
+    // (src/updates.rs); a click opens Check for Updates with it.
+    if Studio.update-version != "": Raised {
+        x: root.width - 220px - 7px - self.width; y: 9.45px; height: 22.1px;
+        width: update-row.preferred-width + 22px;
+        border-radius: self.height / 2;
+        fill: update-ta.has-hover ? Tokens.raised-rim-accent : Tokens.accent;
+        rim: Tokens.raised-rim-accent;
+        accessible-role: button;
+        accessible-label: "Update available";
+        accessible-description: "Device \{Studio.update-version} is available";
+        accessible-action-default => { Studio.update-pill-clicked(); }
+        update-row := HorizontalLayout {
+            x: 11px; width: self.preferred-width;
+            spacing: 5px;
+            Text { text: "Update available"; color: Tokens.on-accent; font-size: 10.2px; font-weight: 600; letter-spacing: -0.41px; vertical-alignment: center; }
+            Text { text: "v\{Studio.update-version}"; color: Tokens.on-accent; opacity: 0.72; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: center; }
+        }
+        update-ta := TouchArea { mouse-cursor: pointer; clicked => { Studio.update-pill-clicked(); } }
+    }
     Pill { x: root.width - 220px; y: 9.45px; width: 82px; height: 22.1px; text: "Report a bug"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.report-bug(); } }
     Pill { x: root.width - 131px; y: 9.45px; width: 118px; height: 22.1px; text: "Share your feedback"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.feedback(); } }
 

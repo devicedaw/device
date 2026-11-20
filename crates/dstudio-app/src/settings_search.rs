@@ -32,6 +32,12 @@ pub const ENTRIES: &[Entry] = &[
     ),
     e(
         0,
+        "Check for updates at launch",
+        &["updates", "new version", "release", "startup", "internet"],
+        "Asks GitHub once at launch whether a newer version of Device is out, sending only the version you run.",
+    ),
+    e(
+        0,
         "Projects folder",
         &["folder", "save", "location", "directory"],
         "Where Save starts and the folder the browser's Projects tab lists.",

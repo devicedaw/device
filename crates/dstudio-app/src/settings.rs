@@ -201,7 +201,7 @@ impl Controller {
 
     /// Settings › General switches, in page order: 0 Always load last session, 1 Auto-show
     /// third-party effect windows, 2 Auto-show built-in effect windows, 3 Keep plugin windows
-    /// on top, 4 Sections move clips. Saved at once.
+    /// on top, 4 Sections move clips, 5 Check for updates at launch. Saved at once.
     pub fn general_toggle(&mut self, i: i32) {
         let g = &mut self.settings.prefs.general;
         let flag = match i {
@@ -210,6 +210,7 @@ impl Controller {
             2 => &mut g.show_builtin_windows,
             3 => &mut g.plugin_windows_on_top,
             4 => &mut g.sections_move_clips,
+            5 => &mut g.check_updates_at_launch,
             _ => return,
         };
         *flag = !*flag;
@@ -654,7 +655,14 @@ impl Controller {
             self.push_shortcuts(s);
         }
         let g = &self.settings.prefs.general;
-        let on = [g.load_last_session, g.show_plugin_windows, g.show_builtin_windows, g.plugin_windows_on_top, g.sections_move_clips];
+        let on = [
+            g.load_last_session,
+            g.show_plugin_windows,
+            g.show_builtin_windows,
+            g.plugin_windows_on_top,
+            g.sections_move_clips,
+            g.check_updates_at_launch,
+        ];
         let shown = s.get_general_on();
         if (0..on.len()).any(|i| slint::Model::row_data(&shown, i) != Some(on[i])) {
             s.set_general_on(slint::ModelRc::new(slint::VecModel::from(on.to_vec())));

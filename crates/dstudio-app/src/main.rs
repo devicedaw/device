@@ -116,6 +116,7 @@ mod tools;
 mod track_menu;
 mod transport_fields;
 mod typing;
+mod updates;
 mod warpedit;
 mod wavgen;
 mod window_buttons;
@@ -191,6 +192,9 @@ struct Args {
     /// 6 Check for Updates, 7 Undo History (after a few edits, the last one undone), 8 export dialog at 44.1 kHz,
     /// 9 with a loop region over bars 3-4 and the Range menu open on it.
     dialog_state: u8,
+    /// review-update-available / review-update-dialog: the update check finds a newer release
+    /// (updates::sample_release), shown as the title-bar pill, or (with dialog state 6) in the dialog.
+    update_review: bool,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
     /// the live recording clip.
@@ -534,6 +538,15 @@ fn parse_args() -> Result<Args, String> {
                 }
                 "review-check-updates" => {
                     a.reference_default = true;
+                    a.dialog_state = 6;
+                }
+                "review-update-available" => {
+                    a.reference_default = true;
+                    a.update_review = true;
+                }
+                "review-update-dialog" => {
+                    a.reference_default = true;
+                    a.update_review = true;
                     a.dialog_state = 6;
                 }
                 "review-export-44k" => {
@@ -3181,6 +3194,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     on!(on_open_recent, |c, i: i32| c.open_recent(i as usize));
     on!(on_updates_close, |c| c.dialogs_close());
+    on!(on_updates_download_clicked, |c| c.updates_download());
+    on!(on_update_pill_clicked, |c| c.update_pill_clicked());
     on!(on_key_change_choose, |c, i: i32| c.key_change_choice(match i {
         2 => transport_fields::KeyChoice::Transpose,
         1 => transport_fields::KeyChoice::Keep,
@@ -4046,6 +4061,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     app_menu_timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), appmenu::adopt_items);
     slint::Timer::single_shot(Duration::ZERO, appmenu::set_dock_icon);
     let dialog_timer = slint::Timer::default();
+    // Updates (updates.rs): a real run checks once at launch, in the background and quietly.
+    // Self-tests and review states never use the network: their checks answer at once.
+    {
+        let mut c = ctl.borrow_mut();
+        if use_prefs {
+            c.updates.saved_path = updates::saved_path();
+        } else {
+            let latest = if args.update_review {
+                updates::sample_release()
+            } else {
+                updates::Release { version: env!("CARGO_PKG_VERSION").into(), ..Default::default() }
+            };
+            c.updates.check_override = Some(Ok(Some(latest)));
+        }
+        c.updates_check(false);
+    }
     if args.dialog_state > 0 {
         let dir = std::env::temp_dir().join(format!("dstudio-ref-{}", std::process::id()));
         std::fs::create_dir_all(&dir)?;

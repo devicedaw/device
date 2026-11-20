@@ -11096,13 +11096,14 @@ fn menu_bar_steps() -> Vec<Step> {
     vec![
         DoC("menu: Options › Check for Updates…", Box::new(|_, ctl| ctl.borrow_mut().menu_action("options.check_updates"))),
         Check(
-            "menu: the updates dialog is open and names the version",
+            "menu: the updates dialog is open and says this version is the latest",
             Box::new(|_, a| {
                 let s = a.global::<Studio>();
-                (s.get_updates_open() && s.get_app_version() == env!("CARGO_PKG_VERSION")).then_some(()).ok_or(format!(
-                    "open {} version {:?}",
+                let want = format!("You're running Device v{}, the latest version.", env!("CARGO_PKG_VERSION"));
+                (s.get_updates_open() && s.get_updates_text() == want.as_str() && !s.get_updates_download()).then_some(()).ok_or(format!(
+                    "open {} text {:?}",
                     s.get_updates_open(),
-                    s.get_app_version()
+                    s.get_updates_text()
                 ))
             }),
         ),
@@ -11243,6 +11244,122 @@ fn menu_bar_steps() -> Vec<Step> {
     ]
 }
 
+/// Update check (spec 022): a newer release shows the title-bar pill, which opens the dialog with
+/// the version and notes; Download opens the release page (recorded: the self-test never opens a
+/// browser or uses the network); with Settings › General's launch check off, nothing is shown.
+fn updates_steps() -> Vec<Step> {
+    use Step::*;
+    let reset = |c: &mut Controller, latest: crate::updates::Release| {
+        c.dialogs_close();
+        c.updates.state = Default::default();
+        c.updates.opened = None;
+        c.updates.check_override = Some(Ok(Some(latest)));
+    };
+    let current = || crate::updates::Release { version: env!("CARGO_PKG_VERSION").into(), ..Default::default() };
+    vec![
+        Check(
+            "updates: no pill when this version is the latest",
+            Box::new(|_, a| {
+                let v = a.global::<Studio>().get_update_version();
+                v.is_empty().then_some(()).ok_or(format!("pill {v:?}"))
+            }),
+        ),
+        DoC(
+            "updates: a launch check finds a newer release",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                reset(&mut c, crate::updates::sample_release());
+                c.updates_check(false);
+            }),
+        ),
+        Check(
+            "updates: the pill shows the new version and the dialog stays closed",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let want = crate::updates::sample_release().version;
+                (s.get_update_version() == want.as_str() && !c.updates_open).then_some(()).ok_or(format!(
+                    "pill {:?} open {}",
+                    s.get_update_version(),
+                    c.updates_open
+                ))
+            }),
+        ),
+        Do("updates: click the pill", Box::new(|a| click(a, win().0 - 227.0 - 15.0, 9.45 + 11.0))),
+        Check(
+            "updates: the dialog shows the new version, notes and Download",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let r = crate::updates::sample_release();
+                let want = format!("Device {} is available. You're running v{}.", r.version, env!("CARGO_PKG_VERSION"));
+                (c.updates_open
+                    && s.get_updates_text() == want.as_str()
+                    && s.get_updates_notes().row_count() == 3
+                    && s.get_updates_more() == "and 12 more changes"
+                    && s.get_updates_download())
+                .then_some(())
+                .ok_or(format!("open {} text {:?} more {:?}", c.updates_open, s.get_updates_text(), s.get_updates_more()))
+            }),
+        ),
+        Do("updates: click Download", Box::new(|a| a.global::<Studio>().invoke_updates_download_clicked())),
+        Check(
+            "updates: the release page is opened and the dialog closed",
+            Box::new(|c, _| {
+                let want = crate::updates::sample_release().page;
+                (c.updates.opened.as_deref() == Some(want.as_str()) && !c.updates_open)
+                    .then_some(())
+                    .ok_or(format!("opened {:?} open {}", c.updates.opened, c.updates_open))
+            }),
+        ),
+        DoC(
+            "updates: with the launch check off in Settings › General, a launch check shows nothing",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                reset(&mut c, crate::updates::sample_release());
+                c.general_toggle(5);
+                c.updates_check(false);
+            }),
+        ),
+        Check(
+            "updates: no pill",
+            Box::new(|c, a| {
+                let v = a.global::<Studio>().get_update_version();
+                (v.is_empty() && !c.settings.prefs.general.check_updates_at_launch).then_some(()).ok_or(format!("pill {v:?}"))
+            }),
+        ),
+        DoC(
+            "updates: the menu still checks; restore the defaults",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.menu_action("options.check_updates");
+                c.general_toggle(5);
+            }),
+        ),
+        Check(
+            "updates: the menu found it",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                (c.updates_open && s.get_updates_download() && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
+                    .then_some(())
+                    .ok_or(format!("open {} download {}", c.updates_open, s.get_updates_download()))
+            }),
+        ),
+        DoC(
+            "updates: back to no update",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                reset(&mut c, current());
+            }),
+        ),
+        Check(
+            "updates: the pill is gone",
+            Box::new(|c, a| {
+                let v = a.global::<Studio>().get_update_version();
+                (v.is_empty() && !c.updates_open).then_some(()).ok_or(format!("pill {v:?}"))
+            }),
+        ),
+    ]
+}
+
 /// Settings › General: the controls DStudio backs change the preferences; the others stay off.
 fn general_settings_steps() -> Vec<Step> {
     use Step::*;
@@ -11265,12 +11382,12 @@ fn general_settings_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "general: defaults (Return to start; third-party windows and on top on)",
+            "general: defaults (Return to start; third-party windows, on top and update check on)",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
                 let on: Vec<bool> = s.get_general_on().iter().collect();
                 (s.get_settings_page() == 0
-                    && on == [false, true, false, true, false]
+                    && on == [false, true, false, true, false, true]
                     && !s.get_general_stop_in_place()
                     && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
                 .then_some(())
@@ -11279,20 +11396,35 @@ fn general_settings_steps() -> Vec<Step> {
         ),
         Do(
             "general: click Stop in place",
-            Box::new(|a| click(a, page_x() + content_w() - 20.5 - 172.5 + 87.0 + 40.0, set_y() + 203.8 + 8.6)),
+            Box::new(|a| click(a, page_x() + content_w() - 20.5 - 172.5 + 87.0 + 40.0, set_y() + 223.4 + 8.6)),
         ),
         Do(
             "general: click Auto-show built-in effect windows",
             Box::new(move |a| {
-                let (x, y) = switch_xy(391.4);
+                let (x, y) = switch_xy(411.0);
                 click(a, x, y);
             }),
         ),
         Do(
             "general: click the disabled Sample licensing switch",
             Box::new(move |a| {
-                let (x, y) = switch_xy(262.9);
+                let (x, y) = switch_xy(282.5);
                 click(a, x, y);
+            }),
+        ),
+        Do(
+            "general: click Check for updates at launch",
+            Box::new(move |a| {
+                let (x, y) = switch_xy(108.0);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "general: the launch update check is off",
+            Box::new(|c, a| {
+                (!c.settings.prefs.general.check_updates_at_launch && a.global::<Studio>().get_general_on().row_data(5) == Some(false))
+                    .then_some(())
+                    .ok_or(format!("{:?}", c.settings.prefs.general))
             }),
         ),
         Check(
@@ -11332,6 +11464,7 @@ fn general_settings_steps() -> Vec<Step> {
                     c.device_remove(id);
                 }
                 c.general_toggle(2);
+                c.general_toggle(5);
                 c.general_stop_in_place(false);
             }),
         ),
@@ -13907,7 +14040,7 @@ fn settings_help_steps() -> Vec<Step> {
         ),
         Do("settings help: open General", Box::new(|a| a.global::<Studio>().invoke_settings_page_select(0))),
         Check("settings help: changing page hides the tip", Box::new(move |_, a| tip(a).is_empty().then_some(()).ok_or(tip(a)))),
-        Do("settings help: hover Talk key's (i) (greyed)", Box::new(|a| hover_settings_info(a, 512.0))),
+        Do("settings help: hover Talk key's (i) (greyed)", Box::new(|a| hover_settings_info(a, 531.6))),
         Check(
             "settings help: a greyed row says it isn't available",
             Box::new(move |_, a| (tip(a) == "Not available in Device.").then_some(()).ok_or(tip(a))),
@@ -18121,6 +18254,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(more_key_steps());
     all.extend(gesture_steps());
     all.extend(menu_bar_steps());
+    all.extend(updates_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());
     all.extend(live_import_steps());

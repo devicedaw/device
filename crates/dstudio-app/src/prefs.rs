@@ -164,6 +164,8 @@ pub struct GeneralPrefs {
     /// Timeline annotations: moving, resizing, adding or deleting a marker moves the clips and
     /// automation in and after it.
     pub sections_move_clips: bool,
+    /// Startup: look for a newer release once at launch (updates.rs).
+    pub check_updates_at_launch: bool,
 }
 
 impl Default for GeneralPrefs {
@@ -176,6 +178,7 @@ impl Default for GeneralPrefs {
             plugin_windows_on_top: true,
             projects_folder: None,
             sections_move_clips: false,
+            check_updates_at_launch: true,
         }
     }
 }
