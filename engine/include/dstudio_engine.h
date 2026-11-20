@@ -1456,9 +1456,13 @@ int32_t se_preview_get(se_engine* engine, se_preview_info* out);
  *
  * Sends between returns (a later addition, for group tracks, which the app
  * publishes as returns): a return may send into other returns as long as the
- * sends between returns form no loop. Its sends follow the rule for its main
- * output under mute and solo, and delay compensation counts the return's own
- * arrival and chain before the return it feeds. */
+ * sends between returns form no loop. Delay compensation counts the return's
+ * own arrival and chain before the return it feeds. With returns soloed
+ * (spec 016, one rule for every return): a soloed return plays with every
+ * return it feeds through unmuted returns' sends, and those play only what
+ * comes down that path; a return that feeds a soloed one keeps sending into
+ * it without playing; other returns are silent. A muted return sends
+ * nothing. Without a soloed return, every unmuted return plays and sends. */
 #define SE_MAX_RETURNS 16
 
 typedef struct se_track_route {
