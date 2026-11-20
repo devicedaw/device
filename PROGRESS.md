@@ -658,3 +658,18 @@ position. App side: `src/tools.rs`; review states `review-tool-menu` and `review
   plugin), `files::tests::a_dropped_midi_clip_gets_the_default_instrument`, `prefs::tests::a_default_instrument_round_trips_and_bad_entries_load_as_the_synth`, self-test section
   `default_instrument_steps`. Review states `review-default-instrument` and `review-default-instrument-missing`.
 
+### 2026-11-20: Search settings (spec 014)
+
+- The Search settings field at the top of the Settings sidebar works (it was drawn only). Typing filters the sidebar to
+  the pages with a match, packed together, and highlights the matching rows on the open page; when the open page has no
+  match the first matching page opens. A setting matches by its label or a few keywords ("latency" finds Sample rate,
+  Buffer size and Plugin delay compensation). Nothing matching shows "No settings match your search". Escape clears
+  the text (and closes Settings when it is empty), ⌘F puts the cursor in the field, and the text clears on close.
+- `src/settings_search.rs` holds the table of settings (page, label, keywords). Each highlightable row in
+  `ui/settings.slint` is a `SearchHit`, and a test compares the two so they can't drift apart.
+- Fixed on the way: closing Settings with the cursor in one of its search fields (this one or Shortcuts' own) left the
+  keyboard with the field, so no shortcut worked until something else took the focus. The key handler now takes the
+  focus back when Settings closes.
+- Tests: `settings_search::tests`, self-test section `settings_search_steps` (incl. ⇧⌘T working after closing with the
+  cursor in the field). Review states `review-settings-search` and `review-settings-search-none`.
+

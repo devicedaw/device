@@ -98,6 +98,7 @@ mod selection;
 mod selftest;
 mod send_to_sampler;
 mod settings;
+mod settings_search;
 mod shape_rack;
 mod shortcut_presets;
 mod shortcuts;
@@ -199,6 +200,8 @@ struct Args {
     settings_midi_review: bool,
     /// Settings › MIDI › Default instrument: 1 = its menu open, 2 = a missing plugin chosen.
     default_instrument_review: u8,
+    /// Settings › Search settings with this text typed (review-settings-search*).
+    settings_search_review: Option<&'static str>,
     /// Settings › Shortcuts: 1 the page, 2 recording keys for Tap tempo, 3 Tap tempo unmapped,
     /// 4-6 searching "track", "notes", "transpose".
     shortcuts_review: u8,
@@ -760,6 +763,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-settings-midi" => {
                     a.reference_default = true;
                     a.settings_midi_review = true;
+                }
+                st @ ("review-settings-search" | "review-settings-search-none") => {
+                    a.reference_default = true;
+                    a.settings_search_review = Some(if st.ends_with("none") { "zzz" } else { "latency" });
                 }
                 st @ ("review-default-instrument" | "review-default-instrument-missing") => {
                     a.reference_default = true;
@@ -1330,6 +1337,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             }
             if c.settings.menu.is_some() {
                 c.settings_menu_dismiss();
+            } else if c.settings.open && c.settings_search_clear() {
+                // Escape with text in Search settings clears it and keeps Settings open.
             } else if c.settings.open {
                 c.close_settings();
             }
@@ -2836,6 +2845,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.settings.prefs.shortcuts = shortcuts::changes(&c.settings.keys.map, &c.settings.prefs.shortcut_preset);
         }
     }
+    if let Some(q) = args.settings_search_review {
+        let mut c = ctl.borrow_mut();
+        c.open_settings();
+        c.settings_page(1);
+        c.settings_search(q);
+        drop(c);
+        app.global::<Studio>().set_settings_search(q.into());
+    }
     if args.settings_midi_review {
         // SCREENSHOT-ONLY fake MIDI inputs (midi_in::screenshot_fake_ports), never opened:
         // "USB Keyboard" on and sending (light lit), "Pad Controller" switched off.
@@ -3087,6 +3104,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_shortcut_clear, |c, row: i32| c.shortcut_clear(row.max(0) as usize));
     on!(on_shortcuts_reset, |c| c.shortcuts_reset());
     on!(on_shortcuts_search, |c, text: slint::SharedString| c.shortcuts_search(text.as_str()));
+    on!(on_settings_search_edited, |c, text: slint::SharedString| c.settings_search(text.as_str()));
+    studio.on_settings_row_hit(|query, label| settings_search::row_hit(&query, &label));
     on!(on_settings_dropdown, |c, f: i32| c.settings_dropdown(f));
     on!(on_settings_menu_pick, |c, i: i32| c.settings_menu_pick(i.max(0) as usize));
     on!(on_settings_menu_dismiss, |c| c.settings_menu_dismiss());
@@ -3743,6 +3762,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     return true;
                 }
+            }
+            // ⌘F with Settings open: the cursor goes to Search settings (spec 014).
+            if primary && !shift && !alt && !ctrl && chord.key.eq_ignore_ascii_case("f") && ctl.borrow().settings.open {
+                if let Some(a) = aw.upgrade() {
+                    let s = a.global::<Studio>();
+                    s.set_settings_search_focus(s.get_settings_search_focus() + 1);
+                }
+                return true;
             }
             let cx = {
                 let c = ctl.borrow();

@@ -123,6 +123,18 @@ component SmallSelect inherits Rectangle {
     Icon { x: parent.width - 16px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; d: Icons.chevron-down; ink: #a6a8ac; stroke-width: 1.4px; }
 }
 
+// Search settings (src/settings_search.rs): a soft highlight behind a row whose label (or one of
+// its keywords) matches the query. `label` must be the setting's label in ENTRIES; a test reads
+// these elements to keep the table complete.
+component SearchHit inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    x: 12px;
+    border-radius: 6px;
+    background: #2752f533;
+    visible: root.enabled && Studio.settings-search != "" && Studio.settings-row-hit(Studio.settings-search, root.label);
+}
+
 // General page. Startup, Projects folder, Playhead on stop, Sections move clips and the three
 // plugin window switches work (prefs.general). Sample licensing and the Assistant section are
 // shown off and disabled: DStudio has no licensing, audio-listening assistant or voice input.
@@ -143,10 +155,13 @@ component GeneralPage inherits Rectangle {
         { t: "Auto-send", y: 554.8px, k: -1 },
     ]: Rectangle {
         x: 0; y: r.y; width: root.width; height: 14px;
+        SearchHit { y: -5px; width: parent.width - 24px; height: 24px; label: r.t; enabled: r.k >= 0; }
         RowLabel { x: 20.5px; y: 0; text: r.t; dim: r.k < 0; }
         Switch { x: root.sw-x; y: 2px; on: r.k >= 0 && Studio.general-on[r.k]; enabled: r.k >= 0; label: r.t; toggled => { Studio.general-toggle(r.k); } }
     }
     // Projects folder: where Save starts and what the browser's Projects tab lists.
+    SearchHit { y: 139.5px; width: root.width - 24px; height: 26px; label: "Projects folder"; }
+    SearchHit { y: 199.5px; width: root.width - 24px; height: 26px; label: "Playhead on stop"; }
     RowLabel { x: 20.5px; y: 145.4px; text: "Projects folder"; }
     Rectangle {
         x: root.width - 20.5px - 60px - 8.5px - 250px; y: 143.8px; width: 250px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
@@ -238,6 +253,8 @@ component ShortcutsPage inherits Rectangle {
     property <length> ctx-x: 395.6px;   // the context column (centred text)
     property <length> ctx-w: 160px;
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Shortcuts"; font-size: 17.25px; font-weight: 700; }
+    SearchHit { y: 70px; width: 186px; height: 29px; label: "Preset"; }
+    SearchHit { x: 428px; y: 70px; width: 104px; height: 29px; label: "Reset to defaults"; }
     Text { x: 20.5px; y: 78px; height: 14px; text: "Preset"; color: #7e7f83; font-size: 10px; font-weight: 500; vertical-alignment: center; }
     Rectangle {
         x: 57.5px; y: 74.75px; width: 134px; height: 20.4px; border-radius: 10.2px;
@@ -362,6 +379,8 @@ component MidiPage inherits Rectangle {
     // The list scrolls when there are more inputs than fit above the note below it.
     property <length> list-h: min(max(1, Studio.midi-inputs.length) * root.row-h, max(root.row-h, root.height - root.list-y - 48px));
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "MIDI"; font-size: 17.25px; font-weight: 700; }
+    SearchHit { y: 65px; width: root.width - 24px; height: 59px; label: "Default instrument"; }
+    SearchHit { y: 145px; width: root.width - 24px; height: 24px; label: "MIDI inputs"; }
     RowLabel { x: 20.5px; y: 71.5px; text: "Default instrument"; heading: true; }
     instrument := Dropdown { x: 20.5px; y: 90px; width: root.width - 20.5px - 20.5px; text: Studio.midi-instrument-text; field: 5; }
     if Studio.midi-instrument-missing: Badge {
@@ -405,6 +424,12 @@ component MidiPage inherits Rectangle {
 component AudioPage inherits Rectangle {
     // Content area origin = panel x 187 (content left margin 20.5 pt -> x 207.5 panel-relative).
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Audio"; font-size: 17.25px; font-weight: 700; }
+    SearchHit { y: 65px; width: root.width - 24px; height: 59px; label: "Output device"; }
+    SearchHit { y: 126px; width: root.width - 24px; height: 59px; label: "Input device"; }
+    SearchHit { y: 193px; width: root.width - 24px; height: 26px; label: "Mute audio input"; }
+    SearchHit { y: 226px; width: root.width - 24px; height: 59px; label: "Sample rate"; }
+    SearchHit { y: 286px; width: root.width - 24px; height: 59px; label: "Buffer size"; }
+    SearchHit { y: 347px; width: root.width - 24px; height: 26px; label: "Plugin delay compensation"; }
     FieldLabel { x: 20.5px; y: 78.5px - 7px; text: "Output device"; }
     Dropdown { x: 20.5px; y: 90px; width: root.width - 20.5px - 76.5px; text: Studio.set-output-text; field: 0; }
     // Test: plays a 0.5 s, -24 dBFS tone through the engine (src/settings.rs).
@@ -465,6 +490,8 @@ component PageButton inherits Rectangle {
 // (ours) the scan result: found plugins and failed / blocklisted ones with reasons.
 component PluginsPage inherits Rectangle {
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Plugins"; font-size: 17.25px; font-weight: 700; }
+    SearchHit { y: 66px; width: root.width - 24px; height: 24px; label: "Scan directories"; }
+    SearchHit { y: root.after-dirs + 61px; width: root.width - 24px; height: 24px; label: "Plugin scanner"; }
     FieldLabel { x: 20.5px; y: 71px; text: "Scan directories" + (Studio.scan-dirs.length > 8 ? " (" + Studio.scan-dirs.length + ", scroll for more)" : ""); }
     // At most 8 rows tall (the page itself does not scroll); more folders
     // (CLAP_PATH / DSTUDIO_PLUGIN_PATH) scroll inside the list.
@@ -563,15 +590,33 @@ export component SettingsPanel inherits Rectangle {
     Rectangle { x: 42px - 7px; y: 20px - 7px; width: 14px; height: 14px; border-radius: 7px; background: #f3be41; }
     Rectangle { x: 64.5px - 7px; y: 20px - 7px; width: 14px; height: 14px; border-radius: 7px; background: #55b736; }
     Text { x: 16.5px; y: 33px; height: 24px; text: "Settings"; color: #ececee; font-size: 17.25px; font-weight: 700; vertical-alignment: center; }
-    // Search (PLACEHOLDER: no settings search yet)
+    // Search settings (src/settings_search.rs): filters the sidebar to pages with matching rows,
+    // which the open page highlights. Escape clears it (src/main.rs); ⌘F focuses it.
     Rectangle {
         x: 10px; y: 64.5px; width: 166.5px; height: 20.5px; border-radius: 10.25px; background: Tokens.bg-control;
-        border-width: 0.5px; border-color: #35363a;
+        border-width: 0.5px; border-color: settings-search.has-focus ? #4a4b50 : #35363a;
         Icon { x: 9px; y: 4px; width: 12.5px; height: 12.5px; d: Icons.search; ink: #b0b0b3; }
-        Text { x: 26px; text: "Search settings"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
+        if settings-search.text == "": Text { x: 26px; text: "Search settings"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
+        settings-search := TextInput {
+            x: 26px; width: parent.width - 34px; height: parent.height;
+            text: Studio.settings-search;
+            color: Tokens.text-primary; font-size: 9px; vertical-alignment: center; single-line: true;
+            accessible-label: "Search settings";
+            edited => { Studio.settings-search = self.text; Studio.settings-search-edited(self.text); }
+            changed has-focus => { Studio.search-focused = self.has-focus; }
+        }
+    }
+    changed settings-search-focus-request => { settings-search.focus(); }
+    property <int> settings-search-focus-request: Studio.settings-search-focus;
+    if Studio.settings-search-none: Text {
+        x: 17px; y: 98px; width: 160px; text: "No settings match your search"; color: Tokens.text-tertiary;
+        font-size: 9.5px; wrap: word-wrap;
     }
     for name[i] in Studio.settings-pages: Rectangle {
-        x: 10px; y: 94.75px + i * 27.25px; width: 166.5px; height: 25.5px; border-radius: 6px;
+        // The row's place in the sidebar, filtered by Search settings (-1 = hidden).
+        property <int> slot: Studio.settings-page-slots.length > i ? Studio.settings-page-slots[i] : i;
+        visible: self.slot >= 0;
+        x: 10px; y: 94.75px + max(0, self.slot) * 27.25px; width: 166.5px; height: 25.5px; border-radius: 6px;
         background: Studio.settings-page == i ? #363739 : (row-ta.has-hover ? #27282b : transparent);
         accessible-role: tab; accessible-label: name; accessible-checked: Studio.settings-page == i;
         Icon {

@@ -1311,6 +1311,10 @@ export component AppWindow inherits Window {
             fs.focus();
         }
     }
+    // Closing Settings gives the key handler the focus back, so a settings search field that
+    // had the cursor doesn't keep the keyboard after the panel is gone.
+    property <bool> settings-open: Studio.settings-open;
+    changed settings-open => { if (!self.settings-open) { fs.focus(); } }
     fs := FocusScope {
         init => { self.focus(); }
         key-pressed(e) => {

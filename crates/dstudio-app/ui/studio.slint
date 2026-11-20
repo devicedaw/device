@@ -1073,6 +1073,15 @@ export global Studio {
     callback shortcut-clear(int);                   // ×: unmapped
     callback shortcuts-reset();
     callback shortcuts-search(string);
+    // Settings › Search settings (src/settings_search.rs): the text, each page's sidebar row
+    // (-1 = hidden), whether nothing matched, a counter that asks the field to take focus (⌘F),
+    // and whether the row labelled arg 2 matches the query arg 1.
+    in-out property <string> settings-search;
+    in property <[int]> settings-page-slots;
+    in property <bool> settings-search-none;
+    in-out property <int> settings-search-focus;
+    callback settings-search-edited(string);
+    pure callback settings-row-hit(string, string) -> bool;
     callback settings-dropdown(int);
     callback settings-menu-pick(int);
     callback settings-menu-dismiss();

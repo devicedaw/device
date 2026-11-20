@@ -13168,6 +13168,147 @@ fn default_instrument_steps() -> Vec<Step> {
     ]
 }
 
+/// Search settings (spec 014, roadmap G13): ⌘F focuses the field, typing filters the sidebar and
+/// highlights the matching rows, Escape clears, and the text is gone after Settings closes.
+fn settings_search_steps() -> Vec<Step> {
+    use Step::*;
+    fn slots(a: &AppWindow) -> Vec<i32> {
+        let m = a.global::<Studio>().get_settings_page_slots();
+        (0..slint::Model::row_count(&m)).filter_map(|i| slint::Model::row_data(&m, i)).collect()
+    }
+    let tracks = Rc::new(Cell::new(0));
+    let (t1, t2) = (tracks.clone(), tracks);
+    vec![
+        DoC(
+            "settings search: open Settings › General, ⌘F",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().open_settings();
+                a.global::<Studio>().invoke_settings_page_select(0);
+                key(a, "f", true, false);
+            }),
+        ),
+        Check(
+            "settings search: the field has the cursor and every page is listed",
+            Box::new(|_, a| {
+                let s = a.global::<Studio>();
+                (s.get_search_focused() && slots(a) == (0..9).collect::<Vec<i32>>() && !s.get_settings_search_none())
+                    .then_some(())
+                    .ok_or(format!("focused {} slots {:?}", s.get_search_focused(), slots(a)))
+            }),
+        ),
+        Do(
+            "settings search: type \"instr\"",
+            Box::new(|a| {
+                for ch in ["i", "n", "s", "t", "r"] {
+                    key(a, ch, false, false);
+                }
+            }),
+        ),
+        Check(
+            "settings search: only MIDI is listed, MIDI is open, Default instrument is highlighted",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let hit = s.invoke_settings_row_hit(s.get_settings_search(), "Default instrument".into());
+                let other = s.invoke_settings_row_hit(s.get_settings_search(), "MIDI inputs".into());
+                (c.settings.search == "instr"
+                    && slots(a) == [-1, -1, 0, -1, -1, -1, -1, -1, -1]
+                    && c.settings.page == crate::midi_in::MIDI_PAGE
+                    && hit
+                    && !other)
+                    .then_some(())
+                    .ok_or(format!("search {:?} slots {:?} page {} hit {hit} other {other}", c.settings.search, slots(a), c.settings.page))
+            }),
+        ),
+        Do(
+            "settings search: type \"zzz\" instead",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.set_settings_search("zzz".into());
+                s.invoke_settings_search_edited("zzz".into());
+            }),
+        ),
+        Check(
+            "settings search: nothing matches, the page stays",
+            Box::new(|c, a| {
+                (a.global::<Studio>().get_settings_search_none() && slots(a).iter().all(|&i| i < 0) && c.settings.page == 2)
+                    .then_some(())
+                    .ok_or(format!("slots {:?} page {}", slots(a), c.settings.page))
+            }),
+        ),
+        Do("settings search: Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check(
+            "settings search: the text is cleared, Settings stays open, every page is back",
+            Box::new(|c, a| {
+                (c.settings.open
+                    && c.settings.search.is_empty()
+                    && a.global::<Studio>().get_settings_search().is_empty()
+                    && slots(a)[0] == 0)
+                    .then_some(())
+                    .ok_or(format!("open {} search {:?}", c.settings.open, c.settings.search))
+            }),
+        ),
+        DoC(
+            "settings search: ⌘F, close Settings with the cursor in the field",
+            Box::new(|a, ctl| {
+                key(a, "f", true, false);
+                ctl.borrow_mut().close_settings();
+            }),
+        ),
+        DoC(
+            "settings search: press ⇧⌘T",
+            Box::new(move |a, ctl| {
+                t1.set(ctl.borrow().project().tracks.len());
+                key(a, "t", true, true);
+            }),
+        ),
+        Check(
+            "settings search: shortcuts work again once Settings is closed (⇧⌘T added a track)",
+            Box::new(move |c, a| {
+                let focused = a.global::<Studio>().get_search_focused();
+                (!focused && c.project().tracks.len() == t2.get() + 1).then_some(()).ok_or(format!(
+                    "focused {focused} tracks {} -> {}",
+                    t2.get(),
+                    c.project().tracks.len()
+                ))
+            }),
+        ),
+        DoC(
+            "settings search: undo the track, reopen Settings",
+            Box::new(|_, ctl| {
+                ctl.borrow_mut().undo();
+                ctl.borrow_mut().open_settings();
+            }),
+        ),
+        Do(
+            "settings search: type \"latency\"",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.set_settings_search("latency".into());
+                s.invoke_settings_search_edited("latency".into());
+            }),
+        ),
+        DoC(
+            "settings search: close and reopen Settings",
+            Box::new(|_, ctl| {
+                ctl.borrow_mut().close_settings();
+                ctl.borrow_mut().open_settings();
+            }),
+        ),
+        Check(
+            "settings search: reopened with an empty field and every page",
+            Box::new(|c, a| {
+                (c.settings.search.is_empty()
+                    && a.global::<Studio>().get_settings_search().is_empty()
+                    && slots(a) == (0..9).collect::<Vec<i32>>())
+                .then_some(())
+                .ok_or(format!("search {:?} slots {:?}", c.settings.search, slots(a)))
+            }),
+        ),
+        Do("settings search: Escape closes Settings", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("settings search: Settings is closed", Box::new(|c, _| (!c.settings.open).then_some(()).ok_or("still open".to_string()))),
+    ]
+}
+
 /// Mouse & modifiers: ⌥-drag copies a clip, ⇧-drag on its right edge time-stretches it, the
 /// top-right corner loops it, ⌥ + scroll changes the track heights, and a double-click deletes
 /// a piano roll note. Driven through the controller's pointer entry points.
@@ -17017,6 +17158,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(returns_steps());
     all.extend(plugin_folder_steps());
     all.extend(default_instrument_steps());
+    all.extend(settings_search_steps());
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());
