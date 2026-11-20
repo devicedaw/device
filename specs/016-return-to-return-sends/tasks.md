@@ -14,4 +14,4 @@ Tick a task only when its verification passed.
 - [x] T7. App: `stem_snapshot` of a return keeps upstream buses; Live set return sends, rendered returns, notes — verify: `cargo test -p dstudio-app -- live_set dialogs` and the self-test Project export
 - [x] T8. Review states `review-return-sends` and `review-return-sends-strip` and self-test `return_send_steps` — verify: `--self-test --no-audio` P = N
 - [x] T9. Docs: README, PROGRESS.md, docs/, roadmap G36 — verify: read them against the change
-- [ ] T10. Evidence: screenshots and benchmark numbers for the pull request — verify: `spec-verify`
+- [x] T10. Evidence: screenshots and benchmark numbers for the pull request — verify: `spec-verify`
