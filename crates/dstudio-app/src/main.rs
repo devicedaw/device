@@ -320,6 +320,8 @@ struct Args {
     assistant_width: Option<f32>,
     /// review-assistant-full: the docked assistant at the full window height.
     assistant_full: bool,
+    /// review-title-rename: the title bar's project name field open.
+    title_rename_review: bool,
     clip_menu: Option<i32>,
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
     ac_edit: Option<i32>,
@@ -393,6 +395,10 @@ fn parse_args() -> Result<Args, String> {
                     a.open_assistant = true;
                     a.assistant_demo = Some("turn".into());
                     a.assistant_full = true;
+                }
+                "review-title-rename" => {
+                    a.reference_default = true;
+                    a.title_rename_review = true;
                 }
                 s if s.starts_with("review-assistant-") => {
                     a.reference_default = true;
@@ -835,7 +841,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
                     ));
                 }
             },
@@ -1200,7 +1206,12 @@ fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
     aw.upgrade()
         .map(|a| {
             let s = a.global::<Studio>();
-            s.get_chat_focused() || s.get_rename_open() || s.get_search_focused() || s.get_picker_focused() || s.get_feedback_open()
+            s.get_chat_focused()
+                || s.get_rename_open()
+                || s.get_search_focused()
+                || s.get_picker_focused()
+                || s.get_feedback_open()
+                || s.get_title_focused()
         })
         .unwrap_or(false)
 }
@@ -1210,12 +1221,12 @@ fn pick_import() -> Vec<PathBuf> {
 }
 
 /// `projects` is the projects folder (Settings › General), where Save starts.
-fn pick_project_dir(save: bool, projects: Option<PathBuf>) -> Option<PathBuf> {
+/// `name` is the project's name (renamed from the title bar before its first save, or "Untitled").
+fn pick_project_dir(save: bool, projects: Option<PathBuf>, name: &str) -> Option<PathBuf> {
     if save {
         // A project is a directory; ask for its name and create it.
         // Start in the projects folder the browser's Projects tab lists.
-        let dialog =
-            rfd::FileDialog::new().set_title("Save project").set_file_name(format!("Untitled.{}", dstudio_core::persist::EXTENSION));
+        let dialog = rfd::FileDialog::new().set_title("Save project").set_file_name(format!("{name}.{}", dstudio_core::persist::EXTENSION));
         let dialog = match projects.filter(|d| std::fs::create_dir_all(d).is_ok()) {
             Some(d) => dialog.set_directory(d),
             None => dialog,
@@ -1465,12 +1476,13 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "file.save" | "file.save_as" => {
             let existing = ctl.borrow().project_dir.clone().filter(|_| action == "file.save");
             let projects = ctl.borrow().files.projects_dir.clone();
-            if let Some(dir) = existing.or_else(|| pick_project_dir(true, projects)) {
+            let name = ctl.borrow().project().name.clone();
+            if let Some(dir) = existing.or_else(|| pick_project_dir(true, projects, &name)) {
                 ctl.borrow_mut().save_to(&dir);
             }
         }
         "file.open" => {
-            if let Some(dir) = pick_project_dir(false, None) {
+            if let Some(dir) = pick_project_dir(false, None, "") {
                 ctl.borrow_mut().open(&dir);
             }
         }
@@ -2561,6 +2573,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_tool(tools::Tool::Marquee);
         c.tools.range = Some(dstudio_core::range::TimeRange { start: 4 * ppq, end: 12 * ppq, tracks });
     }
+    if args.title_rename_review {
+        app.global::<Studio>().set_title_editing(true);
+    }
     if args.snap_menu_review {
         let mut c = ctl.borrow_mut();
         c.snap.pick(5);
@@ -3125,7 +3140,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         studio.on_unsaved_save(move || {
             let existing = ctl.borrow().project_dir.clone();
             let projects = ctl.borrow().files.projects_dir.clone();
-            if let Some(dir) = existing.or_else(|| pick_project_dir(true, projects)) {
+            let name = ctl.borrow().project().name.clone();
+            if let Some(dir) = existing.or_else(|| pick_project_dir(true, projects, &name)) {
                 let mut c = ctl.borrow_mut();
                 c.save_to(&dir);
                 if !c.doc.is_dirty() {
@@ -3336,6 +3352,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     on!(on_chat_remove_key, |c| c.assistant_remove_key());
     on!(on_chat_toggle_full, |c| c.assistant_toggle_full());
+    on!(on_project_rename, |c, name: slint::SharedString| {
+        c.rename_project(name.as_str());
+    });
     on!(on_chat_dismiss_notice, |c| c.assistant_dismiss_notice());
     on!(on_chat_toggle_entry, |c, i: i32| c.assistant_toggle_entry(i.max(0) as usize));
     on!(on_chat_remove_context, |c| c.assistant_remove_context());

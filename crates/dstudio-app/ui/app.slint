@@ -45,12 +45,42 @@ component Header inherits Rectangle {
     // Root-relative coordinates (header panel sits at 5,5).
     Panel { x: 5px; y: 5px; width: root.width - 10px; height: 68px; }
 
-    // Title (centred). AX: 695,11,50,18
-    Text {
+    // Title (centred). AX: 695,11,50,18. Click it to rename the project: Return renames,
+    // Escape cancels (src/controller.rs `rename_project`).
+    title := Text {
         x: 0; y: 11px; width: root.width; height: 18px;
-        text: Studio.project-name; color: Tokens.text-title; font-size: 10px; font-weight: 600;
+        text: Studio.project-name; color: title-ta.has-hover ? Tokens.text-primary : Tokens.text-title; font-size: 10px; font-weight: 600;
         horizontal-alignment: center; vertical-alignment: center;
-        accessible-role: text;
+        visible: !Studio.title-editing;
+        accessible-role: button; accessible-label: "Project name"; accessible-value: Studio.project-name;
+        accessible-action-default => { Studio.title-editing = true; }
+    }
+    title-ta := TouchArea {
+        x: (root.width - min(root.width - 480px, max(60px, title-w.preferred-width + 16px))) / 2; y: 9px;
+        width: min(root.width - 480px, max(60px, title-w.preferred-width + 16px)); height: 22px;
+        mouse-cursor: text;
+        clicked => { Studio.title-editing = true; }
+    }
+    title-w := Text { visible: false; text: Studio.project-name; font-size: 10px; font-weight: 600; }
+    if Studio.title-editing: Rectangle {
+        x: (root.width - self.width) / 2; y: 9.5px; width: max(160px, title-w.preferred-width + 40px); height: 21px; border-radius: 4.25px;
+        background: #3a3b40; border-width: 0.85px; border-color: #ffffff59;
+        TextInput {
+            accessible-label: "Project name";
+            x: 6px; width: parent.width - 12px; height: parent.height;
+            text: Studio.project-name; color: #ffffff; font-size: 10px; font-weight: 600;
+            horizontal-alignment: center; vertical-alignment: center; single-line: true;
+            selection-background-color: #ffffff47; selection-foreground-color: #ffffff;
+            init => { self.focus(); self.select-all(); Studio.title-focused = true; }
+            accepted => { Studio.title-editing = false; Studio.title-focused = false; Studio.project-rename(self.text); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) { Studio.title-editing = false; Studio.title-focused = false; return accept; }
+                reject
+            }
+            changed has-focus => {
+                if (!self.has-focus && Studio.title-editing) { Studio.title-editing = false; Studio.title-focused = false; Studio.project-rename(self.text); }
+            }
+        }
     }
     Pill { x: root.width - 220px; y: 9.45px; width: 82px; height: 22.1px; text: "Report a bug"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.report-bug(); } }
     Pill { x: root.width - 131px; y: 9.45px; width: 118px; height: 22.1px; text: "Share your feedback"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.feedback(); } }

@@ -696,6 +696,9 @@ export global Studio {
     in property <int> chat-focus-epoch;
     in property <bool> assistant-full;          // the assistant spans the window height (its header button)
     callback chat-toggle-full();
+    in-out property <bool> title-editing;       // the title bar shows its project name field
+    in-out property <bool> title-focused;       // the title bar's project name field has the keyboard
+    callback project-rename(string);
     in property <[HighlightRect]> highlights;
     callback chat-send(string);
     callback chat-new();

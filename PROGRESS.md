@@ -780,6 +780,14 @@ The clip menu's Ask row (disabled until now) and ⌘K with a clip selected open 
 composer's context chip and the cursor in the composer (`Controller::ask_about_clip`). The panel may not exist yet when
 Ask opens it, so the focus request waits for the next interface update (`AssistantState::focus_pending`) before it
 bumps `chat-focus-epoch`, which the panel's composer follows. Self-test section `ask_clip_steps`.
+### 2026-11-21: rename the project from the title bar
+
+Clicking the project name in the title bar opens a field (Return renames, Escape cancels, leaving the field renames).
+A saved project's `Name.dsproj` folder is renamed on disk; media inside it, Open Recent and the window follow
+(`Controller::rename_project`, `Document::relocate_media`, which moves only the absolute paths the open project uses).
+An unsaved project keeps the name, and the first Save offers it. A name that is taken, empty, hidden or has a
+character file systems refuse is refused with a reason (`check_project_name`); no undo step, as it is a file
+operation. Review state `review-title-rename`; self-test `rename_project_steps`.
 
 
 ### 2026-11-21: help on every setting

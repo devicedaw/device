@@ -184,6 +184,8 @@ media with it and keep the same layout around the project folder, or leave the m
 does not include the audio, so back up the media too. The format is versioned, but it isn't frozen until the first release.
 A project with tempo changes is saved in a newer version of the format, which 0.2.x builds refuse to open rather than
 play at one tempo; projects without them stay readable by 0.2.x.
+Click the project name in the title bar to rename it: a saved project's folder is renamed on disk; an unsaved one
+keeps the name for its first save.
 
 ## Under the hood
 

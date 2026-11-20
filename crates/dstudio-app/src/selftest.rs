@@ -16427,6 +16427,103 @@ fn api_key_steps() -> Vec<Step> {
                 if let Some(p) = s2.borrow_mut().take() {
                     ctl.borrow_mut().provider = p;
                 }
+/// Rename the project from the title bar (roadmap G10): an unsaved project keeps the name for
+/// its first save; a saved one's folder is renamed on disk with Open Recent following; a name
+/// that is taken or can't name a folder is refused with a message and changes nothing.
+fn rename_project_steps() -> Vec<Step> {
+    use Step::*;
+    fn dir() -> std::path::PathBuf {
+        run_dir().join("rename-project")
+    }
+    fn title_xy() -> (f32, f32) {
+        (win().0 / 2.0, 20.0)
+    }
+    vec![
+        DoC(
+            "rename project: start a fresh unsaved project",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.replace_project(dstudio_core::Project::default());
+                c.project_dir = None;
+                let _ = std::fs::remove_dir_all(dir());
+                std::fs::create_dir_all(dir()).unwrap();
+            }),
+        ),
+        Do(
+            "rename project: click the title",
+            Box::new(|a| {
+                let (x, y) = title_xy();
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "rename project: the title is a field with the keyboard",
+            Box::new(|_, a| a.global::<Studio>().get_title_focused().then_some(()).ok_or("no field".into())),
+        ),
+        Do(
+            "rename project: type Night Drive, Return",
+            Box::new(|a| {
+                key(a, "a", true, false);
+                type_text(a, "Night Drive");
+                key(a, Key::Return, false, false);
+            }),
+        ),
+        Check(
+            "rename project: the unsaved project is named Night Drive, no folder made",
+            Box::new(|c, a| {
+                let ok = c.project().name == "Night Drive" && c.project_dir.is_none() && !a.global::<Studio>().get_title_focused();
+                ok.then_some(()).ok_or(format!("name {:?} dir {:?}", c.project().name, c.project_dir))
+            }),
+        ),
+        DoC(
+            "rename project: save it as First.dsproj, rename it to Second",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.save_to(&dir().join("First.dsproj"));
+                c.rename_project("Second");
+            }),
+        ),
+        Check(
+            "rename project: the folder is Second.dsproj on disk, the project opens there and is in Open Recent",
+            Box::new(|c, a| {
+                let new = dir().join("Second.dsproj");
+                let ok = new.join("project.json").exists()
+                    && !dir().join("First.dsproj").exists()
+                    && c.project_dir.as_deref() == Some(new.as_path())
+                    && a.global::<Studio>().get_project_name() == "Second"
+                    && c.settings.prefs.recent_projects.first().is_some_and(|p| p.ends_with("Second.dsproj"))
+                    && !c.settings.prefs.recent_projects.iter().any(|p| p.ends_with("First.dsproj"));
+                ok.then_some(()).ok_or(format!("dir {:?} recent {:?}", c.project_dir, c.settings.prefs.recent_projects.first()))
+            }),
+        ),
+        DoC(
+            "rename project: try a name that is taken, then one with a slash",
+            Box::new(|_, ctl| {
+                std::fs::create_dir_all(dir().join("Taken.dsproj")).unwrap();
+                let mut c = ctl.borrow_mut();
+                c.rename_project("Taken");
+                c.rename_project("a/b");
+            }),
+        ),
+        Check(
+            "rename project: both refused with a reason, the project still Second",
+            Box::new(|c, _| {
+                let ok = c.project_dir.as_deref() == Some(dir().join("Second.dsproj").as_path())
+                    && c.status_message().is_some_and(|m| m.starts_with("Can't rename the project"));
+                ok.then_some(()).ok_or(format!("dir {:?} status {:?}", c.project_dir, c.status_message()))
+            }),
+        ),
+        DoC(
+            "rename project: back to an unsaved project, remove the folder",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let recent: Vec<String> =
+                    c.settings.prefs.recent_projects.iter().filter(|p| !p.contains("rename-project")).cloned().collect();
+                c.settings.prefs.recent_projects = recent;
+                c.settings.prefs.recent_resolved.clear();
+                c.replace_project(dstudio_core::Project::default());
+                c.project_dir = None;
+                let _ = std::fs::remove_dir_all(dir());
             }),
         ),
     ]
@@ -18035,6 +18132,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(api_key_steps());
     all.extend(ask_clip_steps());
     all.extend(assistant_full_steps());
+    all.extend(rename_project_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.

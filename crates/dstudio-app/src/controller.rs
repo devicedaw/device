@@ -1663,6 +1663,57 @@ impl Controller {
         }
     }
 
+    /// The title bar's rename field: `name` for the project. A saved project's folder is renamed
+    /// on disk (`<name>.dsproj` next to it) and its media, Open Recent and the window follow; an
+    /// unsaved one keeps the name for its first save. Not an undo step (it is a file operation).
+    /// A name that can't be used, or a rename that fails, says why and changes nothing.
+    pub fn rename_project(&mut self, name: &str) -> bool {
+        let name = name.trim();
+        if let Err(why) = check_project_name(name) {
+            self.set_status(format!("Can't rename the project: {why}"), 5);
+            return false;
+        }
+        let Some(old) = self.project_dir.clone() else {
+            self.doc.set_project_name(name);
+            self.ui_dirty = true;
+            return true;
+        };
+        if project_name_of(&old).as_deref() == Some(name) {
+            return true;
+        }
+        let new = old.with_file_name(format!("{name}.{}", persist::EXTENSION));
+        // A case-only change on a case-insensitive disk names the same folder: still a rename.
+        let same_folder = std::fs::canonicalize(&new).ok().zip(std::fs::canonicalize(&old).ok()).is_some_and(|(a, b)| a == b);
+        if new.exists() && !same_folder {
+            self.set_status(format!("Can't rename the project: \"{name}\" already exists in that folder"), 5);
+            return false;
+        }
+        if let Err(e) = std::fs::rename(&old, &new) {
+            self.set_status(format!("Can't rename the project: {e}"), 5);
+            return false;
+        }
+        let (old_abs, new_abs) =
+            (std::fs::canonicalize(&new).map(|n| n.with_file_name(old.file_name().unwrap_or_default())), std::fs::canonicalize(&new));
+        self.doc.relocate_media(&old, &new);
+        if let (Ok(o), Ok(n)) = (old_abs, new_abs) {
+            self.doc.relocate_media(&o, &n);
+        }
+        self.doc.set_project_name(name);
+        self.project_dir = Some(new.clone());
+        let old_s = old.to_string_lossy().into_owned();
+        if let Some(i) = self.settings.prefs.recent_projects.iter().position(|p| *p == old_s) {
+            self.settings.prefs.recent_projects.remove(i);
+            if i < self.settings.prefs.recent_resolved.len() {
+                self.settings.prefs.recent_resolved.remove(i);
+            }
+        }
+        self.remember_recent(&new);
+        self.files_refresh();
+        self.set_status(format!("Renamed the project to {name}"), 3);
+        self.ui_dirty = true;
+        true
+    }
+
     /// Open the project in `dir`; false (with a status message) when it can't be read.
     pub fn open(&mut self, dir: &Path) -> bool {
         let loaded = match persist::load(dir) {
@@ -2737,6 +2788,24 @@ pub(crate) fn mini_notes(notes: &[(dstudio_core::Note, bool)], shift: Ticks, len
 /// unless the playhead was moved since it stopped; Stop in place resumes where it stopped.
 /// Where Play starts: a position the user chose since the last pause, else the last playback's
 /// start after a pause (Return to start), else wherever the transport is (None).
+/// Why `name` can't name a project folder, if it can't: empty, too long, a path separator or a
+/// character the file systems refuse, or a leading dot (a hidden folder).
+pub(crate) fn check_project_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("the name is empty");
+    }
+    if name.chars().count() > 128 {
+        return Err("the name is longer than 128 characters");
+    }
+    if name.starts_with('.') {
+        return Err("the name can't start with a dot");
+    }
+    if name.chars().any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control()) {
+        return Err("the name can't contain / \\ : * ? \" < > |");
+    }
+    Ok(())
+}
+
 /// The project's name for its folder `dir` (`Song.dsproj` is "Song").
 fn project_name_of(dir: &Path) -> Option<String> {
     dir.file_stem().and_then(|s| s.to_str()).map(str::trim).filter(|s| !s.is_empty()).map(String::from)
@@ -2794,6 +2863,16 @@ fn stretched_len(want: Ticks, orig: Ticks) -> Ticks {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn project_names_that_cannot_name_a_folder_are_refused() {
+        use super::check_project_name as check;
+        assert!(check("My Song 2").is_ok());
+        assert!(check("Café — take 3").is_ok());
+        for bad in ["", ".hidden", "a/b", "a:b", "a\\b", "what?", &"x".repeat(129)] {
+            assert!(check(bad).is_err(), "{bad:?}");
+        }
+    }
+
     use super::*;
 
     #[test]
