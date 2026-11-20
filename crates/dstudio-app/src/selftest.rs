@@ -13078,6 +13078,96 @@ fn shortcut_page_steps() -> Vec<Step> {
     ]
 }
 
+/// Settings › MIDI › Default instrument (spec 013): the dropdown lists the built-in
+/// instruments, picking Drum Rack is saved, and ⇧⌘T then makes a Drum Rack track.
+fn default_instrument_steps() -> Vec<Step> {
+    use Step::*;
+    fn labels(a: &AppWindow) -> Vec<String> {
+        let items = a.global::<Studio>().get_settings_menu_items();
+        (0..slint::Model::row_count(&items))
+            .filter_map(|i| slint::Model::row_data(&items, i))
+            .map(|it| format!("{}{}", it.label, if it.checked { " ✓" } else { "" }))
+            .collect()
+    }
+    vec![
+        DoC(
+            "default instrument: open Settings › MIDI and the Default instrument menu",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().open_settings();
+                let s = a.global::<Studio>();
+                s.invoke_settings_page_select(crate::midi_in::MIDI_PAGE as i32);
+                s.invoke_settings_dropdown(5);
+            }),
+        ),
+        Check(
+            "default instrument: Synth (checked), Sampler, Pad Sampler, Drum Rack",
+            Box::new(|_, a| {
+                let s = a.global::<Studio>();
+                let l = labels(a);
+                (s.get_settings_menu_open()
+                    && s.get_midi_instrument_text() == "Synth"
+                    && l.len() >= 4
+                    && l[..4] == ["Synth ✓", "Sampler", "Pad Sampler", "Drum Rack"])
+                .then_some(())
+                .ok_or(format!("{l:?}"))
+            }),
+        ),
+        Do("default instrument: pick Drum Rack", Box::new(|a| a.global::<Studio>().invoke_settings_menu_pick(3))),
+        Check(
+            "default instrument: Drum Rack is shown and kept in the preferences",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let kept = matches!(&c.settings.prefs.midi.default_instrument,
+                    Some(crate::prefs::InstrumentChoice::Builtin { id }) if id == "drum-rack");
+                (kept && !s.get_settings_menu_open() && s.get_midi_instrument_text() == "Drum Rack").then_some(()).ok_or(format!(
+                    "{:?} / {}",
+                    c.settings.prefs.midi.default_instrument,
+                    s.get_midi_instrument_text()
+                ))
+            }),
+        ),
+        DoC(
+            "default instrument: close Settings, press ⇧⌘T",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().close_settings();
+                key(a, "t", true, true);
+            }),
+        ),
+        Check(
+            "default instrument: the new track is \"Drum Rack\", plays a Drum Rack, one undo step",
+            Box::new(|c, _| {
+                let t = c.selected_track.and_then(|id| c.project().track(id));
+                let dev = t.and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.plugin.id.clone());
+                (t.is_some_and(|t| t.name == "Drum Rack")
+                    && dev.as_deref() == Some("drum-rack")
+                    && c.doc.undo_label() == Some("Add Instrument Track"))
+                .then_some(())
+                .ok_or(format!("{:?} {dev:?} {:?}", t.map(|t| &t.name), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "default instrument: undo the track, set Synth back",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().undo();
+                ctl.borrow_mut().open_settings();
+                let s = a.global::<Studio>();
+                s.invoke_settings_page_select(crate::midi_in::MIDI_PAGE as i32);
+                s.invoke_settings_dropdown(5);
+                s.invoke_settings_menu_pick(0);
+            }),
+        ),
+        Check(
+            "default instrument: Synth again, nothing left in the preferences",
+            Box::new(|c, a| {
+                (c.settings.prefs.midi.default_instrument.is_none() && a.global::<Studio>().get_midi_instrument_text() == "Synth")
+                    .then_some(())
+                    .ok_or(format!("{:?}", c.settings.prefs.midi.default_instrument))
+            }),
+        ),
+        DoC("default instrument: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
+    ]
+}
+
 /// Mouse & modifiers: ⌥-drag copies a clip, ⇧-drag on its right edge time-stretches it, the
 /// top-right corner loops it, ⌥ + scroll changes the track heights, and a double-click deletes
 /// a piano roll note. Driven through the controller's pointer entry points.
@@ -16926,6 +17016,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(strip_steps());
     all.extend(returns_steps());
     all.extend(plugin_folder_steps());
+    all.extend(default_instrument_steps());
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());

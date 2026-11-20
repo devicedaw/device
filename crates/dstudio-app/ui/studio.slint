@@ -1049,11 +1049,16 @@ export global Studio {
     in property <bool> set-pdc-on: true;
     in property <string> set-latency-text;
     in property <[MidiInputRow]> midi-inputs;
+    // Settings › MIDI › Default instrument: the choice's name, and whether it is a plugin the
+    // last scan didn't find.
+    in property <string> midi-instrument-text: "Synth";
+    in property <bool> midi-instrument-missing;
     callback settings-midi-toggle(int);
     in property <bool> settings-menu-open;
     in property <int> settings-menu-field;      // 0 output, 1 input, 2 sample rate, 3 buffer size
     in property <[ChoiceItem]> settings-menu-items;
     in property <length> settings-menu-h;
+    in property <length> settings-menu-content-h; // all the rows when they don't fit (the list scrolls)
     callback toggle-settings();
     callback close-settings();
     callback settings-page-select(int);

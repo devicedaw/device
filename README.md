@@ -90,6 +90,8 @@ wgpu.
   sums up their clips. Their tracks sit indented under the group, and the mixer marks them with the group's colour.
   A group sends into return tracks like any other track.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
+  Settings › MIDI › Default instrument picks what a new instrument track (⇧⌘T) plays: any of them, or an
+  instrument plugin.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
   macros. Save a chain to reuse it in any project, or start from one of 27 ready-made chains for vocals, drums, bass,

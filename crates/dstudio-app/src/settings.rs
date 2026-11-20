@@ -34,11 +34,15 @@ pub enum Field {
     BufferSize = 3,
     /// Settings › Shortcuts › Preset.
     ShortcutPreset = 4,
+    /// Settings › MIDI › Default instrument (src/default_instrument.rs).
+    DefaultInstrument = 5,
 }
 
 impl Field {
     fn from_i32(i: i32) -> Option<Field> {
-        [Field::Output, Field::Input, Field::SampleRate, Field::BufferSize, Field::ShortcutPreset].into_iter().find(|f| *f as i32 == i)
+        [Field::Output, Field::Input, Field::SampleRate, Field::BufferSize, Field::ShortcutPreset, Field::DefaultInstrument]
+            .into_iter()
+            .find(|f| *f as i32 == i)
     }
 }
 
@@ -49,6 +53,10 @@ pub enum Choice {
     Rate(f64),
     Buffer(u32),
     Preset(&'static str),
+    /// A default instrument (None = the Synth).
+    Instrument(Option<crate::prefs::InstrumentChoice>),
+    /// A heading row; can't be picked.
+    Header,
 }
 
 #[derive(Debug)]
@@ -97,6 +105,8 @@ pub fn buffer_note(requested: u32, running: bool, actual: u32, device_rate: f64)
 /// Settings dropdown popup rows: 22 pt, 4 pt padding.
 pub const MENU_ROW: f32 = 22.0;
 pub const MENU_PAD: f32 = 4.0;
+/// Rows a settings dropdown shows before it scrolls (a long plugin list).
+pub const MENU_MAX_ROWS: f32 = 14.0;
 
 /// -24 dBFS, 0.5 s, 440 Hz with 10 ms fades (Settings › Audio "Test").
 pub fn test_tone_samples(rate: u32) -> Vec<f32> {
@@ -350,6 +360,7 @@ impl Controller {
             Field::ShortcutPreset => {
                 crate::shortcut_presets::PRESETS.iter().map(|p| (p.name.to_string(), Choice::Preset(p.name))).collect()
             }
+            Field::DefaultInstrument => self.instrument_choices(),
         }
     }
 
@@ -361,6 +372,9 @@ impl Controller {
             (Field::SampleRate, Choice::Rate(r)) => (r - self.current_rate()).abs() < 0.5,
             (Field::BufferSize, Choice::Buffer(n)) => *n == self.current_buffer(),
             (Field::ShortcutPreset, Choice::Preset(p)) => *p == crate::shortcut_presets::find(&self.settings.prefs.shortcut_preset).name,
+            (Field::DefaultInstrument, Choice::Instrument(c)) => {
+                crate::default_instrument::same_choice(c.as_ref(), self.settings.prefs.midi.default_instrument.as_ref())
+            }
             _ => false,
         }
     }
@@ -385,7 +399,16 @@ impl Controller {
         let Some((f, items)) = self.settings.menu.take() else { return };
         let Some((_, c)) = items.get(i).cloned() else { return };
         self.ui_dirty = true;
+        if matches!(c, Choice::Header) {
+            self.settings.menu = Some((f, items));
+            return;
+        }
         if self.is_current(f, &c) {
+            return;
+        }
+        if let Choice::Instrument(choice) = c {
+            self.settings.prefs.midi.default_instrument = choice;
+            self.save_prefs();
             return;
         }
         if let Choice::Preset(name) = c {
@@ -604,6 +627,10 @@ impl Controller {
         s.set_set_pdc_on(!self.settings.prefs.audio.pdc_off);
         if self.settings.page == crate::midi_in::MIDI_PAGE {
             self.push_midi_settings();
+            s.set_midi_instrument_text(
+                crate::default_instrument::choice_label(self.settings.prefs.midi.default_instrument.as_ref()).into(),
+            );
+            s.set_midi_instrument_missing(self.default_instrument_missing());
         }
         if self.settings.page == crate::shortcuts::SHORTCUTS_PAGE {
             self.push_shortcuts(s);
@@ -626,12 +653,15 @@ impl Controller {
                     .map(|(i, (label, c))| ChoiceItem {
                         label: label.clone().into(),
                         checked: self.is_current(*f, c),
-                        hint: false,
+                        hint: matches!(c, Choice::Header),
                         y: MENU_PAD + i as f32 * MENU_ROW,
                         h: MENU_ROW,
                     })
                     .collect();
-                s.set_settings_menu_h(MENU_PAD * 2.0 + rows.len() as f32 * MENU_ROW);
+                let full = MENU_PAD * 2.0 + rows.len() as f32 * MENU_ROW;
+                let shown = full.min(MENU_PAD * 2.0 + MENU_MAX_ROWS * MENU_ROW);
+                s.set_settings_menu_h(shown);
+                s.set_settings_menu_content_h(if full > shown { full } else { 0.0 });
                 s.set_settings_menu_field(*f as i32);
                 sync_model(&self.settings_menu_model, rows);
                 s.set_settings_menu_open(true);
