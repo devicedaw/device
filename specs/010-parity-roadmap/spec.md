@@ -137,7 +137,7 @@ target behaviour.
 - [ ] **G24. Export: convert effects for Live sets.** In File › Export › Project, "Convert effects to Live
   devices" is a placeholder; effects are always rendered. Map the built-in effects that have a close Live
   device (EQ, compressor, delay, reverb, utility…) to that device with matching settings, and render the rest.
-- [x] **G37. Tempo changes during a song** (#131, #133, #EXPORT, spec [015](../015-tempo-changes/spec.md)). A
+- [x] **G37. Tempo changes during a song** (#131, #133, #135, spec [015](../015-tempo-changes/spec.md)). A
   "Song › Tempo" lane on the master row holds tempo steps and ramps that playback, recording, the metronome,
   synced devices and every export follow.
 
