@@ -646,6 +646,42 @@ fn midi_steps() -> Vec<Step> {
             }),
         ),
         DoC(
+            "audition: click the longest note in the clip (no drag)",
+            Box::new(|a, ctl| {
+                let n = notes_of(&ctl.borrow()).into_iter().max_by_key(|n| n.length);
+                if let Some(n) = n {
+                    let beat = (n.start as f64 + n.length as f64 / 2.0) / dstudio_core::PPQ as f64;
+                    let (x, y) = pr_xy(ctl, beat, n.pitch as i32);
+                    click(a, x, y);
+                }
+            }),
+        ),
+        Check(
+            "audition: the clicked note still sounds after the click, with its note-off scheduled; no edit",
+            Box::new(|c, _| {
+                let n = notes_of(c).into_iter().max_by_key(|n| n.length).ok_or("no notes")?;
+                let off = c.pr.preview_off_at.map(|t| t.saturating_duration_since(std::time::Instant::now()));
+                let ok = c.pr.preview.map(|p| p.1) == Some(n.pitch)
+                    && off.is_some_and(|d| d.as_secs_f64() <= crate::pianoroll::AUDITION_CAP_S)
+                    && c.engine.preview().notes == 1;
+                ok.then_some(()).ok_or(format!("preview {:?} off in {off:?} pitch {}", c.pr.preview, n.pitch))
+            }),
+        ),
+        DoC(
+            "audition: wait out the cap",
+            Box::new(|_, ctl| {
+                std::thread::sleep(std::time::Duration::from_secs_f64(crate::pianoroll::AUDITION_CAP_S + 0.05));
+                ctl.borrow_mut().pr_preview_tick();
+            }),
+        ),
+        Check(
+            "audition: the note stopped by itself",
+            Box::new(|c, _| {
+                let held = c.engine.preview().notes;
+                (c.pr.preview.is_none() && held == 0).then_some(()).ok_or(format!("preview {:?} held {held}", c.pr.preview))
+            }),
+        ),
+        DoC(
             "zoom: remember the scroll and the pitch in the middle of the view",
             Box::new(move |_, ctl| {
                 let c = ctl.borrow();

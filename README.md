@@ -71,7 +71,8 @@ wgpu.
   top-right corner loops it, ⌥ + scroll sizes the track rows, a double-click deletes a note, and on knobs ⇧-drag
   fine-tunes and ⌥-click resets. Settings › Shortcuts lists them under Mouse & modifiers. Search settings, at the
   top of the Settings sidebar, finds any setting by name or by what it's for (⌘F).
-- **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. A velocity lane under the
+- **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. Clicking, drawing or dragging a
+  note, or clicking a key, plays it through the track's instrument for its length (up to a second). A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Printing clips.** Consolidate joins clips into one, Bounce to new track (⌘B, or Resample in the clip menu and the
   audio clip editor) renders a clip through its track's devices onto a new track, and Export audio saves one clip as a
@@ -212,7 +213,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Area | Status | Still missing |
 |---|:---:|---|
 | Timeline and audio clips | ✅ | |
-| Piano roll and MIDI | 🚧 | Note audition |
+| Piano roll and MIDI | ✅ | |
 | Built-in instruments | ✅ | |
 | Built-in effects | ✅ | More devices are planned |
 | Plugin hosting | ✅ | Linux editor windows use X11 (XWayland on Wayland desktops) |
