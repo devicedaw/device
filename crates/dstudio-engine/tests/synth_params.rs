@@ -99,8 +99,10 @@ fn every_factory_preset_renders_a_sane_c4() {
         eprintln!("{name:>16}: peak {:.3} ({:.1} dBFS), rms during note {body:.4}", peak, 20.0 * peak.log10());
         if !out.iter().all(|v| v.is_finite()) {
             bad.push(format!("{name}: non-finite output"));
-        } else if body <= 1e-3 {
-            bad.push(format!("{name}: silent (rms {body})"));
+        } else if body <= 1e-3 && peak <= 0.02 {
+            // Percussive sounds (the Drums category) are over before the body window: their
+            // attack peak shows they sound.
+            bad.push(format!("{name}: silent (rms {body}, peak {peak})"));
         } else if peak >= 1.0 {
             bad.push(format!("{name}: peak {peak} reaches 0 dBFS"));
         }
