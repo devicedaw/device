@@ -103,6 +103,28 @@ pub fn fmt_buffer(n: u32, rate: f64) -> String {
 /// Settings › Audio note when the running device does not use the buffer size
 /// picked (Windows shared mode offers only some sizes and rounds to the
 /// nearest it supports). `actual` is the device period in device frames.
+/// Settings › Audio › Recording offset as shown: "+4.5 ms", "0.0 ms", "−2.0 ms".
+pub fn fmt_rec_offset(ms: f64) -> String {
+    if ms > 0.0 {
+        format!("+{ms:.1} ms")
+    } else if ms < 0.0 {
+        format!("\u{2212}{:.1} ms", -ms)
+    } else {
+        "0.0 ms".into()
+    }
+}
+
+/// A typed recording offset: a number of milliseconds, with or without a sign (+, - or −),
+/// "ms", spaces or a decimal comma. None when it isn't one.
+pub fn parse_rec_offset(text: &str) -> Option<f64> {
+    let t = text.trim().trim_end_matches("ms").trim().replace('\u{2212}', "-").replace(',', ".");
+    let t = t.strip_prefix('+').unwrap_or(&t).trim();
+    t.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
+/// Recording offset −/+ buttons: one click moves it by this much (typing gives 0.1 ms).
+pub const REC_OFFSET_NUDGE_MS: f64 = 0.5;
+
 pub fn buffer_note(requested: u32, running: bool, actual: u32, device_rate: f64) -> Option<String> {
     (requested > 0 && running && actual > 0 && actual != requested)
         .then(|| format!("The device runs at {}, the closest buffer it supports.", fmt_buffer(actual, device_rate)))
@@ -139,6 +161,8 @@ pub fn apply_startup_prefs(engine: &dstudio_engine::Engine, p: &Preferences) -> 
     if p.audio.pdc_off {
         engine.set_delay_compensation(false);
     }
+    // The engine's rate is fixed when it is created, so the frames are right before the device starts.
+    let _ = engine.set_recording_offset(p.audio.recording_offset_frames(engine.sample_rate()));
     if p.audio.is_custom() {
         engine.configure_device(&p.audio.device_config()).map_err(|e| format!("saved audio settings not applied: {e}"))?;
     }
@@ -451,6 +475,7 @@ impl Controller {
                 self.settings.prefs = next;
                 self.save_prefs();
                 self.refresh_engine_rate();
+                self.apply_recording_offset(); // the input device, and so its offset, may have changed
                 self.set_status("Audio settings applied", 2);
                 self.refresh_settings_note();
             }
@@ -477,6 +502,55 @@ impl Controller {
         self.settings.prefs.audio.pdc_off = off;
         self.save_prefs();
         self.ui_dirty = true;
+    }
+
+    /// Hand the selected input device's recording offset to the engine, in engine frames.
+    pub(crate) fn apply_recording_offset(&self) {
+        let frames = self.settings.prefs.audio.recording_offset_frames(self.engine.sample_rate());
+        let _ = self.engine.set_recording_offset(frames); // ±100 ms is always within the engine's ±1 s
+    }
+
+    /// Settings › Audio › Recording offset: set the selected input device's offset (clamped to
+    /// ±100 ms, kept to 0.1 ms), apply it and save it. Not while recording: the takes would split.
+    pub fn settings_set_rec_offset(&mut self, ms: f64) {
+        self.ui_dirty = true;
+        if self.rec.recording {
+            self.set_status("Stop recording before changing the recording offset", 4);
+            return;
+        }
+        if !self.settings.prefs.audio.set_recording_offset_ms(ms) {
+            self.set_status("Choose an input device first: the offset is kept for each device", 4);
+            return;
+        }
+        self.apply_recording_offset();
+        self.save_prefs();
+    }
+
+    /// The −/+ buttons: `dir` -1 moves takes later, +1 earlier, by [REC_OFFSET_NUDGE_MS].
+    pub fn settings_rec_offset_nudge(&mut self, dir: i32) {
+        let ms = self.settings.prefs.audio.recording_offset_ms() + dir.signum() as f64 * REC_OFFSET_NUDGE_MS;
+        self.settings_set_rec_offset(ms);
+    }
+
+    /// The field's text on Enter or when it loses focus. Text that isn't a number is ignored.
+    pub fn settings_rec_offset_typed(&mut self, text: &str) {
+        match parse_rec_offset(text) {
+            Some(ms) if crate::prefs::clamp_recording_offset(ms) != self.settings.prefs.audio.recording_offset_ms() => {
+                self.settings_set_rec_offset(ms)
+            }
+            Some(_) => self.ui_dirty = true,
+            None => {
+                self.set_status("Recording offset: type a number of milliseconds, e.g. 4.5 or -2", 4);
+                self.ui_dirty = true;
+            }
+        }
+    }
+
+    fn rec_offset_hint(&self) -> String {
+        match &self.settings.prefs.audio.input {
+            None => "Choose an input device to set its offset.".into(),
+            Some(_) => "For interfaces that report their latency wrongly. Positive values move takes earlier.".into(),
+        }
     }
 
     /// "Plugin latency: 12.3 ms (590 samples)", or "none" when no plugin adds latency.
@@ -672,6 +746,9 @@ impl Controller {
         s.set_privacy_crash_reports(!self.settings.prefs.crash_reports_off);
         s.set_general_projects_folder(self.projects_folder_text().into());
         s.set_set_latency_text(self.latency_text().into());
+        s.set_set_rec_offset_text(fmt_rec_offset(self.settings.prefs.audio.recording_offset_ms()).into());
+        s.set_set_rec_offset_enabled(self.settings.prefs.audio.input.is_some());
+        s.set_set_rec_offset_hint(self.rec_offset_hint().into());
         s.set_settings_note(self.settings.note.clone().into());
         match &self.settings.menu {
             Some((f, items)) => {
@@ -717,6 +794,18 @@ mod tests {
         assert_eq!(buffer_note(128, true, 128, 48_000.0), None); // got what was picked
         assert_eq!(buffer_note(0, true, 480, 48_000.0), None); // device default picked
         assert_eq!(buffer_note(64, false, 0, 48_000.0), None); // not running
+    }
+    #[test]
+    fn recording_offset_text() {
+        assert_eq!(fmt_rec_offset(4.5), "+4.5 ms");
+        assert_eq!(fmt_rec_offset(0.0), "0.0 ms");
+        assert_eq!(fmt_rec_offset(-2.0), "\u{2212}2.0 ms");
+        for (typed, ms) in [("4.5", 4.5), ("+4.5 ms", 4.5), ("\u{2212}2.0 ms", -2.0), ("-12", -12.0), (" 3,25ms ", 3.25), ("0", 0.0)] {
+            assert_eq!(parse_rec_offset(typed), Some(ms), "{typed:?}");
+        }
+        for bad in ["", "ms", "abc", "4.5.1", "inf", "NaN"] {
+            assert_eq!(parse_rec_offset(bad), None, "{bad:?}");
+        }
     }
     #[test]
     fn tone_level() {

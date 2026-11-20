@@ -14236,6 +14236,180 @@ fn downloads_steps() -> Vec<Step> {
     ]
 }
 
+/// Settings › Audio › Recording offset (spec 020): disabled with no input device; −/+ and typing
+/// set the selected input device's offset, which reaches the engine in frames; each input
+/// device keeps its own. The self-test names an input device in the (unsaved) preferences only:
+/// nothing is configured on the engine, so no input is ever opened.
+fn recording_offset_steps() -> Vec<Step> {
+    use Step::*;
+    // Row controls, page coordinates from ui/settings.slint (the page starts at panel x 187).
+    fn minus() -> (f32, f32) {
+        (set_x() + set_w() - 20.5 - 104.0 + 11.0, set_y() + 396.0 + 11.0)
+    }
+    fn plus() -> (f32, f32) {
+        (set_x() + set_w() - 20.5 - 11.0, set_y() + 396.0 + 11.0)
+    }
+    fn field() -> (f32, f32) {
+        (set_x() + set_w() - 20.5 - 52.0, set_y() + 396.0 + 11.0)
+    }
+    fn frames(c: &Controller, ms: f64) -> i32 {
+        (ms * c.engine.sample_rate() / 1000.0).round() as i32
+    }
+    fn state(c: &Controller, a: &AppWindow, ms: f64, text: &str) -> Result<(), String> {
+        let s = a.global::<Studio>();
+        let shown = s.get_set_rec_offset_text().to_string();
+        (c.settings.prefs.audio.recording_offset_ms() == ms && shown == text && c.engine.recording_offset() == frames(c, ms))
+            .then_some(())
+            .ok_or(format!(
+                "prefs {} ms, shown {shown:?}, engine {} frames (want {ms} ms = {} frames, {text:?})",
+                c.settings.prefs.audio.recording_offset_ms(),
+                c.engine.recording_offset(),
+                frames(c, ms)
+            ))
+    }
+    vec![
+        DoC(
+            "rec offset: open Settings › Audio with no input device",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.audio.input = None;
+                c.open_settings();
+            }),
+        ),
+        Check(
+            "rec offset: the row shows 0.0 ms, disabled, and asks for an input device; the engine has no offset",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                (!s.get_set_rec_offset_enabled()
+                    && s.get_set_rec_offset_hint().starts_with("Choose an input device")
+                    && s.get_set_rec_offset_text() == "0.0 ms"
+                    && c.engine.recording_offset() == 0)
+                    .then_some(())
+                    .ok_or(format!("enabled {} hint {:?}", s.get_set_rec_offset_enabled(), s.get_set_rec_offset_hint()))
+            }),
+        ),
+        DoC(
+            "rec offset: pick an input device (preferences only)",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let au = &mut c.settings.prefs.audio;
+                (au.input, au.input_name) = (Some("selftest:interface-a".into()), Some("Interface A".into()));
+                c.ui_dirty = true;
+            }),
+        ),
+        Check(
+            "rec offset: the row is enabled for the input device",
+            Box::new(|_, a| a.global::<Studio>().get_set_rec_offset_enabled().then_some(()).ok_or("still disabled".into())),
+        ),
+        Do(
+            "rec offset: click + twice",
+            Box::new(|a| {
+                let (x, y) = plus();
+                click(a, x, y);
+                click(a, x, y);
+            }),
+        ),
+        Check("rec offset: +1.0 ms, in the engine as frames", Box::new(|c, a| state(c, a, 1.0, "+1.0 ms"))),
+        Do(
+            "rec offset: click − four times",
+            Box::new(|a| {
+                let (x, y) = minus();
+                for _ in 0..4 {
+                    click(a, x, y);
+                }
+            }),
+        ),
+        Check("rec offset: −1.0 ms (takes later), in the engine", Box::new(|c, a| state(c, a, -1.0, "\u{2212}1.0 ms"))),
+        Do(
+            "rec offset: click the value, select all, type 4.26, Enter",
+            Box::new(|a| {
+                let (x, y) = field();
+                click(a, x, y);
+                key(a, "a", true, false);
+                type_text(a, "4.26");
+                key(a, Key::Return, false, false);
+            }),
+        ),
+        Check("rec offset: +4.3 ms (kept to 0.1 ms), in the engine", Box::new(|c, a| state(c, a, 4.3, "+4.3 ms"))),
+        Do(
+            "rec offset: type 500 (beyond the range)",
+            Box::new(|a| {
+                let (x, y) = field();
+                click(a, x, y);
+                key(a, "a", true, false);
+                type_text(a, "500");
+                key(a, Key::Return, false, false);
+            }),
+        ),
+        Check("rec offset: clamped to +100.0 ms", Box::new(|c, a| state(c, a, 100.0, "+100.0 ms"))),
+        Do(
+            "rec offset: type 4.5",
+            Box::new(|a| {
+                let (x, y) = field();
+                click(a, x, y);
+                key(a, "a", true, false);
+                type_text(a, "4.5");
+                key(a, Key::Return, false, false);
+            }),
+        ),
+        Check("rec offset: +4.5 ms", Box::new(|c, a| state(c, a, 4.5, "+4.5 ms"))),
+        DoC(
+            "rec offset: switch to another input device (preferences only)",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.audio.input = Some("selftest:interface-b".into());
+                c.apply_recording_offset();
+                c.ui_dirty = true;
+            }),
+        ),
+        Check("rec offset: the other device starts at 0.0 ms", Box::new(|c, a| state(c, a, 0.0, "0.0 ms"))),
+        DoC(
+            "rec offset: back to the first device",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.audio.input = Some("selftest:interface-a".into());
+                c.apply_recording_offset();
+                c.ui_dirty = true;
+            }),
+        ),
+        Check("rec offset: the first device kept +4.5 ms", Box::new(|c, a| state(c, a, 4.5, "+4.5 ms"))),
+        Do(
+            "rec offset: type 0, Escape",
+            Box::new(|a| {
+                let (x, y) = field();
+                click(a, x, y);
+                key(a, "a", true, false);
+                type_text(a, "0");
+                key(a, Key::Return, false, false);
+                key(a, Key::Escape, false, false);
+            }),
+        ),
+        DoC(
+            "rec offset: forget the input device",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                (c.settings.prefs.audio.input, c.settings.prefs.audio.input_name) = (None, None);
+                c.apply_recording_offset();
+            }),
+        ),
+        Check(
+            "rec offset: back to 0 in the engine, nothing stored, Settings closed",
+            Box::new(|c, a| {
+                (c.engine.recording_offset() == 0
+                    && c.settings.prefs.audio.recording_offsets.is_empty()
+                    && !a.global::<Studio>().get_settings_open())
+                .then_some(())
+                .ok_or(format!(
+                    "engine {} stored {:?} open {}",
+                    c.engine.recording_offset(),
+                    c.settings.prefs.audio.recording_offsets,
+                    a.global::<Studio>().get_settings_open()
+                ))
+            }),
+        ),
+    ]
+}
+
 /// Mouse & modifiers: ⌥-drag copies a clip, ⇧-drag on its right edge time-stretches it, the
 /// top-right corner loops it, ⌥ + scroll changes the track heights, and a double-click deletes
 /// a piano roll note. Driven through the controller's pointer entry points.
@@ -18535,6 +18709,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(settings_help_steps());
     all.extend(privacy_steps());
     all.extend(downloads_steps());
+    all.extend(recording_offset_steps());
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());

@@ -449,6 +449,8 @@ component MidiPage inherits Rectangle {
 }
 
 component AudioPage inherits Rectangle {
+    // Enter or Escape in the Recording offset field hands the keyboard back to the main window.
+    callback focus-main();
     // Content area origin = panel x 187 (content left margin 20.5 pt -> x 207.5 panel-relative).
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Audio"; font-size: 17.25px; font-weight: 700; }
     SearchHit { y: 65px; width: root.width - 24px; height: 59px; label: "Output device"; }
@@ -491,8 +493,45 @@ component AudioPage inherits Rectangle {
         TouchArea { clicked => { Studio.settings-toggle-pdc(); } }
     }
     Text { x: 20.5px; y: 377px - 7px; height: 14px; text: Studio.set-latency-text; color: Tokens.text-tertiary; font-size: 9.5px; vertical-alignment: center; }
+    // Recording offset (spec 020): the selected input device's correction, in ms. Positive
+    // places takes earlier. −/+ step 0.5 ms; typing gives 0.1 ms (src/settings.rs).
+    SearchHit { y: 392px; width: root.width - 24px; height: 44px; label: "Recording offset"; }
+    RowLabel { x: 20.5px; y: 404px - 7px; text: "Recording offset"; }
+    Rectangle {
+        x: root.width - 20.5px - self.width; y: 396px; width: 104px; height: 22px; border-radius: 6px;
+        background: #28282b; border-width: 0.5px; border-color: rec-offset-field.has-focus ? #4a4b50 : #3d3e40;
+        opacity: Studio.set-rec-offset-enabled ? 1 : 0.45;
+        for b[i] in [{ t: "−", d: -1, label: "Move takes later" }, { t: "+", d: 1, label: "Move takes earlier" }]: Rectangle {
+            x: i == 0 ? 0 : parent.width - self.width; width: 22px; height: parent.height;
+            background: b-ta.has-hover && Studio.set-rec-offset-enabled ? #333438 : transparent;
+            border-radius: 6px;
+            accessible-role: button; accessible-label: b.label;
+            accessible-action-default => { Studio.settings-rec-offset-nudge(b.d); }
+            Text { text: b.t; color: #ececee; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+            b-ta := TouchArea { enabled: Studio.set-rec-offset-enabled; clicked => { Studio.settings-rec-offset-nudge(b.d); } }
+        }
+        rec-offset-field := TextInput {
+            x: 22px; width: parent.width - 44px; height: parent.height;
+            text: Studio.set-rec-offset-text;
+            enabled: Studio.set-rec-offset-enabled;
+            color: #ececee; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; single-line: true;
+            accessible-label: "Recording offset";
+            // Typing replaces the binding, so the shown value is put back after each commit.
+            accepted => { root.focus-main(); }
+            changed has-focus => {
+                Studio.search-focused = self.has-focus;
+                if !self.has-focus {
+                    Studio.settings-rec-offset-typed(self.text);
+                    self.text = Studio.set-rec-offset-text;
+                }
+            }
+        }
+        property <string> shown: Studio.set-rec-offset-text;
+        changed shown => { rec-offset-field.text = self.shown; }
+    }
+    Text { x: 20.5px; y: 424px - 7px; width: root.width - 41px; height: 14px; text: Studio.set-rec-offset-hint; color: Tokens.text-tertiary; font-size: 9.5px; vertical-alignment: center; overflow: elide; }
     if Studio.settings-note != "": Text {
-        x: 20.5px; y: 398px; width: root.width - 41px; height: 14px;
+        x: 20.5px; y: 444px; width: root.width - 41px; height: 14px;
         text: Studio.settings-note; color: Tokens.text-tertiary; font-size: 9px; vertical-alignment: center; overflow: elide;
     }
 }
@@ -634,6 +673,7 @@ component PrivacyPage inherits Rectangle {
 }
 
 export component SettingsPanel inherits Rectangle {
+    callback focus-main();
     border-radius: 10px;
     background: Tokens.bg-panel;
     border-width: 0.5px;
@@ -695,7 +735,7 @@ export component SettingsPanel inherits Rectangle {
         row-ta := TouchArea { clicked => { Studio.settings-page-select(i); } }
     }
     // ---- content ----
-    if Studio.settings-page == 1: AudioPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
+    if Studio.settings-page == 1: AudioPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; focus-main => { root.focus-main(); } }
     if Studio.settings-page == 3: PluginsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 0: GeneralPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 2: MidiPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
