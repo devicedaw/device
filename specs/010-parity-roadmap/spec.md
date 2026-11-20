@@ -123,7 +123,7 @@ target behaviour.
 - [ ] **G21. Assistant: full-height layout.** The header's panel button is a placeholder ("Full height (not
   implemented)"). It must toggle the panel between the timeline row only and the full window height (over the
   bottom panel).
-- [ ] **G22. Assistant: works for normal users and knows the devices** (#PR: key field and keychain, devices in the
+- [ ] **G22. Assistant: works for normal users and knows the devices** (#138: key field and keychain, devices in the
   state and schema; the one live API test is still to do). The key can only come from the
   `ANTHROPIC_API_KEY` environment variable, which a Finder-launched app never sees; it has never been run
   against the live API; and the model is not told about device chains, so it cannot add effects or change their
