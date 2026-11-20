@@ -77,7 +77,7 @@ target behaviour.
 - [x] **G9. Note audition in the piano roll** (#129). Clicking, drawing or dragging a note (pitch change) and clicking a
   key on the keyboard must play the note through the track's instrument for its length (capped), without
   recording anything. The README status table lists this as missing.
-- [x] **G10. Rename the project from the title bar** (#PR). Clicking the project name in the window title turns it
+- [x] **G10. Rename the project from the title bar** (#137). Clicking the project name in the window title turns it
   into a text field (Return saves, Escape cancels). For a saved project it renames the project file and its
   folder on disk; for an unsaved one it sets the name used by the first save. Undo is not needed (it is a file
   operation), but a failed rename must say why and leave the name as it was.
