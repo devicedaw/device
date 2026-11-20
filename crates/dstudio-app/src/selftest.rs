@@ -10770,7 +10770,7 @@ fn files_steps() -> Vec<Step> {
             }),
         ),
         Do("files: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
-        Do("files: click the Projects tab", Box::new(|a| click(a, geo().browser_x + 112.0, geo().browser_y + 13.8))),
+        Do("files: click the Projects tab", Box::new(|a| click(a, geo().browser_x + 33.0, geo().browser_y + 13.8))),
         Check(
             "files: Projects is empty, Back is enabled",
             Box::new(|c, a| {
@@ -10784,7 +10784,7 @@ fn files_steps() -> Vec<Step> {
                 ok.then_some(()).ok_or(format!("section {} tab {} title {:?}", c.files.section, c.files.tab, s.get_files_empty_title()))
             }),
         ),
-        Do("files: click the Files tab", Box::new(|a| click(a, geo().browser_x + 191.0, geo().browser_y + 13.8))),
+        Do("files: click the Files tab", Box::new(|a| click(a, geo().browser_x + 111.0, geo().browser_y + 13.8))),
         Check(
             "files: Folders is empty with its hint",
             Box::new(|c, a| {
