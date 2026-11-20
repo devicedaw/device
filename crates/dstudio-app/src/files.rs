@@ -1,7 +1,7 @@
 //! Browser › Projects and Browser › Files (Folders), and the browser's Back / Forward history.
 //!
 //! Both are the Files section internally (tabs [TAB_PROJECTS] and [TAB_FOLDERS]); the browser
-//! shows them as two of its five section tabs: Search, Library, Projects, Devices, Files.
+//! shows them as two of its three section tabs: Projects, Devices, Files.
 //!
 //! Projects lists the `.dsproj` folders in the projects folder; a project expands to the
 //! tracks, audio files and MIDI clips it held when last saved. Folders lists folders the user
@@ -505,7 +505,7 @@ impl Controller {
         self.files.nav.push(loc);
     }
 
-    /// Section tabs: Devices and Files (Search and Library have no content).
+    /// Section tabs: Devices and Files.
     pub fn browser_section(&mut self, section: usize) {
         if section == SECTION_DEVICES || section == SECTION_FILES {
             self.browser_visit(self.browser_loc(section));
@@ -524,8 +524,8 @@ impl Controller {
         }
     }
 
-    /// Top tab `i`: 0 Search, 1 Library, 2 Projects, 3 Devices, 4 Files (Search and Library have no
-    /// content yet).
+    /// Top tab `i`: 2 Projects, 3 Devices, 4 Files (0 and 1 are unused: the Search and Library tabs
+    /// were removed).
     pub fn browser_top(&mut self, i: usize) {
         match i {
             2 => self.files_tab(TAB_PROJECTS),

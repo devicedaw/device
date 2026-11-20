@@ -62,12 +62,12 @@ component Header inherits Rectangle {
         border-radius: 4px; border-width: 0.75px; border-color: #6a6b6f;
         Text { text: "Beta"; color: #ffffff; font-size: 6.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     }
-    // Sounds toggle (shows/hides the browser panel). AX 67,39,62,25
+    // Browser toggle (shows/hides the browser panel). AX 67,39,62,25
     Rectangle {
         x: 67px; y: 39px; width: 62px; height: 25px;
-        accessible-role: checkbox; accessible-label: "Sounds"; accessible-checked: Studio.sounds-visible;
+        accessible-role: checkbox; accessible-label: "Browser"; accessible-checked: Studio.sounds-visible;
         Icon { x: 6px; width: 14px; height: 14px; d: Icons.library; ink: Studio.sounds-visible ? #c9c9cc : Tokens.icon; }
-        Text { x: 22px; y: 1.5px; height: parent.height; text: "Sounds"; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
+        Text { x: 22px; y: 1.5px; height: parent.height; text: "Browser"; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
         TouchArea { clicked => { Studio.sounds-visible = !Studio.sounds-visible; } }
     }
 
@@ -302,22 +302,22 @@ component FilesPane inherits Rectangle {
 
 
 // ------------------------------------------------------------------ browser
-// Sections Projects, Devices and Files are real (src/files.rs, src/devices.rs); Search and Library
-// have no content (PLACEHOLDER: no sample catalog). The preview bar plays the file last clicked in Files
+// Sections Projects, Devices and Files (src/files.rs, src/devices.rs). The preview bar plays the file last clicked in Files
 // (Link: PLACEHOLDER, it ties catalog loops to the arrangement).
 // Devices › Chains lists saved and factory chains (src/chain_presets.rs). Back / Forward step through visited sections and tabs.
 component Browser inherits Panel {
     // Section tabs: 12 px weight 700, -0.04 em, 8 px apart from 12 px in; rest #63656d, active white.
     HorizontalLayout {
         x: 10.2px; y: 0; width: self.preferred-width; height: 27.2px; spacing: 6.8px;
-        for t[i] in ["Search", "Library", "Projects", "Devices", "Files"]: Rectangle {
+        // Top-tab indices 0 and 1 (Search, Library) are not shown; the tabs here are 2, 3 and 4.
+        for t[i] in ["Projects", "Devices", "Files"]: Rectangle {
             width: section-label.preferred-width;
-            accessible-role: tab; accessible-label: t; accessible-checked: Studio.browser-top == i;
+            accessible-role: tab; accessible-label: t; accessible-checked: Studio.browser-top == i + 2;
             section-label := Text {
-                x: 0; height: parent.height; text: t; color: Studio.browser-top == i ? #ffffff : #63656d;
+                x: 0; height: parent.height; text: t; color: Studio.browser-top == i + 2 ? #ffffff : #63656d;
                 font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center;
             }
-            TouchArea { clicked => { Studio.browser-top-select(i); } }
+            TouchArea { clicked => { Studio.browser-top-select(i + 2); } }
         }
     }
     // Back / Forward: white when there is somewhere to go, else #63656d.
