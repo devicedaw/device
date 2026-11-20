@@ -720,3 +720,9 @@ project's audio files, and can `add_builtin_device` (effects into the chain, ins
 catalogue (44 devices, about 2000 parameters) goes into the system prompt as a cached block instead of every turn's
 state. Still to do: one run against the live API.
 
+### 2026-11-21: 85 factory chains
+
+The factory chains grow from 27 to 85, ten or eleven in each of the eight folders, all built from Device's own
+effects with their own settings and macros (`dstudio_core::chains::FACTORY`); the "FX" folder is now "FX & Glitch".
+Saved chains are unaffected: they live in My chains, and factory chains are found by name, which none changed.
+

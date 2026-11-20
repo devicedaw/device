@@ -171,7 +171,7 @@ next to the target on the same window size.
   (`dstudio-core/src/builtin/synth_v2/mod.rs`, `PRESETS`). The browser's Devices › Instruments › Synth folder
   must hold about 100 original sounds in categories (Bass, Keys, Pluck, Lead, Pad, Brass, and the rest), each
   folder with its count, and the device header's preset arrows step through them.
-- [ ] **G26. Factory chains** (`dstudio-core/src/chains.rs`). 27 chains today. Grow to about 85 original
+- [x] **G26. Factory chains** (#PR) (`dstudio-core/src/chains.rs`). 27 chains today. Grow to about 85 original
   chains across the eight folders (Vocals, Drums, Bass, Guitar, Keys & Synths, Pads & Textures, FX & Glitch,
   Mix & Master), and rename the "FX" folder to "FX & Glitch". Keep saved user chains loading.
 - [ ] **G27. Multi-sample preset instrument** [devices] (spec). A fifth built-in instrument that plays a
