@@ -91,7 +91,7 @@ target behaviour.
   explaining the setting ("Restore the last session on launch.", "Plugin loaded on new instrument tracks.",
   "Folders scanned for VST3 and AU plugins.", …). Device's settings pages have none. Add the icon and tooltips
   to General, Audio, MIDI, Plugins and Privacy.
-- [ ] **G13. Settings search.** The search box at the top of the settings sidebar is drawn but does nothing
+- [x] **G13. Settings search** (spec 014). The search box at the top of the settings sidebar is drawn but does nothing
   (`ui/settings.slint`, "PLACEHOLDER: no settings search yet"). Typing must filter the sidebar to pages with
   matching rows, and highlight the matching rows on the open page. Escape clears.
 - [ ] **G14. Settings › Privacy page.** Today "Not available yet". It must hold "Send crash reports" (on by

@@ -83,6 +83,11 @@ pub struct SettingsState {
     pub tone: Option<TestTone>,
     /// Settings › Shortcuts and the live keymap (src/shortcuts.rs).
     pub keys: crate::shortcuts::ShortcutsUi,
+    /// Search settings (src/settings_search.rs): the text typed; cleared on close.
+    pub search: String,
+    /// Settings closed since the last view-model push: the search fields it held may have had
+    /// the keyboard, and their focus flag must not outlive them (it blocks every shortcut).
+    pub release_focus: std::cell::Cell<bool>,
 }
 
 pub fn fmt_rate(r: f64) -> String {
@@ -189,6 +194,8 @@ impl Controller {
         self.settings.menu = None;
         self.settings.keys.recording = None;
         self.settings.keys.search.clear();
+        self.settings.search.clear();
+        self.settings.release_focus.set(true);
         self.ui_dirty = true;
     }
 
@@ -615,9 +622,16 @@ impl Controller {
     pub(crate) fn push_settings(&self, s: &Studio) {
         s.set_settings_open(self.settings.open);
         if !self.settings.open {
+            if self.settings.release_focus.take() {
+                s.set_search_focused(false);
+            }
             return;
         }
         s.set_settings_page(self.settings.page as i32);
+        s.set_settings_search(self.settings.search.clone().into());
+        let slots = crate::settings_search::page_slots(&self.settings.search);
+        s.set_settings_search_none(slots.iter().all(|&i| i < 0));
+        s.set_settings_page_slots(slint::ModelRc::new(slint::VecModel::from(slots)));
         s.set_set_output_text(self.output_text().into());
         s.set_set_input_text(self.input_text().into());
         s.set_set_rate_text(fmt_rate(self.current_rate()).into());
