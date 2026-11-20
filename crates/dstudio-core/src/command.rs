@@ -1764,7 +1764,7 @@ fn replace_track(p: &mut Project, track: Track) -> Result<Command, EditError> {
     {
         return Err(invalid("track", "every clip and device needs its id"));
     }
-    validate_routing(p, track.id, track.kind, &track.sends, track.output)?;
+    validate_routing(p, track.id, track.kind, i, &track.sends, track.output)?;
     let ids = track
         .clips
         .iter()
