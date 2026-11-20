@@ -668,7 +668,7 @@ fn midi_steps() -> Vec<Step> {
             "audition: the click sounded the note, for its length (capped), with its note-off scheduled; no edit",
             Box::new(|c, _| {
                 let n = notes_of(c).into_iter().max_by_key(|n| n.length).ok_or("no notes")?;
-                let want = c.project().ticks_to_seconds(n.length).min(crate::pianoroll::AUDITION_CAP_S).max(0.05);
+                let want = c.project().ticks_to_seconds(n.length).clamp(0.05, crate::pianoroll::AUDITION_CAP_S);
                 let (pitch, secs, off) = AUDITION_SEEN.with(Cell::get);
                 let ok = pitch == Some(n.pitch) && secs.is_some_and(|s| (s - want).abs() < 1e-6) && off;
                 ok.then_some(()).ok_or(format!("pitch {pitch:?} (want {}) secs {secs:?} (want {want}) off {off}", n.pitch))
