@@ -70,7 +70,7 @@ target behaviour.
   Return track, with the keys shown. Sampler track and Drum track are instrument tracks that start with the
   Sampler or the Drum Rack instead of the default instrument. Groups are made from selected tracks with ⌘G or
   the track menu (see open question Q1 about the Group track row).
-- [ ] **G8. Default instrument setting works.** Settings › MIDI › Default instrument is a placeholder (new
+- [x] **G8. Default instrument setting works** (#128, spec 013). Settings › MIDI › Default instrument is a placeholder (new
   instrument tracks always get the Synth; `ui/settings.slint`, MidiPage). It must list the built-in instruments
   and installed instrument plugins, be saved as a preference, and be what Instrument track (⇧⌘T), the add-track
   menu and dropped MIDI files create.
