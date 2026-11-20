@@ -84,12 +84,13 @@ impl MenuAction {
             MenuAction::TrackRename => "Rename…",
             MenuAction::TrackDuplicate => "Duplicate track",
             MenuAction::TrackDuplicateClips => "Duplicate with clips",
-            MenuAction::TrackColor => "Color",
             MenuAction::TrackDelete => "Delete track",
             MenuAction::TrackGroup => "Group track",
             MenuAction::TrackUngroup => "Ungroup",
             MenuAction::TrackBounce => "Bounce track in place",
             MenuAction::TrackAutomation => "Show automation",
+            MenuAction::TrackCopyEffects => "Copy effects",
+            MenuAction::TrackPasteEffects => "Paste effects",
             MenuAction::AddAudioTrack => "Audio track",
             MenuAction::AddInstrumentTrack => "Instrument track",
             MenuAction::AddSamplerTrack => "Sampler track",
@@ -115,10 +116,11 @@ impl MenuAction {
             MenuAction::InsertMidiClip => "⇧⌘ M",
             MenuAction::SectionDelete | MenuAction::TrackDelete => "Del",
             MenuAction::TrackDuplicate => "⌘ D",
-            MenuAction::TrackDuplicateClips => "⇧⌘ D",
+            MenuAction::TrackDuplicateClips => "⌘⇧ D",
             MenuAction::TrackGroup => "⌘ G",
+            MenuAction::TrackUngroup => "⌘⇧ G",
             MenuAction::AddAudioTrack => "⌘ T",
-            MenuAction::AddInstrumentTrack => "⇧⌘ T",
+            MenuAction::AddInstrumentTrack => "⌘⇧ T",
             _ => "",
         }
     }
@@ -136,26 +138,19 @@ impl MenuAction {
                 | MenuAction::SectionRename
                 | MenuAction::SectionDelete
                 | MenuAction::SectionClear
-                | MenuAction::TrackDuplicate
                 | MenuAction::TrackBounce
                 | MenuAction::TrackAutomation
                 | MenuAction::TrackGroup
-                | MenuAction::TrackUngroup
+                | MenuAction::TrackCopyEffects
                 | MenuAction::TrackDelete
                 | MenuAction::AddAudioTrack
                 | MenuAction::TrackRename
-                | MenuAction::TrackColor
         )
     }
     fn submenu(self) -> bool {
         matches!(
             self,
-            MenuAction::Bounce
-                | MenuAction::Takes
-                | MenuAction::Transpose
-                | MenuAction::SectionColor
-                | MenuAction::SectionInsert
-                | MenuAction::TrackColor
+            MenuAction::Bounce | MenuAction::Takes | MenuAction::Transpose | MenuAction::SectionColor | MenuAction::SectionInsert
         )
     }
 }
@@ -174,6 +169,23 @@ const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true),
 /// Transpose submenu: (label, shortcut text, semitones).
 const TRANSPOSE: [(&str, &str, i32); 4] =
     [("Octave up", "+12", 12), ("Semitone up", "+1", 1), ("Semitone down", "−1", -1), ("Octave down", "−12", -12)];
+
+/// The track menu's width (its colour grid is 14 swatches across) and the grid's geometry
+/// (design units; ui/pianoroll.slint `ContextMenu`).
+pub const TRACK_MENU_W: f32 = 236.6;
+const GRID_TOP: f32 = 7.65;
+const GRID_ROW: f32 = 15.3;
+const GRID_SWATCH: f32 = 11.9;
+const GRID_BOTTOM: f32 = 6.4;
+
+/// Height of the colour grid from its first swatch's top: its rows and the padding under them.
+fn grid_h(n: usize) -> f32 {
+    if n == 0 {
+        return 0.0;
+    }
+    let rows = n.div_ceil(14) as f32;
+    (rows - 1.0) * GRID_ROW + GRID_SWATCH + GRID_BOTTOM
+}
 
 pub(crate) fn layout_items(items: impl Iterator<Item = (String, String, bool, bool, bool)>) -> (Vec<MenuItem>, f32) {
     let mut y = MENU_PAD;
@@ -770,6 +782,19 @@ impl Controller {
         }
     }
 
+    /// The track whose colour grid the open menu shows: the track header menu's or the empty
+    /// lane menu's track.
+    pub(crate) fn menu_grid_track(&self) -> Option<TrackId> {
+        self.menu.track.or(self.menu.lane.map(|(t, _)| t)).filter(|_| self.menu.open)
+    }
+
+    /// The grid's swatch `cell` was clicked.
+    pub fn menu_swatch_pick(&mut self, cell: usize) {
+        if let Some(t) = self.menu_grid_track() {
+            self.track_swatch_pick(t, cell);
+        }
+    }
+
     pub fn menu_activate(&mut self, index: usize) {
         let Some(&(action, enabled)) = self.menu.items.get(index) else { return };
         if !enabled {
@@ -898,10 +923,6 @@ impl Controller {
     pub fn submenu_activate(&mut self, index: usize) {
         if let Some(id) = self.menu.section {
             self.section_submenu_activate(id, index);
-            return;
-        }
-        if let Some(track) = self.menu.track {
-            self.track_color_pick(track, index);
             return;
         }
         let Some(id) = self.menu.clip else { return };
@@ -1249,13 +1270,22 @@ impl Controller {
             let sub_for = self.menu.sub_for.unwrap_or(MenuAction::Transpose);
             let sub_y = items.iter().zip(&self.menu.items).find(|(_, (a, _))| *a == sub_for).map(|(m, _)| m.y).unwrap_or(0.0);
             sync_model(&self.menu_model, items);
-            s.set_menu_x(self.menu.pos.0);
-            s.set_menu_y(self.menu.pos.1);
+            // Track menus (header and empty lane) end with the colour grid.
+            let grid = self.menu_grid_track().map(|t| self.track_swatches(t)).unwrap_or_default();
+            // Under the rows: a separator, then the swatches (as the reference draws them).
+            let swatch_y = h - MENU_PAD + MENU_SEP / 2.0 + GRID_TOP;
+            let (w, h) = if grid.is_empty() { (MENU_W, h) } else { (TRACK_MENU_W, swatch_y + grid_h(grid.len())) };
+            s.set_menu_swatch_y(swatch_y);
+            s.set_menu_swatches(slint::ModelRc::new(slint::VecModel::from(grid)));
+            s.set_menu_w(w);
+            // The grid makes the menu taller than when it was placed: keep it inside the window.
+            let win_h = self.devices.win.1;
+            let y = if win_h > 0.0 { self.menu.pos.1.min(win_h - h - 4.0).max(4.0) } else { self.menu.pos.1 };
+            s.set_menu_x(self.menu.pos.0.min(self.devices.win.0 - w - 4.0).max(4.0));
+            s.set_menu_y(y);
             s.set_menu_h(h);
             s.set_sub_open(self.menu.sub_open);
-            let (sub, sub_h) = if sub_for == MenuAction::TrackColor {
-                self.track_color_rows()
-            } else if matches!(sub_for, MenuAction::SectionColor | MenuAction::SectionInsert) {
+            let (sub, sub_h) = if matches!(sub_for, MenuAction::SectionColor | MenuAction::SectionInsert) {
                 self.section_submenu_rows()
             } else {
                 let rows: Vec<(String, String, bool)> = if sub_for == MenuAction::Takes {

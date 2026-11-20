@@ -411,6 +411,12 @@ export struct ShortcutKey { parts: [string] }
 export struct ShortcutRow { header: bool, label: string, context: string, chords: [ShortcutKey], recording: bool, y: float, h: float, gesture: string }
 
 // swatch: a colour chip before the label (track colour menu); transparent for none.
+// One colour of the track menu's grid.
+export struct MenuSwatch {
+    color: color,
+    selected: bool,
+}
+
 export struct MenuItem { label: string, shortcut: string, enabled: bool, separator: bool, submenu: bool, y: length, swatch: color }
 
 export global Studio {
@@ -841,6 +847,11 @@ export global Studio {
     in property <length> menu-y;
     in property <length> menu-h;
     in property <[MenuItem]> menu-items;
+    // Track menus: the colour grid under the rows (src/track_menu.rs), its top and the menu width.
+    in property <[MenuSwatch]> menu-swatches;
+    in property <length> menu-swatch-y;
+    in property <length> menu-w: 209px;
+    callback menu-swatch-pick(int);
     in property <bool> sub-open;
     in property <length> sub-y;
     in property <length> sub-h;

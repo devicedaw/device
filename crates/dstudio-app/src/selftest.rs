@@ -3683,7 +3683,7 @@ fn steps() -> Vec<Step> {
                 let l = menu_labels(a);
                 let items = a.global::<Studio>().get_menu_items();
                 let keys: Vec<String> = (0..items.row_count()).filter_map(|i| items.row_data(i)).map(|m| m.shortcut.to_string()).collect();
-                (l == ["Audio track", "Instrument track", "Sampler track", "Drum track", "Return track"] && keys[..2] == ["⌘ T", "⇧⌘ T"])
+                (l == ["Audio track", "Instrument track", "Sampler track", "Drum track", "Return track"] && keys[..2] == ["⌘ T", "⌘⇧ T"])
                     .then_some(())
                     .ok_or(format!("{l:?} {keys:?}"))
             }),
@@ -15003,7 +15003,7 @@ fn track_menu_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "track menu: Rename… to Delete track, the five add-track rows, Color, in order; track 1 selected",
+            "track menu: Rename… to Delete track and the five add-track rows, in order; track 1 selected",
             Box::new(|c, a| {
                 let want = [
                     "Rename…",
@@ -15012,13 +15012,13 @@ fn track_menu_steps() -> Vec<Step> {
                     "Bounce track in place",
                     if c.auto.shown { "Hide automation" } else { "Show automation" },
                     "Group track",
+                    "Copy effects",
                     "Delete track",
                     "Audio track",
                     "Instrument track",
                     "Sampler track",
                     "Drum track",
                     "Return track",
-                    "Color",
                 ];
                 let l = menu_labels(a);
                 let ok = a.global::<Studio>().get_menu_open() && l == want && c.selected_track == c.project().tracks.first().map(|t| t.id);
@@ -15085,31 +15085,35 @@ fn track_menu_steps() -> Vec<Step> {
             Box::new(move |c, _| (ids(c) == *b2.borrow()).then_some(()).ok_or(format!("{:?}", ids(c)))),
         ),
         DoC(
-            "track menu: right-click track 1, open Color",
+            "track menu: right-click track 1",
             Box::new(|a, ctl| {
                 let (x, y) = row_xy(&ctl.borrow(), 0);
                 right_click(a, x, y);
-                if let Some((x, y)) = menu_row(a, "Color") {
-                    click(a, x, y);
-                }
             }),
         ),
         Check(
-            "track menu: the Color submenu lists 13 swatches",
-            Box::new(|_, a| {
+            "track menu: the colour grid under the rows has 43 swatches, the track's own marked",
+            Box::new(|c, a| {
                 let s = a.global::<Studio>();
-                let items = s.get_sub_items();
-                let n = slint::Model::row_count(&items);
-                let swatches = (0..n).filter_map(|i| slint::Model::row_data(&items, i)).all(|m| m.swatch != slint::Color::default());
-                (s.get_sub_open() && n == 13 && swatches).then_some(()).ok_or(format!("open {} rows {n}", s.get_sub_open()))
+                let sw = s.get_menu_swatches();
+                let n = slint::Model::row_count(&sw);
+                let marked: Vec<usize> = (0..n).filter(|&i| slint::Model::row_data(&sw, i).is_some_and(|m| m.selected)).collect();
+                let own = c.project().tracks[0].color.0;
+                let want = crate::controller::TRACK_COLOR_GRID.iter().position(|&g| g == own);
+                (n == 43 && marked.len() == 1 && Some(marked[0]) == want)
+                    .then_some(())
+                    .ok_or(format!("{n} swatches, marked {marked:?} want {want:?}"))
             }),
         ),
         Do(
-            "track menu: pick Teal",
+            "track menu: click the teal swatch",
             Box::new(|a| {
-                if let Some((x, y)) = sub_row(a, "Teal") {
-                    click(a, x, y);
-                }
+                let s = a.global::<Studio>();
+                // Teal is palette 6; its grid cell, 14 a row (ui/pianoroll.slint ContextMenu).
+                let cell = crate::controller::TRACK_COLOR_GRID.iter().position(|&g| g == 6).unwrap_or(0);
+                let x = s.get_menu_x() + 11.9 + (cell % 14) as f32 * 15.24 + 6.0;
+                let y = s.get_menu_y() + s.get_menu_swatch_y() + (cell / 14) as f32 * 15.3 + 6.0;
+                click(a, x, y);
             }),
         ),
         Check(

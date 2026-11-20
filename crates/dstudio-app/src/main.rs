@@ -2584,9 +2584,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let top = 78.2 + 66.5;
         if args.track_menu_review == 1 {
             c.open_track_menu(id, 120.0, top + 30.0);
-            if let Some(i) = c.menu.items.iter().position(|(a, _)| *a == controller::MenuAction::TrackColor) {
-                c.menu_activate(i);
-            }
         } else if args.track_menu_review == 3 {
             // Under the timeline's Add track button.
             c.open_add_track_menu(20.0, 78.2 + 27.5 + 30.0);
@@ -3626,6 +3623,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_shape_brush_pick, |c, brush: i32| c.shape_brush(brush));
     on!(on_shape_reset, |c| c.shape_reset());
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
+    on!(on_menu_swatch_pick, |c, i: i32| c.menu_swatch_pick(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());
     on!(on_rename_commit, |c, t: slint::SharedString| {
         if let Some(id) = c.rename_section {

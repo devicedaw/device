@@ -799,8 +799,10 @@ operation. Review state `review-title-rename`; self-test `rename_project_steps`.
 
 The track header menu is complete: Rename…, Duplicate track (⌘D), Duplicate with clips (⇧⌘D), Bounce track in
 place, Show / Hide automation, Group track (⌘G), Delete track, then Audio, Instrument, Sampler, Drum and Return track,
-which insert the new track right below (`track_menu_items`, `add_track_action`), then Color (the inline palette is
-G5). The empty-lane menu starts with Open <instrument> (the Devices view) and Insert empty MIDI clip on instrument
+which insert the new track right below (`track_menu_items`, `add_track_action`), then the colour grid: 43 colours,
+14 a row, the track's own outlined (`TRACK_COLOR_GRID`); the first 13 palette indexes keep their colours, so saved
+projects look the same. Copy effects (and Paste effects once something is copied) sit between Group track and Delete
+track; group tracks show Group track and Ungroup (⌘⇧G) and no Bounce or effects rows. The empty-lane menu starts with Open <instrument> (the Devices view) and Insert empty MIDI clip on instrument
 tracks, Paste when the copy fits, then the track menu. The Add track menu (timeline and mixer) is the general context
 menu now, with the five add-track rows and their keys; the Group track row is gone (groups come from a selection).
 Sampler and Drum tracks are instrument tracks playing the Sampler or the Drum Rack. A new project closes these menus.

@@ -151,10 +151,27 @@ pub(crate) fn fmt_pan(p: f32) -> String {
 /// (saturation ×1.64 about Rec. 709 luma, then 10 % toward white) in display-P3 values
 ///. Rotated so that index 0 and 1 are the
 /// blue and purple of older projects; the order is the colour cycle.
-const TRACK_PALETTE: [u32; 13] =
-    [0x72b5d7, 0x8092eb, 0x9b88f6, 0xc770f7, 0xec5c9f, 0xde7e36, 0x56b5ab, 0xec6e45, 0xe3aa4b, 0xc3cc47, 0xa9de4d, 0x78ea8e, 0x67c9c0];
+/// Track colours by saved index. 0..=12 are the first 13 colours, unchanged so saved projects
+/// keep their look; 13.. were added with the inline colour grid (roadmap G5).
+const TRACK_PALETTE: [u32; 43] = [
+    0x72b5d7, 0x8092eb, 0x9b88f6, 0xc770f7, 0xec5c9f, 0xde7e36, 0x56b5ab, 0xec6e45, 0xe3aa4b, 0xc3cc47, 0xa9de4d, 0x78ea8e, 0x67c9c0,
+    0xead863, 0xf5f18f, 0xede3b9, 0xd7cdb9, 0xcab7ac, 0xdbab40, 0x8ef168, 0xc2f8a6, 0xddddc7, 0xbfc99e, 0x54a73e, 0x5cc146, 0x67d760,
+    0x98fcbe, 0xc0f6e1, 0xd1ecec, 0xc4d6cc, 0x97c3a4, 0x4b9e94, 0xc2a5f2, 0xd0bdde, 0xaeb8ce, 0x9653f6, 0xdf9df2, 0xe9c3e3, 0xd1b5d5,
+    0xef8f82, 0xf8d49f, 0xeedbd0, 0xd9bdc8,
+];
 
-/// Number of track colours (the Color submenu's entries).
+/// The colour grid at the bottom of the track menu, in reading order (14 a row): palette indexes.
+pub const TRACK_COLOR_GRID: [u8; 43] = [
+    7, 8, 13, 14, 15, 16, 17, 5, 18, 9, 10, 19, 20, 21, //
+    22, 23, 24, 25, 11, 26, 27, 28, 29, 30, 31, 6, 12, 0, //
+    1, 2, 32, 33, 34, 35, 3, 36, 37, 38, 4, 39, 40, 41, //
+    42,
+];
+
+/// Colours new tracks cycle through: the first 13, as before the grid.
+const TRACK_CYCLE: usize = 13;
+
+/// Number of track colours.
 pub fn track_palette_len() -> usize {
     TRACK_PALETTE.len()
 }
@@ -166,7 +183,7 @@ pub fn track_color(c: ColorIndex) -> [f32; 3] {
 /// Colour for a new track: the first palette entry after the last track's colour that no track
 /// uses yet, else the least-used one. The first track is teal.
 pub fn next_track_color(p: &Project) -> ColorIndex {
-    let n = TRACK_PALETTE.len();
+    let n = TRACK_CYCLE;
     let Some(last) = p.tracks.last() else { return ColorIndex::FIRST };
     let start = last.color.0 as usize % n;
     let used = |c: usize| p.tracks.iter().filter(|t| t.color.0 as usize % n == c).count();
@@ -368,7 +385,6 @@ pub enum MenuAction {
     TrackRename,
     TrackDuplicate,
     TrackDuplicateClips,
-    TrackColor,
     /// Put the track in a new group (src/groups.rs).
     TrackGroup,
     /// A group track's menu: remove the group, keeping its tracks.
@@ -378,6 +394,10 @@ pub enum MenuAction {
     TrackBounce,
     /// Track header menu: show or hide the automation lanes ("Hide automation" while shown).
     TrackAutomation,
+    /// Track header menu: copy the track's effects; Paste effects (shown once something is
+    /// copied) adds copies of them to the end of another track's chain.
+    TrackCopyEffects,
+    TrackPasteEffects,
     /// Add-track rows (the track header menu, the empty-lane menu and the Add track menu):
     /// below the clicked track, or at the end from the Add track button (src/track_menu.rs).
     AddAudioTrack,
@@ -546,6 +566,8 @@ pub struct Controller {
     /// Marker copied with Cut / Copy (src/sections.rs), pasted with Paste.
     /// The copied marker and what was in it (pasted with it when sections move clips).
     pub section_clipboard: Option<(dstudio_core::Section, dstudio_core::section_follow::SectionContent)>,
+    /// Track menu › Copy effects: the copied track's insert devices, in chain order.
+    pub effects_clipboard: Vec<dstudio_core::Device>,
     /// Counts presses on the lanes and the clip editors; the UI moves the keyboard focus back to
     /// the shortcuts on each, so an open name field commits (Studio.press-epoch).
     pub press_epoch: i32,
@@ -727,6 +749,7 @@ impl Controller {
             rename: None,
             rename_section: None,
             section_clipboard: None,
+            effects_clipboard: Vec::new(),
             press_epoch: 0,
             lane_last_down: None,
             lane_playhead_before: None,
