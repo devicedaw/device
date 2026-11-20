@@ -12830,7 +12830,7 @@ fn transport_fields_steps() -> Vec<Step> {
             "transport: back to 120 BPM and 4/4",
             Box::new(|_, ctl| {
                 let mut c = ctl.borrow_mut();
-                c.execute(dstudio_core::Command::SetTempo { bpm: 120.0 });
+                c.execute(dstudio_core::Command::SetTempo { bpm: 120.0, at: None });
                 c.execute(dstudio_core::Command::SetTimeSignature { numerator: 4, denominator: 4 });
             }),
         ),

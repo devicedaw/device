@@ -473,6 +473,13 @@ int32_t Engine::publish(const se_session_desc_v10& desc10, std::string& err) {
 }
 
 int32_t Engine::publish(const se_session_desc_v11& desc11, std::string& err) {
+    se_session_desc_v12 d12{};
+    d12.v11 = desc11;
+    return publish(d12, err);
+}
+
+int32_t Engine::publish(const se_session_desc_v12& desc12, std::string& err) {
+    const se_session_desc_v11& desc11 = desc12.v11;
     const se_session_desc_v10& desc10 = desc11.v10;
     const se_session_desc_v9& desc9 = desc10.v9;
     const se_session_desc_v8& desc8 = desc9.v8;
@@ -483,7 +490,7 @@ int32_t Engine::publish(const se_session_desc_v11& desc11, std::string& err) {
         auto it = assets_.find(id);
         return it == assets_.end() ? nullptr : it->second;
     };
-    const int32_t rc = build_render_graph(desc11, lookup, built, err);
+    const int32_t rc = build_render_graph(desc12, lookup, built, err);
     if (rc != SE_OK) return rc;
     built->sample_rate = sample_rate_;
     warp_renderer_.resolve(*built);
@@ -1065,7 +1072,8 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
         transport.position = rt_position_;
         transport.playing = rt_playing_;
         transport.sample_rate = sample_rate_;
-        transport.tempo_bpm = rt_tempo_fpq_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpq_ : 120.0;
+        const TempoMap tempo = graph != nullptr ? graph->tempo_map() : TempoMap{};
+        set_block_tempo(transport, tempo, rt_position_);
         DelayLine* const* const lines = graph != nullptr && !graph->lines.empty() ? graph->lines.data() : nullptr;
         const MidiBlock midi_block{done == 0 ? rt_midi_.data() : nullptr, done == 0 ? midi_count : 0u, midi.focus()};
         const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr,
@@ -1095,7 +1103,7 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
         // With delay compensation it is delayed by L like the music.
         if (pdc_total == 0) {
             if (rt_playing_ && rt_metro_enabled_)
-                mix_metronome(live_ctx_.master_l(), live_ctx_.master_r(), rt_position_, n);
+                mix_metronome(live_ctx_.master_l(), live_ctx_.master_r(), rt_position_, n, graph);
         } else {
             DelayLine* const ml = lines[graph->pdc.metro_index(graph->tracks.size(), graph->fx.size())];
             const auto md = static_cast<uint32_t>(pdc_total);
@@ -1103,7 +1111,7 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
             if (clicking || !ml->idle(md, rt_pdc_gen_)) {
                 float* const c = click_scratch_.data();
                 std::memset(c, 0, sizeof(float) * n);
-                if (clicking) mix_metronome(c, nullptr, rt_position_, n);
+                if (clicking) mix_metronome(c, nullptr, rt_position_, n, graph);
                 ml->process_mono(c, n, md, rt_pdc_gen_);
                 kernel_add_scaled(live_ctx_.master_l(), c, 1.0f, n);
                 kernel_add_scaled(live_ctx_.master_r(), c, 1.0f, n);
@@ -1198,7 +1206,17 @@ void Engine::start_click(const float* buf, uint32_t offset, float* l, float* r, 
 // Voices carry tails across segment boundaries in playback time (so a click
 // rings out over a block edge or a loop wrap); onsets are taken from the
 // timeline beat grid, so only beats the playhead actually crosses sound.
-void Engine::mix_metronome(float* l, float* r, int64_t position, uint32_t frames) noexcept {
+void Engine::set_block_tempo(RtTransport& t, const TempoMap& map, int64_t position) const noexcept {
+    if (map.empty()) {
+        t.map = nullptr;
+        t.tempo_bpm = rt_tempo_fpq_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpq_ : 120.0;
+    } else {
+        t.map = &map;
+        t.tempo_bpm = map.bpm_at(static_cast<double>(position));
+    }
+}
+
+void Engine::mix_metronome(float* l, float* r, int64_t position, uint32_t frames, const RenderGraph* graph) noexcept {
     const float g = rt_metro_gain_;
     for (std::size_t i = 0; i < rt_voice_count_;) {
         ClickVoice& v = rt_voices_[i];
@@ -1211,9 +1229,23 @@ void Engine::mix_metronome(float* l, float* r, int64_t position, uint32_t frames
         else
             ++i;
     }
+    const int64_t end = position + frames;
+    if (graph != nullptr && !graph->tempo.empty()) {
+        // On the tempo map: beat k at the frame of quarter k * click_quarters.
+        const TempoMap map = graph->tempo_map();
+        const double cq = graph->click_quarters;
+        const auto beat_frame = [&map, cq](int64_t k) { return std::llround(map.frame_at(static_cast<double>(k) * cq)); };
+        int64_t k = static_cast<int64_t>(std::floor(map.quarter_at(static_cast<double>(position)) / cq)) - 1;
+        while (beat_frame(k) < position) ++k;
+        for (int64_t f = beat_frame(k); f < end; f = beat_frame(++k)) {
+            const bool downbeat = floor_mod(k, rt_metro_bpb_) == 0;
+            start_click(downbeat ? click_down_.data() : click_beat_.data(), static_cast<uint32_t>(f - position), l, r,
+                        frames);
+        }
+        return;
+    }
     const double fpb = rt_metro_fpb_;
     const auto beat_frame = [fpb](int64_t k) { return std::llround(static_cast<double>(k) * fpb); };
-    const int64_t end = position + frames;
     int64_t k = static_cast<int64_t>(std::floor(static_cast<double>(position) / fpb)) - 1;
     while (beat_frame(k) < position) ++k;
     for (int64_t f = beat_frame(k); f < end; f = beat_frame(++k)) {
@@ -1583,7 +1615,8 @@ int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_fr
     RtTransport transport;
     transport.sample_rate = sample_rate_;
     transport.playing = true;
-    transport.tempo_bpm = rt_tempo_fpq_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpq_ : 120.0;
+    const TempoMap tempo = graph ? graph->tempo_map() : TempoMap{};
+    set_block_tempo(transport, tempo, start_frame);
     // Warped clips: private stretch voices (the live ones keep their state).
     std::vector<std::unique_ptr<WarpVoice>> own_voices;
     std::vector<WarpVoice*> voice_ptrs;
@@ -1601,6 +1634,7 @@ int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_fr
     for (int64_t pos = start_frame; pos < render_end;) {
         const auto n = static_cast<uint32_t>(std::min<int64_t>(render_end - pos, max_block_));
         transport.position = pos;
+        set_block_tempo(transport, tempo, pos);
         render_block(graph.get(), pos, true, n, ctx, false, 0, inst);
         const auto skip = static_cast<uint32_t>(std::clamp<int64_t>(first_kept - pos, 0, n));
         const float* l = ctx.master_l() + skip;

@@ -612,7 +612,9 @@ independent of the mix level, does not show on meters, and is never in
 `se_export_wav` (which calls `render_block()` directly). With plugin delay
 compensation (`L > 0`) the clicks go through an `L`-frame mono delay line
 first, so they are heard with the (equally delayed) music; the line rings
-out on pause and is flushed on seek/stop.
+out on pause and is flushed on seek/stop. When the session has a tempo map
+([Tempo](#tempo)), beat `k` sounds at `llround(frame_at(k · click_quarters))`
+on the map instead, and `frames_per_beat` is not used.
 
 ### Built-in instrument (MIDI + `se_synth_params`)
 
@@ -1173,7 +1175,9 @@ destroy queued instances when
   tracked.
 * **Transport info**: tempo = `se_transport_set_tempo` (frames per quarter
   note, independent of the metronome's click grid and of whether it is on;
-  120 BPM if never set), 4/4, playing flag and position: AU host callbacks
+  120 BPM if never set), or with a tempo map the tempo at the block's first
+  frame and the song position from the map ([Tempo](#tempo)), 4/4, playing
+  flag and position: AU host callbacks
   (`beatAndTempoProc`, `transportStateProc2`), VST3 `ProcessContext`
   (tempo, project time in samples and quarter notes, playing), CLAP
   `clap_event_transport`.
@@ -1832,6 +1836,41 @@ the timeline, so looped and warped clips fade where they play.
 - Overlapping clips on one track still sum, so a fade-out over a fade-in is a
   linear crossfade. `dstudio_clip_fade_bench` measures the cost.
 
+## Tempo
+
+`se_session_publish_v12` adds the song's tempo map (specs/015-tempo-changes):
+a list of `se_tempo_segment {start_frame, start_quarter, start_bpm,
+end_bpm}` and `click_quarters` (quarter notes per metronome beat). Clips,
+notes, automation and the loop still arrive in frames, converted through the
+map by the core; the engine uses the map only for what counts musical time on
+the audio thread: the metronome ([Metronome](#metronome)), and the tempo
+(`RtTransport::tempo_bpm`, at the first frame of each block) and song position
+(`RtTransport::beats()`, at any position a device or the plugin host asks for)
+that tempo-synced built-in devices and plugins see, live and in offline
+renders. A session without segments behaves exactly as with v11
+(`se_transport_set_tempo` and `frames_per_beat`).
+
+The formula (`src/tempo_map.hpp`; the core's `crates/dstudio-core/src/tempo.rs`
+evaluates the same in seconds). Segment `i` starts at frame `f0` and quarter
+`q0` with tempo `a` BPM and runs to the next segment's `q1`, where a ramp
+reaches `b` (a hold has `b = a`; the last segment holds). With `R` the sample
+rate and `k = (b - a) / (q1 - q0)`, the ramp being linear in BPM over quarters:
+
+| | quarter at frame `f` | frame of quarter `q` | tempo at `f` |
+|---|---|---|---|
+| hold | `q0 + (f - f0) · a / 60R` | `f0 + (q - q0) · 60R / a` | `a` |
+| ramp | `q0 + (a / k) · (exp(k (f - f0) / 60R) - 1)` | `f0 + (60R / k) · ln(1 + k (q - q0) / a)` | `a · exp(k (f - f0) / 60R)` |
+
+Before frame 0 the first segment's tempo holds (the count-in pre-roll).
+Lookups are a binary search over the segments plus one `exp`/`log1p`; the
+map is copied into the render graph when it is built, so the audio thread
+only reads it. `test_tempo.cpp` checks the formula against numeric
+integration, the clicks across a step and a ramp, the song position a synced
+LFO sees per block, validation and that a session without a map renders
+bit-identically; `rt_tempo_map_does_not_allocate` renders a map under the
+allocation guard. `crates/dstudio-engine/tests/tempo.rs` checks the clicks
+land on the frames core computes for each beat.
+
 ## Placeholders and known gaps
 
 * **Windows / Linux audio** (`wasapi_device.cpp`, `pipewire_device.cpp`,
@@ -1866,9 +1905,9 @@ the timeline, so looped and warped clips fade where they play.
   sample-accurate transport commands while the device runs (they apply at
   block boundaries; the loop wrap itself is sample-accurate) are not
   implemented.
-* Loop wraps are hard cuts (no crossfade). Tempo changes are not modelled:
-  the metronome grid is a constant `frames_per_beat` from frame 0, and the
-  song tempo a constant frames per quarter from frame 0.
+* Loop wraps are hard cuts (no crossfade). Within a tempo ramp, devices and
+  plugins see the tempo of each block's first frame (the song position is
+  exact at every frame they ask for).
 * `se_meters_peek` track windows restart at 0 when a snapshot is published
   (same as `se_meters_read`).
 * The resampler is scalar; large imports at a different rate take noticeably
@@ -1940,6 +1979,15 @@ interleaved runs against the pre-automation build (HEAD 4ab2922) gave audio
 1.07 / 3.44 / 12.88 µs vs 1.07 / 3.40 / 12.87 µs, plugins (CLAP + VST3) 10.34
 vs 10.46 µs, PDC N = 4096 off 3.89 vs 3.81 µs, MIDI default patch 8 / 32
 tracks 138.7 / 562 µs vs 138.7 / 557 µs (all within run-to-run noise).
+
+Tempo map (32 audio tracks × 4 clips + CLAP gain + VST3 gain inserts, the
+metronome on; median of three runs, Apple M4): one tempo 12.70 µs/block, a
+64-point map (`se_session_publish_v12`, alternating holds and ramps) 13.37
+µs/block. ≈ 10 ns per song-position lookup (64 plugin calls and the click per
+block), 0.01 % of the deadline. Sessions without a map take the same path as
+before; interleaved runs against the build before tempo changes were within
+run-to-run noise (the second run of each pair was the slower one, whichever
+build it was).
 
 Input (8 armed + monitored tracks, injected 8-channel input, no clips):
 1.33 µs/block with recording off; 5.9 µs/block avg (p99 11 µs, max 32 µs)

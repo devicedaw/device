@@ -720,3 +720,17 @@ project's audio files, and can `add_builtin_device` (effects into the chain, ins
 catalogue (44 devices, about 2000 parameters) goes into the system prompt as a cached block instead of every turn's
 state. Still to do: one run against the live API.
 
+### 2026-11-20: tempo changes in the core and engine
+
+A song can change tempo (spec 015, first of three pull requests). `Transport::tempo` holds sorted points (tick, BPM,
+hold or ramp to the next point, linear in BPM over beats); `dstudio_core::tempo::TempoMap` integrates them exactly and
+every conversion between ticks, seconds and frames goes through it, so notes, automation, the loop, fades and clip
+starts stay on their beats. Warped clips get warp-map points at each tempo change and every sixteenth inside a ramp
+(within 1 ms per beat in every mode, reversed clips mirrored in beats); unwarped clips keep their frames and their tick
+length follows the map. Commands: `SetTempoMap` ("Edit Tempo Automation", "Delete Tempo Automation") and `SetTempo`
+with an optional position (the point in effect there, "Tempo Change"). Projects with changes are saved as schema 2,
+without as schema 1. The engine gets the map as segments in `se_session_publish_v12` and evaluates the same formula
+for the metronome and for the tempo and song position built-in devices and plugins see. A song without changes
+converts and renders exactly as before. Tests: `crates/dstudio-core/tests/tempo_map.rs`, `engine/tests/test_tempo.cpp`,
+`rt_tempo_map_does_not_allocate`, `crates/dstudio-engine/tests/tempo.rs`; benchmarks: a "Tempo map" table in
+`dstudio_engine_bench`, `cargo bench -p dstudio-core --bench tempo`.
