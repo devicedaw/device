@@ -110,12 +110,33 @@ fn is_zero_u8(v: &u8) -> bool {
 pub struct MidiPrefs {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub disabled_inputs: Vec<String>,
+    /// Settings › MIDI › Default instrument (spec 013): what a new empty instrument track
+    /// plays. None = the built-in Synth.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient_instrument")]
+    pub default_instrument: Option<InstrumentChoice>,
 }
 
 impl MidiPrefs {
     pub fn is_default(&self) -> bool {
-        self.disabled_inputs.is_empty()
+        self.disabled_inputs.is_empty() && self.default_instrument.is_none()
     }
+}
+
+/// A default instrument other than the Synth.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum InstrumentChoice {
+    /// A built-in instrument, by its device id (`dstudio_core::builtin::find`).
+    Builtin { id: String },
+    /// An instrument plugin, matched against the scan by format and id.
+    Plugin { plugin: dstudio_core::PluginRef },
+}
+
+/// A default instrument entry that doesn't parse loads as the Synth rather than throwing away
+/// the whole preferences file.
+fn lenient_instrument<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<InstrumentChoice>, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value(v).ok())
 }
 
 /// Settings › General, with its defaults.
@@ -235,7 +256,10 @@ mod tests {
                 projects_folder: Some("/tmp/My Songs".into()),
                 ..GeneralPrefs::default()
             },
-            midi: MidiPrefs { disabled_inputs: vec!["coremidi:42".into()] },
+            midi: MidiPrefs {
+                disabled_inputs: vec!["coremidi:42".into()],
+                default_instrument: Some(InstrumentChoice::Builtin { id: "sampler-steam".into() }),
+            },
             hide_returns: true,
             plugin_folders: vec!["/opt/plugins".into()],
             count_in_bars: 2,
@@ -260,6 +284,30 @@ mod tests {
         assert_eq!(loaded.count_in_bars, 0, "files without a count-in record straight away");
         assert_eq!(loaded.general.projects_folder, None, "files without a projects folder use the default one");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_default_instrument_round_trips_and_bad_entries_load_as_the_synth() {
+        let plugin = dstudio_core::PluginRef {
+            format: dstudio_core::PluginFormat::Clap,
+            id: "com.example.keys".into(),
+            path: Some("/tmp/Keys.clap".into()),
+            name: "Keys".into(),
+            vendor: "Example".into(),
+            version: "1.0".into(),
+            kind: dstudio_core::PluginKind::Instrument,
+        };
+        for choice in [None, Some(InstrumentChoice::Builtin { id: "drum-rack".into() }), Some(InstrumentChoice::Plugin { plugin })] {
+            let p = Preferences { midi: MidiPrefs { default_instrument: choice.clone(), ..Default::default() }, ..Default::default() };
+            let back: Preferences = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+            assert_eq!(back.midi.default_instrument, choice);
+        }
+        assert!(!serde_json::to_string(&Preferences::default()).unwrap().contains("default_instrument"));
+        let bad: Preferences =
+            serde_json::from_str(r#"{"midi":{"disabled_inputs":["x"],"default_instrument":{"kind":"theremin"}},"count_in_bars":1}"#)
+                .unwrap();
+        assert_eq!(bad.midi.default_instrument, None, "an entry that doesn't parse is the Synth");
+        assert_eq!((bad.midi.disabled_inputs.len(), bad.count_in_bars), (1, 1), "and the rest still loads");
     }
 
     #[test]

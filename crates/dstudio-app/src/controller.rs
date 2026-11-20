@@ -1206,19 +1206,6 @@ impl Controller {
         None
     }
 
-    /// ⇧⌘T: a new instrument track at the end of the ordinary tracks, selected.
-    pub fn add_instrument_track(&mut self) -> Option<TrackId> {
-        let track = Track::new(TrackId(0), TrackKind::Instrument, "Instrument", next_track_color(self.project()));
-        if self.execute(Command::AddTrack { index: None, track }) {
-            let id = self.project().tracks.iter().rev().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id);
-            if let Some(id) = id {
-                self.select_track(id);
-            }
-            return id;
-        }
-        None
-    }
-
     /// ⌘L with a clip or a section selected: loop exactly that span and turn the loop on.
     pub fn loop_selection(&mut self) {
         let p = self.project();

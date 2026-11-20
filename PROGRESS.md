@@ -642,3 +642,19 @@ can't be split (warped, reversed, patterns) stay whole. Scissors click splits th
 position. App side: `src/tools.rs`; review states `review-tool-menu` and `review-marquee-range`; self-test section
 `tool_steps`; core tests `tests/range.rs`.
 
+### 2026-11-20: default instrument for new instrument tracks (spec 013)
+
+- Settings › MIDI › Default instrument works (it was a placeholder that always read "Synth"). Its menu lists Synth,
+  Sampler, Pad Sampler and Drum Rack, then the instrument plugins of the last scan under "Plugins" (by name, with
+  their format); a long list scrolls. The choice is an app preference (`midi.default_instrument`), saved at once.
+- Every empty-track path (⇧⌘T, Create › Instrument Track, the add-track entries in the timeline and the mixer) goes
+  through `Controller::add_instrument_track` (now in `src/default_instrument.rs`): one "Add Instrument Track" step
+  that adds the track named after the instrument and, unless Synth, sets its instrument. Synth makes exactly the
+  track it made before. A MIDI clip dragged from the Files browser onto empty space makes its track the same way.
+- A chosen plugin the last scan didn't find shows "Missing" in the dropdown; new tracks play the Synth with a status
+  message, and the choice is kept for when the plugin is back. A preferences entry that doesn't parse loads as Synth
+  without losing the rest of the file.
+- Tests: `default_instrument::tests` (Synth unchanged, built-in named and undone in one step, missing and found
+  plugin), `files::tests::a_dropped_midi_clip_gets_the_default_instrument`, `prefs::tests::a_default_instrument_round_trips_and_bad_entries_load_as_the_synth`, self-test section
+  `default_instrument_steps`. Review states `review-default-instrument` and `review-default-instrument-missing`.
+

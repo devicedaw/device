@@ -49,6 +49,7 @@ mod clipedit;
 mod composer;
 mod controller;
 mod count_in;
+mod default_instrument;
 mod device_canvas;
 mod device_editors;
 mod device_fields;
@@ -196,6 +197,8 @@ struct Args {
     midi_recording_review: bool,
     /// review-settings-midi: Settings › MIDI with a SCREENSHOT-ONLY fake input list.
     settings_midi_review: bool,
+    /// Settings › MIDI › Default instrument: 1 = its menu open, 2 = a missing plugin chosen.
+    default_instrument_review: u8,
     /// Settings › Shortcuts: 1 the page, 2 recording keys for Tap tempo, 3 Tap tempo unmapped,
     /// 4-6 searching "track", "notes", "transpose".
     shortcuts_review: u8,
@@ -757,6 +760,11 @@ fn parse_args() -> Result<Args, String> {
                 "review-settings-midi" => {
                     a.reference_default = true;
                     a.settings_midi_review = true;
+                }
+                st @ ("review-default-instrument" | "review-default-instrument-missing") => {
+                    a.reference_default = true;
+                    a.settings_midi_review = true;
+                    a.default_instrument_review = if st.ends_with("missing") { 2 } else { 1 };
                 }
                 st @ ("review-shortcuts"
                 | "review-shortcuts-recording"
@@ -2839,6 +2847,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.settings.prefs.midi.disabled_inputs = vec!["fake:pads".into()];
         c.open_settings();
         c.settings_page(midi_in::MIDI_PAGE);
+        if args.default_instrument_review > 0 {
+            // SCREENSHOT-ONLY fake instrument plugins (never loaded); with 2, the choice is a
+            // plugin no scan found.
+            let fake = |name: &str, format| dstudio_core::PluginRef {
+                format,
+                id: format!("screenshot.{}", name.to_lowercase().replace(' ', "-")),
+                path: None,
+                name: name.into(),
+                vendor: "Screenshot".into(),
+                version: "1.0".into(),
+                kind: dstudio_core::PluginKind::Instrument,
+            };
+            let plugins = [fake("Glass Keys", dstudio_core::PluginFormat::Clap), fake("Tape Choir", dstudio_core::PluginFormat::Vst3)];
+            c.devices.catalog.plugins = plugins
+                .iter()
+                .map(|p| dstudio_engine::PluginInfo { plugin: p.clone(), has_editor: false, audio_inputs: 0, audio_outputs: 2 })
+                .collect();
+            c.settings.prefs.midi.default_instrument = Some(if args.default_instrument_review == 2 {
+                prefs::InstrumentChoice::Plugin { plugin: fake("Felt Upright", dstudio_core::PluginFormat::Clap) }
+            } else {
+                prefs::InstrumentChoice::Builtin { id: "drum-rack".into() }
+            });
+            if args.default_instrument_review == 1 {
+                c.settings_dropdown(5);
+            }
+        }
     }
     // Push view models once before the first frame, so conditional panels are built
     // for the initial state (setting them from inside the first BeforeRendering is
