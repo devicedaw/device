@@ -256,6 +256,9 @@ struct Args {
     /// review-returns-strip: the same project, Audio selected, channel strip on its Sends tab.
     /// review-returns-empty: the default project, Audio selected, Sends tab with no returns yet.
     /// review-returns-options: review-returns with the options of Audio's send to B open.
+    /// review-return-sends: review-returns with Return A sending into Return B at -6 dB and
+    /// Return A selected (spec 016). review-return-sends-strip: the same, mixer closed, channel
+    /// strip on Return A's Sends tab.
     returns_review: u8,
     /// review-groups*: 1 the two tracks in a group, 2 folded, 3 in the mixer.
     groups_review: u8,
@@ -670,6 +673,11 @@ fn parse_args() -> Result<Args, String> {
                     a.open_mixer = true;
                     a.returns_review = 4;
                 }
+                st @ ("review-return-sends" | "review-return-sends-strip") => {
+                    a.reference_default = true;
+                    a.open_mixer = st == "review-return-sends";
+                    a.returns_review = if st == "review-return-sends" { 5 } else { 6 };
+                }
                 "review-track-rename" => {
                     a.reference_default = true;
                     a.track_rename_review = true;
@@ -803,7 +811,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-tool-menu, review-marquee-range, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -2715,13 +2723,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     // Anchored under the B tag of the Audio strip's Sends section.
                     c.open_send_options(audio, b, 16.0, 387.0);
                 }
+                if matches!(args.returns_review, 5 | 6) {
+                    // Spec 016: Return A sends into Return B.
+                    c.set_send_level(a, b, dstudio_core::db_to_gain(-6.0));
+                    c.send_gesture_end();
+                }
             }
-            c.routing.sends_open = matches!(args.returns_review, 1 | 4);
+            c.routing.sends_open = matches!(args.returns_review, 1 | 4 | 5);
         }
-        if let Some(&audio) = ids.first() {
-            c.select_track(audio);
+        let first_return = c.project().returns().next().map(|r| r.id);
+        if let Some(id) = if matches!(args.returns_review, 5 | 6) { first_return } else { ids.first().copied() } {
+            c.select_track(id);
         }
-        if matches!(args.returns_review, 2 | 3) {
+        if matches!(args.returns_review, 2 | 3 | 6) {
             app.global::<Studio>().set_strip_tab(1);
         }
     }

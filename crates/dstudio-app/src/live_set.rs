@@ -51,6 +51,10 @@ pub struct SetReturn {
     pub pan: f32,
     /// Live's per-return switch: sends to it tap before the track faders.
     pub pre: bool,
+    /// Send level to each of the set's returns, in order (linear, clamped to [SEND_RANGE]);
+    /// missing entries are off. A send with a level is written active, the others inactive
+    /// (Live's default for a return's sends). Spec 016: only later returns get one.
+    pub sends: Vec<f32>,
 }
 
 /// Live's send range: -70 dB (shown as -inf) ..= 0 dB.
@@ -566,17 +570,18 @@ impl Xml {
         self.routing("MidiOutputRouting", "MidiOut/None", "None", "");
     }
     /// Mixer through SendsListWrapper; ids come from the counter. "sends" is None on the main
-    /// and pre-hear tracks (no sends), else (level per return, active): one holder per return.
+    /// and pre-hear tracks (no sends), else (level per return, all active): one holder per
+    /// return; without "all active" only the sends with a level are active (a return track).
     fn mixer_body(&mut self, on: bool, volume: f32, pan: f32, sends: Option<(&[f32], usize, bool)>) {
         self.device_head(false);
         match sends {
-            Some((levels, returns, active)) if returns > 0 => {
+            Some((levels, returns, all_active)) if returns > 0 => {
                 self.open("Sends", &[]);
                 for i in 0..returns {
                     self.open("TrackSendHolder", &[("Id", i.to_string())]);
                     let level = levels.get(i).copied().unwrap_or(0.0) as f64;
                     self.float_param("Send", level.clamp(SEND_RANGE.0, SEND_RANGE.1), SEND_RANGE, true);
-                    self.v("Active", active);
+                    self.v("Active", all_active || level > 0.0);
                     self.close("TrackSendHolder");
                 }
                 self.close("Sends");
@@ -698,14 +703,15 @@ impl Xml {
         }
         self.close(tag);
     }
-    /// A return track: no clips, its own sends present but inactive (Live's default).
+    /// A return track: no clips; its sends into later returns active at their level, the others
+    /// present but inactive (Live's default).
     fn return_track(&mut self, set: &LiveSet, id: u64, r: &SetReturn) {
         self.open("ReturnTrack", &[("Id", id.to_string())]);
         self.track_head(&r.name, &r.name, r.color, &[]);
         self.open("DeviceChain", &[]);
         self.chain_head(1, ("AudioIn/External/S0", "1/2"), ("AudioOut/Master", "Master", ""));
         self.open("Mixer", &[]);
-        self.mixer_body(r.on, r.volume, r.pan, Some((&[], set.returns.len(), false)));
+        self.mixer_body(r.on, r.volume, r.pan, Some((&r.sends, set.returns.len(), false)));
         self.close("Mixer");
         self.open("FreezeSequencer", &[]);
         self.open("AudioSequencer", &[("Id", "0".into())]);
@@ -1060,6 +1066,8 @@ pub struct SetSummary {
     pub return_tracks: usize,
     /// Sends above Live's minimum on ordinary tracks.
     pub sends: usize,
+    /// Active sends above Live's minimum from a return track into a later one (spec 016).
+    pub return_sends: usize,
 }
 
 pub(crate) fn child<'a, 'i>(n: roxmltree::Node<'a, 'i>, tag: &str) -> Option<roxmltree::Node<'a, 'i>> {
@@ -1103,7 +1111,16 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
     if scenes == 0 {
         return Err("no scenes".into());
     }
-    let mut sum = SetSummary { audio_tracks: 0, midi_tracks: 0, audio_clips: 0, midi_clips: 0, notes: 0, return_tracks: 0, sends: 0 };
+    let mut sum = SetSummary {
+        audio_tracks: 0,
+        midi_tracks: 0,
+        audio_clips: 0,
+        midi_clips: 0,
+        notes: 0,
+        return_tracks: 0,
+        sends: 0,
+        return_sends: 0,
+    };
     let mut track_ids = std::collections::HashSet::new();
     let tracks = path(set, "Tracks").ok_or("no Tracks")?;
     let returns = tracks.children().filter(|c| c.has_tag_name("ReturnTrack")).count();
@@ -1133,8 +1150,15 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
             {
                 return Err(format!("{what}: bad send {i} (level {level})"));
             }
-            if kind != "ReturnTrack" && active == "true" && level > SEND_RANGE.0 {
-                sum.sends += 1;
+            if active == "true" && level > SEND_RANGE.0 {
+                if kind != "ReturnTrack" {
+                    sum.sends += 1;
+                } else if i > sum.return_tracks {
+                    sum.return_sends += 1;
+                } else {
+                    // Spec 016: a return sends only into a later return, never into itself or up.
+                    return Err(format!("{what}: an active send into return {i}, which is not after it"));
+                }
             }
         }
         if kind == "ReturnTrack" {
@@ -1351,8 +1375,8 @@ mod tests {
                 },
             ],
             returns: vec![
-                SetReturn { name: "Return A".into(), color: 5, on: true, volume: 0.8, pan: 0.1, pre: false },
-                SetReturn { name: "Return B".into(), color: 6, on: false, volume: 1.0, pan: 0.0, pre: true },
+                SetReturn { name: "Return A".into(), color: 5, on: true, volume: 0.8, pan: 0.1, pre: false, sends: vec![0.0, 0.5] },
+                SetReturn { name: "Return B".into(), color: 6, on: false, volume: 1.0, pan: 0.0, pre: true, sends: Vec::new() },
             ],
         }
     }
@@ -1371,7 +1395,16 @@ mod tests {
         let sum = validate(&xml, None).unwrap();
         assert_eq!(
             sum,
-            SetSummary { audio_tracks: 1, midi_tracks: 2, audio_clips: 1, midi_clips: 1, notes: 3, return_tracks: 2, sends: 3 }
+            SetSummary {
+                audio_tracks: 1,
+                midi_tracks: 2,
+                audio_clips: 1,
+                midi_clips: 1,
+                notes: 3,
+                return_tracks: 2,
+                sends: 3,
+                return_sends: 1
+            }
         );
         assert!(xml.contains("<EffectiveName Value=\"Bass &amp; &lt;Drums&gt;\" />"));
         let gz = gzip(&xml).unwrap();
@@ -1404,8 +1437,10 @@ mod tests {
         assert_eq!(sends(tracks[0]), [(0.5, "true".into()), (1.0, "true".into())]);
         assert_eq!(sends(tracks[1]), [(SEND_RANGE.0, "true".into()), (0.25, "true".into())]);
         assert_eq!(sends(tracks[2]), [(SEND_RANGE.0, "true".into()), (SEND_RANGE.0, "true".into())]);
-        // A return's own sends exist but are inactive.
-        assert_eq!(sends(tracks[3]), [(SEND_RANGE.0, "false".into()), (SEND_RANGE.0, "false".into())]);
+        // A return's send into a later return is active at its level (spec 016); its other
+        // sends exist but are inactive.
+        assert_eq!(sends(tracks[3]), [(SEND_RANGE.0, "false".into()), (0.5, "true".into())]);
+        assert_eq!(sends(tracks[4]), [(SEND_RANGE.0, "false".into()), (SEND_RANGE.0, "false".into())]);
         // "Sends Only" output, and the per-return pre/post switches.
         assert_eq!(value(tracks[0], "DeviceChain/AudioOutputRouting/Target").unwrap(), "AudioOut/Master");
         assert_eq!(value(tracks[1], "DeviceChain/AudioOutputRouting/Target").unwrap(), "AudioOut/None");
@@ -1415,6 +1450,14 @@ mod tests {
         assert_eq!(pre, ["false", "true"]);
         // The main and pre-hear tracks have no sends.
         assert!(path(set, "MasterTrack/DeviceChain/Mixer/Sends").unwrap().children().all(|c| !c.is_element()));
+    }
+
+    #[test]
+    fn the_check_refuses_a_return_sending_up_the_list() {
+        let mut s = sample_set();
+        s.returns[1].sends = vec![0.5];
+        let err = validate(&to_xml(&s), None).unwrap_err();
+        assert!(err.contains("not after it"), "{err}");
     }
 
     #[test]

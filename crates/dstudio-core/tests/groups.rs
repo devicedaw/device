@@ -50,7 +50,7 @@ fn a_group_refuses_clips_an_output_and_arming() {
 }
 
 #[test]
-fn a_group_sends_into_a_return_but_a_return_does_not_send() {
+fn a_group_sends_into_a_return_and_a_return_only_into_a_later_one() {
     let mut d = Document::new(Project::default());
     let g = add(&mut d, TrackKind::Group, "Group 1", Some(0));
     let r = add_return(&mut d);
@@ -59,7 +59,8 @@ fn a_group_sends_into_a_return_but_a_return_does_not_send() {
     s.level = 0.5;
     d.execute(Command::SetSends { track: g, sends: vec![s] }, Origin::User).unwrap();
     assert_eq!(d.project().track(g).unwrap().sends.len(), 1);
-    assert!(d.execute(Command::SetSends { track: r, sends: vec![TrackSend::new(r2)] }, Origin::User).is_err());
+    // A return sends only into a later return (spec 016).
+    assert!(d.execute(Command::SetSends { track: r2, sends: vec![TrackSend::new(r)] }, Origin::User).is_err());
     // A saved group send survives loading.
     let mut p = d.project().clone();
     p.sanitize_routing();

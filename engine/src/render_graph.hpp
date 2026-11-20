@@ -246,6 +246,10 @@ struct SendNode {
     int32_t bus = 0;
     float gain = 1.0f;
     bool pre_fader = false;
+    // With a bus soloed, a send into a bus that is only heard downstream of
+    // the soloed one runs only from a bus on that path (spec 016); otherwise
+    // every send of a track with send_live runs.
+    bool live = true;
     uint32_t edge_delay = 0; // delay compensation after the tap (see TrackNode::out_delay)
 };
 

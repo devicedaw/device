@@ -2415,7 +2415,7 @@ fn steps() -> Vec<Step> {
             Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into())),
         ),
         DoC(
-            "two returns for the Project export: Return A (sent to at -6 dB from a playing track, and the Out of another track with clips), Return B (with a device, sent to pre-fader from the playing track)",
+            "three returns for the Project export: Return A (sent to at -6 dB from a playing track, and the Out of another track with clips; sends into B and C), Return B (with a device, sent to pre-fader from the playing track; sends pre-fader into C), Return C",
             Box::new(|_a, ctl| {
                 let mut c = ctl.borrow_mut();
                 EXPORT_UNDO_DEPTH.with(|d| d.set(c.doc.undo_depth()));
@@ -2426,7 +2426,18 @@ fn steps() -> Vec<Step> {
                 with_clips.sort_by_key(|(mute, _)| *mute);
                 let with_clips: Vec<dstudio_core::TrackId> = with_clips.into_iter().map(|(_, id)| id).collect();
                 let selected = c.selected_track;
-                let (Some(ra), Some(rb)) = (c.add_return_track(true), c.add_return_track(true)) else { return };
+                let (Some(ra), Some(rb), Some(rc)) = (c.add_return_track(true), c.add_return_track(true), c.add_return_track(true)) else {
+                    return;
+                };
+                // Spec 016: A into B (rendered, so left out of the set) and C (a Live return send),
+                // B pre-fader into C (carried by B's rendered track).
+                for (from, to, pre) in [(ra, rb, false), (ra, rc, false), (rb, rc, true)] {
+                    c.set_send_level(from, to, 0.5);
+                    c.send_gesture_end();
+                    if pre {
+                        c.toggle_send_pre(from, to);
+                    }
+                }
                 let plugin = dstudio_core::PluginRef {
                     format: dstudio_core::PluginFormat::Clap,
                     id: "studio.dstudio.test.gain".into(),
@@ -2489,12 +2500,14 @@ fn steps() -> Vec<Step> {
                 // Return B has a device and is fed, so it is rendered as one more audio clip.
                 let wet = std::fs::read_dir(folder.join("Samples/Processed/DStudio"))
                     .map_or(0, |d| d.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().contains("Return B")).count());
-                let sends = if with_clips > 1 { 3 } else { 2 };
+                // Plus the rendered Return B's send into Return C.
+                let sends = if with_clips > 1 { 4 } else { 3 };
                 let _ = std::fs::remove_dir_all(&c.export.dir);
                 (sum.audio_clips == with_clips + 1
                     && sum.midi_clips == midi
-                    && sum.return_tracks == 2
+                    && sum.return_tracks == 3
                     && sum.sends == sends
+                    && sum.return_sends == 1
                     && wet == 1
                     && !a.global::<Studio>().get_export_open())
                 .then_some(())
@@ -2502,9 +2515,17 @@ fn steps() -> Vec<Step> {
                     "{sum:?} vs {with_clips} rendered, {midi} MIDI clips, {sends} sends; Return B renders {wet}; tracks {:?}",
                     p.tracks.iter().map(|t| (t.name.as_str(), t.mute, t.devices.len(), t.sends.len())).collect::<Vec<_>>()
                 ))?;
-                ["Return A, Return B", "Returns with devices (Return B)", "Pre-fader sends", if with_clips > 1 { "Sends Only" } else { "" }]
-                    .iter()
-                    .try_for_each(|w| notes.contains(w).then_some(()).ok_or(format!("the notes do not mention '{w}': {notes}")))
+                [
+                    "Return A, Return B, Return C",
+                    "Returns with devices (Return B)",
+                    "Pre-fader sends",
+                    if with_clips > 1 { "Sends Only" } else { "" },
+                    "Sends between return tracks",
+                    "Return A to Return C",
+                    "Return B to Return C",
+                ]
+                .iter()
+                .try_for_each(|w| notes.contains(w).then_some(()).ok_or(format!("the notes do not mention '{w}': {notes}")))
             }),
         ),
         DoC(
@@ -4369,7 +4390,7 @@ fn returns_steps() -> Vec<Step> {
             Box::new(|a| click(a, bottom_x() + 8.0 * 0.85 + 14.0, bottom_end() - 302.0 * 0.85 + 11.0 * 0.85)),
         ),
         Check(
-            "returns: every track strip shows one send row per return, the return strips none",
+            "returns: every track strip shows one send row per return, Return A one for Return B (spec 016)",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
                 let strips: Vec<_> = s.get_strips().iter().collect();
@@ -4379,7 +4400,7 @@ fn returns_steps() -> Vec<Step> {
                 (c.mixer_open
                     && c.routing.sends_open
                     && s.get_sends_open()
-                    && rows == ordinary * 2
+                    && rows == ordinary * 2 + 1
                     && ret == 2
                     && s.get_strip_sends_max() == 2)
                     .then_some(())
@@ -4571,6 +4592,187 @@ fn returns_steps() -> Vec<Step> {
                 for r in rs {
                     c.execute(dstudio_core::Command::RemoveTrack { track: r });
                 }
+                a.global::<Studio>().set_strip_tab(0);
+                c.ui_dirty = true;
+            }),
+        ),
+    ]
+}
+
+/// Sends between return tracks (spec 016): Return A's Sends tab knob into Return B, its mixer
+/// row and tag menu, the last return without slots, and a refused return move.
+fn return_send_steps() -> Vec<Step> {
+    use Step::*;
+    let u = 0.85;
+    // As in returns_steps: the first Sends tab knob, and a mixer send tag (row `r` of `n`) on
+    // the strip in `column`.
+    let knob = move || (bottom_x() + 47.0, bottom_y() + 128.0 * u + 6.0 + 33.0);
+    let tag = move |column: i32, r: usize, n: usize| {
+        (
+            bottom_x() + column as f32 * 108.0 * u + 8.0 * u + 9.0 * u,
+            bottom_end() - 302.0 * u - (n as f32 * 20.0 + 4.0) * u + r as f32 * 20.0 * u + 10.0 * u,
+        )
+    };
+    let ab = |c: &Controller| -> Option<(dstudio_core::TrackId, dstudio_core::TrackId)> {
+        let r: Vec<_> = c.project().returns().map(|t| t.id).collect();
+        Some((*r.first()?, *r.get(1)?))
+    };
+    let a_send = move |c: &Controller| ab(c).and_then(|(a, b)| c.project().track(a)?.sends.iter().find(|s| s.target == b).copied());
+    vec![
+        DoC(
+            "return sends: two returns, Return A selected on its Sends tab",
+            Box::new(move |a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.mixer_open = false;
+                c.routing.sends_open = false;
+                let t = c.project().tracks[0].id;
+                let ra = c.sends_add_return(t);
+                c.sends_add_return(t);
+                if let Some(ra) = ra {
+                    c.select_track(ra);
+                }
+                c.set_bottom_tab(BottomTab::Devices);
+                a.global::<Studio>().set_strip_tab(1);
+                c.ui_dirty = true;
+            }),
+        ),
+        Check(
+            "return sends: Return A's Sends tab has one silent knob, for Return B",
+            Box::new(move |c, a| {
+                let rows: Vec<_> = a.global::<Studio>().get_sel_sends().iter().collect();
+                let b = ab(c).map(|(_, b)| b.0 as i32);
+                (rows.len() == 1 && Some(rows[0].target) == b && !rows[0].stored && a.global::<Studio>().get_sel_can_send())
+                    .then_some(())
+                    .ok_or(format!("rows {:?}", rows.iter().map(|r| (r.target, r.stored)).collect::<Vec<_>>()))
+            }),
+        ),
+        DoC(
+            "return sends: drag the Return B knob up 60 pt",
+            Box::new(move |a, ctl| {
+                ctl.borrow_mut().doc.coalesce_window = std::time::Duration::ZERO;
+                let (x, y) = knob();
+                drag(a, x, y, x, y - 60.0);
+                ctl.borrow_mut().doc.coalesce_window = std::time::Duration::from_millis(750);
+            }),
+        ),
+        Check(
+            "return sends: Return A sends into Return B post-fader ('Send Level Change')",
+            Box::new(move |c, _| {
+                let s = a_send(c);
+                (s.is_some_and(|s| s.level > 0.0 && !s.pre_fader) && c.doc.undo_label() == Some("Send Level Change"))
+                    .then_some(())
+                    .ok_or(format!("send {s:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "return sends: select Return B",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if let Some((_, b)) = ab(&c) {
+                    c.select_track(b);
+                }
+            }),
+        ),
+        Check(
+            "return sends: the last return has no send slots",
+            Box::new(|_, a| {
+                let n = a.global::<Studio>().get_sel_sends().row_count();
+                (n == 0).then_some(()).ok_or(format!("{n} slots"))
+            }),
+        ),
+        DoC(
+            "return sends: open the mixer with the Sends sections expanded",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.mixer_open = true;
+                c.routing.sends_open = true;
+                c.ui_dirty = true;
+            }),
+        ),
+        Check(
+            "return sends: Return A's strip has one row (on Return B's line), Return B's none",
+            Box::new(move |c, a| {
+                let s = a.global::<Studio>();
+                let (ra, rb) = ab(c).ok_or("no returns")?;
+                let strips: Vec<_> = s.get_strips().iter().collect();
+                let strip =
+                    |id: dstudio_core::TrackId| strips.iter().find(|st| st.id == id.0 as i32).map(|st| (st.send_count, st.send_first));
+                let (Some((na, fa)), Some((nb, _))) = (strip(ra), strip(rb)) else { return Err("no return strips".into()) };
+                let row = s.get_strip_sends().row_data(fa as usize).map(|r| r.row);
+                (na == 1 && nb == 0 && row == Some(1)).then_some(()).ok_or(format!("A {na} rows (row {row:?}), B {nb}"))
+            }),
+        ),
+        DoC(
+            "return sends: click the B tag on Return A's strip",
+            Box::new(move |a, ctl| {
+                let column = {
+                    let c = ctl.borrow();
+                    let ra = ab(&c).map(|(a, _)| a.0 as i32);
+                    a.global::<Studio>().get_strips().iter().find(|st| Some(st.id) == ra).map_or(0, |st| st.column)
+                };
+                let (x, y) = tag(column, 1, 2);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "return sends: the send options list Post-fader (checked), Pre-fader, Reset to 0 dB, Remove send",
+            Box::new(|c, _| {
+                let l = c.route_menu_labels();
+                (l == ["Post-fader", "Pre-fader", "Reset to 0 dB", "Remove send"]).then_some(()).ok_or(format!("{l:?}"))
+            }),
+        ),
+        DoC(
+            "return sends: pick 'Pre-fader'",
+            Box::new(|a, ctl| {
+                let (x, y) = route_row(ctl, 1);
+                click(a, x, y)
+            }),
+        ),
+        Check(
+            "return sends: the send is pre-fader ('Send Pre-Fader')",
+            Box::new(move |c, _| {
+                (a_send(c).is_some_and(|s| s.pre_fader) && c.doc.undo_label() == Some("Send Pre-Fader")).then_some(()).ok_or(format!(
+                    "send {:?} undo {:?}",
+                    a_send(c),
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        DoC(
+            "return sends: move Return B above Return A",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if let Some((ra, rb)) = ab(&c) {
+                    let to = c.project().track_index(ra).unwrap_or(0);
+                    c.execute(dstudio_core::Command::MoveTrack { track: rb, index: to });
+                }
+            }),
+        ),
+        Check(
+            "return sends: the move is refused, the status line names the send",
+            Box::new(move |c, _| {
+                let msg = c.status_text().unwrap_or_default().to_string();
+                let order: Vec<_> = c.project().returns().map(|t| t.name.clone()).collect();
+                (msg.contains("Return A sends into Return B: remove that send to move it here")
+                    && order == ["Return A", "Return B"]
+                    && c.doc.undo_label() == Some("Send Pre-Fader"))
+                .then_some(())
+                .ok_or(format!("status {msg:?} order {order:?}"))
+            }),
+        ),
+        DoC(
+            "return sends: clean up (close the mixer, delete the returns, back to the Input tab)",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.route_menu_close();
+                c.mixer_open = false;
+                c.routing.sends_open = false;
+                let rs: Vec<_> = c.project().returns().map(|t| t.id).collect();
+                for r in rs {
+                    c.execute(dstudio_core::Command::RemoveTrack { track: r });
+                }
+                let t = c.project().tracks[0].id;
+                c.select_track(t);
                 a.global::<Studio>().set_strip_tab(0);
                 c.ui_dirty = true;
             }),
@@ -17206,6 +17408,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(live_import_steps());
     all.extend(strip_steps());
     all.extend(returns_steps());
+    all.extend(return_send_steps());
     all.extend(plugin_folder_steps());
     all.extend(default_instrument_steps());
     all.extend(settings_search_steps());

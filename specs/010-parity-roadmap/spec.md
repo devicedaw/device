@@ -137,6 +137,9 @@ target behaviour.
   devices" is a placeholder; effects are always rendered. Map the built-in effects that have a close Live
   device (EQ, compressor, delay, reverb, utility…) to that device with matching settings, and render the rest.
 
+- [x] **G36. Sends between return tracks** (#132, spec 016). A return sends into the returns after it, from the
+  mixer's Sends section and its Sends tab, with one solo rule for every bus and the sends kept in the Live set.
+
 ### Visual differences in the main window
 
 Found by putting Device's review states (`--state reference-default`, `reference-mixer`, `reference-pianoroll`)

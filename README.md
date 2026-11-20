@@ -90,7 +90,8 @@ wgpu.
   delay compensation keeps the direct and the returned signal aligned. Group tracks (⌘G, or Add track › Group
   track) play their tracks through one set of effects and one fader, and fold away to a single row that
   sums up their clips. Their tracks sit indented under the group, and the mixer marks them with the group's colour.
-  A group sends into return tracks like any other track.
+  A group sends into return tracks like any other track, and a return sends into the returns after it, so a delay
+  can echo into a reverb.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
   Settings › MIDI › Default instrument picks what a new instrument track (⇧⌘T) plays: any of them, or an
   instrument plugin.

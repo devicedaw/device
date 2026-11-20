@@ -233,13 +233,31 @@ pub fn stem_tracks(p: &Project, pick: StemsPick, selected: Option<TrackId>) -> V
 /// through a return (no sends, every output on the master), so a stem whose output goes to a
 /// return, which is muted here, still plays.
 /// For a return track: that return alone (soloed, even when muted in the mix), fed by the sends
-/// and outputs of every unmuted track as in the mix.
+/// and outputs of every unmuted track as in the mix, upstream returns and groups included (they
+/// keep their mix mutes, and the engine doesn't play a bus feeding a soloed one). Every other
+/// bus is muted, so the returns it feeds stay out of its render (spec 016).
 pub(crate) fn stem_snapshot(mix: &dstudio_core::snapshot::SessionSnapshot, id: TrackId) -> dstudio_core::snapshot::SessionSnapshot {
     let mut snap = mix.clone();
     if snap.tracks.iter().any(|t| t.track_id == id.0 && t.is_return) {
+        // The buses that reach this return through sends between buses.
+        let mut feeds = vec![id.0];
+        loop {
+            let more: Vec<u64> = snap
+                .tracks
+                .iter()
+                .filter(|t| t.is_return && !feeds.contains(&t.track_id) && t.sends.iter().any(|s| feeds.contains(&s.target)))
+                .map(|t| t.track_id)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            feeds.extend(more);
+        }
         for t in &mut snap.tracks {
             t.solo = t.track_id == id.0;
-            t.mute = if t.is_return { !t.solo } else { t.mute };
+            if t.is_return {
+                t.mute = !t.solo && (t.mute || !feeds.contains(&t.track_id));
+            }
         }
         return snap;
     }
@@ -583,17 +601,24 @@ impl Controller {
         const RENDERS: &str = "Samples/Processed/DStudio";
         let has_clips = |t: &dstudio_core::Track| !t.clips.is_empty() || !t.midi_clips.is_empty();
         // A return with devices is rendered too (its wet sound, since Live can't load the
-        // devices), when a track that plays feeds it.
-        let fed = |p: &Project, r: TrackId| {
-            p.tracks
-                .iter()
-                .any(|t| has_clips(t) && !t.mute && (t.output == Some(r) || t.sends.iter().any(|s| s.target == r && s.level > 0.0)))
-        };
+        // devices), when a track that plays feeds it, directly or through earlier returns (spec
+        // 016: returns send only down the list, so one pass in order finds them all).
+        let mut fed: Vec<TrackId> = Vec::new();
+        for r in self.project().returns() {
+            let feeds = |t: &dstudio_core::Track| {
+                !t.mute
+                    && (has_clips(t) || fed.contains(&t.id))
+                    && (t.output == Some(r.id) || t.sends.iter().any(|s| s.target == r.id && s.level > 0.0))
+            };
+            if self.project().tracks.iter().any(feeds) {
+                fed.push(r.id);
+            }
+        }
         let rendered: Vec<(TrackId, String)> = self
             .project()
             .tracks
             .iter()
-            .filter(|t| if t.is_return() { !t.devices.is_empty() && fed(self.project(), t.id) } else { has_clips(t) })
+            .filter(|t| if t.is_return() { !t.devices.is_empty() && fed.contains(&t.id) } else { has_clips(t) })
             .enumerate()
             .map(|(i, t)| (t.id, stem_file_name(i, &t.name)))
             .collect();
@@ -621,11 +646,20 @@ impl Controller {
         // a post-fader send keeps its level and a pre-fader one is divided by the volume.
         // A track whose Out is a return plays through that return alone: "Sends Only" plus a
         // full send to it.
+        // A return's sends go into later returns (spec 016). None goes into a rendered return:
+        // its render already holds everything that feeds it, and its Live return is off.
+        let mut return_sends = Vec::new();
         let mut sends_of = |t: &dstudio_core::Track, baked: bool| -> (Vec<f32>, bool) {
             let levels = returns
                 .iter()
                 .map(|r| {
                     let mut level = 0.0f32;
+                    if t.is_return() && rendered.iter().any(|(id, _)| *id == r.id) {
+                        return level;
+                    }
+                    if t.is_return() && t.sends.iter().any(|s| s.target == r.id && s.level > 0.0) {
+                        return_sends.push(format!("{} to {}", t.name, r.name));
+                    }
                     for s in t.sends.iter().filter(|s| s.target == r.id) {
                         level += if s.pre_fader && baked {
                             pre_sends.push(format!("{} to {}", t.name, r.name));
@@ -672,15 +706,18 @@ impl Controller {
                 (None, dstudio_core::TrackKind::Return) => continue,
             };
             if t.is_return() {
-                // The return's wet sound as audio, next to the (turned off) Live return.
+                // The return's wet sound as audio, next to the (turned off) Live return. It
+                // carries the return's sends into later returns that aren't rendered (spec 016);
+                // the render holds its volume, so a pre-fader send is divided by it.
                 rendered_returns.push(t.name.clone());
+                let (sends, _) = sends_of(t, true);
                 tracks.push(SetTrack {
                     name: format!("{} (rendered)", t.name),
                     color,
                     on: !t.mute,
                     volume: 1.0,
                     pan: 0.0,
-                    sends: Vec::new(),
+                    sends,
                     sends_only: false,
                     content,
                 });
@@ -746,6 +783,8 @@ impl Controller {
                     volume: r.gain,
                     pan: r.pan,
                     pre: false,
+                    // A rendered return's sends are on its "(rendered)" track.
+                    sends: if rendered_returns.contains(&r.name) { Vec::new() } else { sends_of(r, false).0 },
                 })
                 .collect(),
         };
@@ -788,6 +827,13 @@ impl Controller {
             }
             if !to_return.is_empty() {
                 let _ = writeln!(notes, "Out set to a return, so set to Sends Only with a full send in Live: {}.", to_return.join(", "));
+            }
+            if !return_sends.is_empty() {
+                let _ = writeln!(
+                    notes,
+                    "Sends between return tracks are Live return sends at the same level (a rendered return's audio track carries them, and none goes into a rendered return): {}.",
+                    return_sends.join(", ")
+                );
             }
             if !pre_sends.is_empty() {
                 let _ = writeln!(
@@ -1154,6 +1200,29 @@ mod tests {
         assert!(by_id(2).mute && !by_id(2).solo, "the other return is silent");
         assert!(!by_id(1).solo && !by_id(1).mute && by_id(4).mute, "tracks keep their mutes, solos are cleared");
         assert_eq!((by_id(1).output, by_id(1).sends.len()), (Some(2), 1), "sends and outputs stay as in the mix");
+    }
+
+    /// Spec 016: a return's render includes the returns and groups that feed it (with their mix
+    /// mutes) and leaves out the returns it feeds.
+    #[test]
+    fn a_return_stem_keeps_what_feeds_it_and_drops_what_it_feeds() {
+        use dstudio_core::{Track, TrackKind, TrackSend};
+        let mut p = Project::default();
+        let mut g = Track::new(TrackId(5), TrackKind::Group, "Group", dstudio_core::ColorIndex(0));
+        g.sends.push(TrackSend::new(TrackId(3)));
+        let mut ra = Track::new(TrackId(2), TrackKind::Return, "Return A", dstudio_core::ColorIndex(0));
+        ra.sends.push(TrackSend::new(TrackId(3)));
+        let mut rb = Track::new(TrackId(3), TrackKind::Return, "Return B", dstudio_core::ColorIndex(0));
+        rb.sends.push(TrackSend::new(TrackId(4)));
+        let rc = Track::new(TrackId(4), TrackKind::Return, "Return C", dstudio_core::ColorIndex(0));
+        let other = Track::new(TrackId(6), TrackKind::Return, "Return D", dstudio_core::ColorIndex(0));
+        p.tracks = vec![g, ra, rb, rc, other];
+        let (mix, _) = dstudio_core::snapshot::build(&p, 48000.0, &Default::default());
+        let s = stem_snapshot(&mix, TrackId(3));
+        let state = |id: u64| s.tracks.iter().find(|t| t.track_id == id).map(|t| (t.solo, t.mute)).unwrap();
+        assert_eq!(state(3), (true, false), "Return B soloed");
+        assert_eq!((state(2), state(5)), ((false, false), (false, false)), "Return A and the group feed it");
+        assert_eq!((state(4), state(6)), ((false, true), (false, true)), "Return C (fed by B) and D are out");
     }
 
     #[test]

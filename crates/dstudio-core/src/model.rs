@@ -588,8 +588,44 @@ impl Project {
         self.returns().position(|t| t.id == id)
     }
 
+    /// Track `from` may send into `to` (spec 016): an ordinary or group track into any return
+    /// track, a return track into a return after it. Signal always flows down the return list,
+    /// so return sends can't form a loop.
+    pub fn send_allowed(&self, from: TrackId, to: TrackId) -> bool {
+        let (Some(f), Some(t)) = (self.track_index(from), self.track_index(to)) else { return false };
+        from != to && self.tracks[t].is_return() && (!self.tracks[f].is_return() || t > f)
+    }
+
+    /// The first send from a return into a return before it, as (sender, target). None in a
+    /// valid project.
+    pub fn return_order_conflict(&self) -> Option<(TrackId, TrackId)> {
+        self.upward_return_send(&(0..self.tracks.len()).collect::<Vec<_>>())
+    }
+
+    /// The send from a return into an earlier return that moving `track` to `index` (as
+    /// `Command::MoveTrack` does) would leave, as (sender, target). None when the move keeps every
+    /// return send pointing down the list, or `track` doesn't exist.
+    pub fn return_move_conflict(&self, track: TrackId, index: usize) -> Option<(TrackId, TrackId)> {
+        let from = self.track_index(track)?;
+        let mut order: Vec<usize> = (0..self.tracks.len()).collect();
+        let moved = order.remove(from);
+        order.insert(index.min(order.len()), moved);
+        self.upward_return_send(&order)
+    }
+
+    /// With the tracks in `order` (indices into `tracks`): the first return send whose target
+    /// isn't after its sender.
+    fn upward_return_send(&self, order: &[usize]) -> Option<(TrackId, TrackId)> {
+        let pos = |id: TrackId| order.iter().position(|&k| self.tracks[k].id == id);
+        order.iter().enumerate().filter(|&(_, &k)| self.tracks[k].is_return()).find_map(|(at, &k)| {
+            let r = &self.tracks[k];
+            r.sends.iter().find(|s| pos(s.target).is_some_and(|j| j <= at)).map(|s| (r.id, s.target))
+        })
+    }
+
     /// Repairs routing a hand-edited or damaged file could hold: return tracks move after the
-    /// ordinary tracks (keeping their order) and lose any sends, output, input, arm or monitor.
+    /// ordinary tracks (keeping their order) and lose any output, input, arm or monitor, and any
+    /// send that isn't into a later return (spec 016).
     /// A return holding clips or an instrument, or beyond the first [MAX_RETURNS], loads as an
     /// ordinary track instead, so nothing in the file is lost. Sends and outputs that don't name a
     /// return track and duplicate sends are dropped, levels are clamped. Valid projects are unchanged.
@@ -647,8 +683,18 @@ impl Project {
             }
         }
         self.tracks = ordinary;
-        for mut r in returns {
-            r.sends.clear();
+        for (i, mut r) in returns.into_iter().enumerate() {
+            // A return keeps its sends into later returns (one per target); anything else would
+            // send up the list or into a track that isn't a return.
+            let mut seen = Vec::new();
+            r.sends.retain(|s| {
+                let ok = return_ids[i + 1..].contains(&s.target) && !seen.contains(&s.target);
+                seen.push(s.target);
+                ok
+            });
+            for s in &mut r.sends {
+                s.level = if s.level.is_finite() { s.level.clamp(0.0, TrackSend::MAX_LEVEL) } else { 0.0 };
+            }
             r.output = None;
             self.tracks.push(r);
         }

@@ -2500,9 +2500,8 @@ impl Controller {
         // ---- mixer strips ----
         s.set_mixer_open(self.mixer_open);
         let first_return = p.ordinary_track_count();
-        // Each strip's range in the strip-sends model (push_routing: ordinary tracks in order,
-        // one send slot per return track).
-        let slots = p.returns().count() as i32;
+        // Each strip's range in the strip-sends model (push_routing: every track in order, one
+        // send slot per return it can send into).
         let mut send_first = 0;
         let mut column = 0;
         // The group a strip belongs to (a group strip belongs to itself).
@@ -2514,7 +2513,7 @@ impl Controller {
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                let n = if t.is_return() { 0 } else { slots };
+                let n = self.send_slots(t).count() as i32;
                 send_first += n;
                 (i, t, send_first - n, n)
             })

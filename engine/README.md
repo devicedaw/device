@@ -1496,10 +1496,16 @@ sends need only looser validation.
 
 * ordinary track: `send_live = !mute && (!any_track_solo || solo)`; `main_on` = `send_live` when its output is a
   return, else `!mute && ((!any_track_solo && !any_return_solo) || solo)`;
-* return: `main_on = !mute && (!any_return_solo || solo)`.
+* return (any bus: returns and groups): with no bus soloed, `main_on = send_live = !mute`. With a bus soloed,
+  `heard` is the soloed buses plus every bus they reach through unmuted buses' sends, and `feeds` every bus that
+  reaches a soloed one: `main_on = !mute && heard`, `send_live = !mute && (heard || feeds)`;
+* each send (`SendNode::live`): a send into a bus that is heard but neither soloed nor feeding a soloed bus runs
+  only from a heard bus (spec 016).
 
-So soloing ordinary tracks keeps the returns playing (fed by the soloed tracks only), and soloing a return plays
-only the soloed returns, still fed by every live track.
+So soloing ordinary tracks keeps the returns playing (fed by the soloed tracks only, and sending into each other),
+and soloing a return plays it, still fed by every live track and by the buses feeding it, plus the returns it feeds,
+which play only what it sends them. A session without sends between buses renders as before for every mute and
+solo state.
 
 **Delay compensation across buses.** ADR 0004 aligned every track at the master; with buses it aligns every input
 of every bus. With `lat_t` the chain latency of track `t`, a return `r` receives at `in_r = max lat_s` over its
@@ -1515,7 +1521,8 @@ compensated (as for every sidechain).
 numbers on the CI machine class. A session without returns pays nothing (one branch per track).
 
 **Tests:** `tests/test_routing.cpp` (levels pre/post, output to a return, mute/solo, validation, PDC alignment with
-`DStudioTestLatency.clap` on a return, export = live, no allocation on the audio thread);
+`DStudioTestLatency.clap` on a return, export = live, no allocation on the audio thread; return-into-return
+sends, their solo rule and chained delay compensation);
 `crates/dstudio-engine/tests/routing.rs` (end to end through the Rust wrapper).
 
 ## Automation

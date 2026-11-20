@@ -681,3 +681,22 @@ the default row), both as view changes, not undo steps. Double-click resets eith
 same double-click. `ZoomSlider` moved to `ui/widgets.slint` for both headers; mapping in `src/fit.rs`. Self-test
 section `zoom_slider_steps`.
 
+### 2026-11-20: sends between return tracks
+
+A return track sends into the returns after it (spec 016): a delay return into a reverb, a reverb into a shimmer.
+Signal always flows down the return list, so sends can't loop; a return move that would turn a send upward is
+refused and the status line names the send. The mixer's Sends section shows on return strips (a row for each later
+return, on that return's line) and a selected return's Sends tab has a knob for each later return, with the same
+Post / Pre, dB readout, tag menu and undo as ordinary sends. Return sends are saved in the track's existing `sends`
+list (`SCHEMA_VERSION` stays 1); a hand-edited upward or looping send is dropped on load, and builds before this one
+drop return-to-return sends when they open a project.
+- Engine: one solo rule for returns and groups. A soloed bus is heard with the buses it feeds (which take only what
+  comes down that path); buses feeding it keep sending without being heard. Before, soloing a return silenced a
+  group's send into it. `SendNode::live` is computed when the graph is built; with no bus soloed nothing changes.
+- Live set export: return sends into later returns are written as active Live return sends, a rendered return's
+  audio track carries its sends, no send goes into a rendered return, and a rendered return's audio includes the
+  returns feeding it. The notes list them.
+- Tests: `tests/return_sends.rs` (core), five `routing_*` engine cases (pre/post, solo with returns and a group,
+  chained delay compensation, RT-guarded export parity), app unit tests, self-test `return_send_steps` and the
+  Project export section. `bench_render` gets a "+ A into B" Returns row. Review states `review-return-sends` and
+  `review-return-sends-strip`.
