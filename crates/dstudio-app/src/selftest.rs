@@ -16357,6 +16357,11 @@ fn api_key_steps() -> Vec<Step> {
                 if let Some(p) = s2.borrow_mut().take() {
                     ctl.borrow_mut().provider = p;
                 }
+            }),
+        ),
+    ]
+}
+
 /// Ask from a clip (roadmap G17): with a clip selected, ⌘K opens the assistant with the clip as
 /// its context and the cursor in the composer.
 fn ask_clip_steps() -> Vec<Step> {
