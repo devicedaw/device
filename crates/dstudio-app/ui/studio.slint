@@ -55,6 +55,9 @@ export struct AutoExtra { track-id: int, index: int, y: length, cat: string, par
 
 export struct RulerLabel { x: length, text: string }
 
+// A tempo point on the ruler (src/tempo_lane.rs): the mark at x, its BPM text from text-x.
+export struct TempoMark { x: length, text-x: length, text: string }
+
 // Section name in the ruler's section lane (src/sections.rs): x and room in lane points, ink per block.
 export struct SectionLabel { x: length, w: length, text: string, ink: color }
 
@@ -463,6 +466,8 @@ export global Studio {
     in property <length> scroll-y;
     in property <image> timeline-image;
     in property <[RulerLabel]> ruler-labels;
+    in property <[TempoMark]> tempo-marks;
+    in property <color> tempo-mark-color: #65c9b8;
     in property <[SectionLabel]> section-labels;
     in property <length> section-add-x: 8.5px;     // centre of the section lane's "+"
     in property <[ClipLabel]> clip-labels;
@@ -1221,6 +1226,10 @@ export global Studio {
     in property <length> tracks-height: 149px;  // content height of all track rows
     in property <length> master-h: 30px;        // master row (64.5 pt while lanes are shown)
     in property <int> master-auto-state;
+    // The master row's lane pill: "Master › Volume" or "Song › Tempo" (spec 015).
+    in property <string> master-auto-cat: "Master";
+    in property <string> master-auto-param: "Volume";
+    in property <color> master-auto-accent: #ebc542;
     in property <bool> master-vol-auto;
     in property <bool> sel-vol-auto;
     in property <bool> sel-pan-auto;

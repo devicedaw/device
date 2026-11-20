@@ -62,13 +62,8 @@ impl Controller {
         let (l, t, r, b) = k.plot;
         let (pw, ph) = ((dw - l - r) * Z, (dh - t - b) * Z);
         let get = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
-        let input = device_fields::Input {
-            get: &get,
-            bpm: self.project().transport.bpm as f32,
-            n: (pw.round() as usize).max(64),
-            cycles: None,
-            win: true,
-        };
+        let input =
+            device_fields::Input { get: &get, bpm: self.bpm_now() as f32, n: (pw.round() as usize).max(64), cycles: None, win: true };
         let Some(plot) = device_fields::plot(f.plot, &input) else { return PanelCanvas::default() };
         let mut paths: Vec<PanelPath> = Vec::new();
         let mut texts: Vec<PanelText> = Vec::new();

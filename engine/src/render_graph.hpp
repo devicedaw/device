@@ -22,6 +22,7 @@
 #include "automation.hpp"
 #include "dstudio_engine.h"
 #include "synth.hpp"
+#include "tempo_map.hpp"
 #include "warp.hpp"
 
 #include <atomic>
@@ -371,6 +372,12 @@ struct RenderGraph {
     std::vector<WarpVoiceKey> warp_voice_keys;
     std::vector<std::shared_ptr<WarpVoice>> warp_voice_refs;
     std::vector<WarpVoice*> warp_voices;
+    // Tempo map (se_session_publish_v12): empty when the song has one tempo
+    // (devices then see se_transport_set_tempo). click_quarters: quarter notes
+    // per metronome beat on the map.
+    std::vector<se_tempo_segment> tempo;
+    double click_quarters = 1.0;
+    TempoMap tempo_map() const noexcept { return TempoMap(tempo.data(), tempo.size(), sample_rate); }
 };
 
 // Lane view for evaluation.
@@ -400,6 +407,8 @@ void strip_matrix(float trim, float width, bool mono, float& a, float& b) noexce
 // Synth states are not assigned here (see RenderGraph::synth_refs); `synths`
 // is sized and null. Plugin slots are created with null instances (the
 // engine resolves them in the same track/device order).
+int32_t build_render_graph(const se_session_desc_v12& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v11& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v10& desc, const AssetLookup& lookup,

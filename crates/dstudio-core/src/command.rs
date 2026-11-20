@@ -232,8 +232,22 @@ pub enum Command {
         warp: crate::warp::ClipWarp,
         label: String,
     },
+    /// The song tempo. With tempo changes (spec 015) it sets the point in effect at tick `at`
+    /// (the last point at or before it, or the first point before the first change; `None` =
+    /// bar 1), as the transport field does at the playhead.
     SetTempo {
         bpm: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<Ticks>,
+    },
+    /// Replace the tempo map (spec 015): every lane gesture is one of these. Empty `points`
+    /// removes the tempo changes; the song then keeps `bpm`, or, when `bpm` is None, the tempo it
+    /// had at bar 1. `bpm` is ignored while there are points (the tempo at bar 1 is the first
+    /// point's).
+    SetTempoMap {
+        points: Vec<crate::tempo::TempoPoint>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bpm: Option<f64>,
     },
     SetTimeSignature {
         numerator: u8,
@@ -506,6 +520,9 @@ impl Command {
             Command::SetClipEnabled { enabled, .. } => (if *enabled { "Enable Clip" } else { "Disable Clip" }).into(),
             Command::SetClipWarp { label, .. } => label.clone(),
             Command::SetTempo { .. } => "Tempo Change".into(),
+            Command::SetTempoMap { points, .. } => {
+                (if points.is_empty() { "Delete Tempo Automation" } else { "Edit Tempo Automation" }).into()
+            }
             Command::SetTimeSignature { .. } => "Time Signature Change".into(),
             Command::SetLoop { .. } => "Loop Change".into(),
             Command::SetProjectKey { .. } => "Key Change".into(),
@@ -571,7 +588,8 @@ impl Command {
             Command::SetMasterGain { .. } => Some("master_gain".into()),
             Command::SetClipGain { clip, .. } => Some(format!("clipgain:{}", clip.0)),
             Command::SetClipWarp { clip, label, .. } => Some(format!("clipwarp:{}:{label}", clip.0)),
-            Command::SetTempo { .. } => Some("tempo".into()),
+            Command::SetTempo { at: None, .. } => Some("tempo".into()),
+            Command::SetTempo { at: Some(t), .. } => Some(format!("tempo:{t}")),
             Command::SetSynthParams { track, params } => Some(format!("synth:{}:{}", track.0, params.preset)),
             Command::SetDeviceParam { device, param, .. } => Some(format!("devparam:{}:{param}", device.0)),
             Command::SetModLink { source, index, .. } => Some(format!("modlink:{}:{index}", source.0)),
@@ -884,12 +902,37 @@ impl Command {
                 let old = std::mem::replace(&mut p.tracks[ti].clips[ci].warp, probe.warp);
                 Ok(Command::SetClipWarp { clip, warp: old, label })
             }
-            Command::SetTempo { bpm } => {
+            Command::SetTempo { bpm, at } => {
                 if !(MIN_BPM..=MAX_BPM).contains(&bpm) {
                     return Err(invalid("bpm", format!("must be within {MIN_BPM}..={MAX_BPM}")));
                 }
-                let old = std::mem::replace(&mut p.transport.bpm, bpm);
-                Ok(Command::SetTempo { bpm: old })
+                if at.is_some_and(|t| t < 0) {
+                    return Err(invalid("at", "must be >= 0"));
+                }
+                let tr = &mut p.transport;
+                if tr.tempo.is_empty() {
+                    let old = std::mem::replace(&mut tr.bpm, bpm);
+                    return Ok(Command::SetTempo { bpm: old, at });
+                }
+                let i = tr.tempo.partition_point(|q| q.time <= at.unwrap_or(0)).max(1) - 1;
+                let old = std::mem::replace(&mut tr.tempo[i].bpm, bpm);
+                tr.bpm = tr.tempo[0].bpm;
+                Ok(Command::SetTempo { bpm: old, at })
+            }
+            Command::SetTempoMap { points, bpm } => {
+                crate::tempo::validate(&points).map_err(|e| invalid("points", e))?;
+                if bpm.is_some_and(|b| !(MIN_BPM..=MAX_BPM).contains(&b)) {
+                    return Err(invalid("bpm", format!("must be within {MIN_BPM}..={MAX_BPM}")));
+                }
+                let tr = &mut p.transport;
+                let old_bpm = tr.bpm;
+                let old = std::mem::replace(&mut tr.tempo, points);
+                tr.bpm = match tr.tempo.first() {
+                    Some(f) => f.bpm,
+                    None => bpm.unwrap_or(old_bpm),
+                };
+                // Without changes before, the inverse has to put the single tempo back too.
+                Ok(Command::SetTempoMap { bpm: old.is_empty().then_some(old_bpm), points: old })
             }
             Command::SetTimeSignature { numerator, denominator } => {
                 if numerator == 0 || numerator > 32 || ![1, 2, 4, 8, 16, 32].contains(&denominator) {
@@ -1362,6 +1405,9 @@ impl Command {
                 Ok(Command::ReplaceDevice { device: new_id, with: old })
             }
             Command::SetAutomationLane { track, target, lane } => {
+                if target == AutomationTarget::Tempo {
+                    return Err(invalid("target", "the tempo is edited with set_tempo_map"));
+                }
                 if let Some(l) = &lane {
                     if l.target != target {
                         return Err(invalid("lane", "lane.target must equal target"));

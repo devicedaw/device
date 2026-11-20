@@ -2911,7 +2911,7 @@ impl Controller {
         let Some(d) = self.project().device(device) else { return };
         let (enabled, preset) = (self.device_on_now(d), d.preset.clone());
         let accent = self.project().find_device(device).map_or(rgb(0x439b94), |(ti, _)| card_color(self.project().tracks[ti].color));
-        let bpm = self.project().transport.bpm as f32;
+        let bpm = self.bpm_now() as f32;
         // The dials' rings follow the live modulation, so it is part of what the page is built from.
         let built_from: Vec<f32> = v
             .iter()

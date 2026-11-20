@@ -16,7 +16,10 @@ use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 pub const FORMAT: &str = "device-studio-project";
-pub const SCHEMA_VERSION: u32 = 1;
+/// The newest schema this build reads. Version 2 adds tempo changes (spec 015); a project without
+/// them is still written as version 1 ([schema_version_for]), so builds before 2 keep opening it,
+/// and refuse (never misread) one that has them.
+pub const SCHEMA_VERSION: u32 = 2;
 pub const PROJECT_FILE: &str = "project.json";
 pub const EXTENSION: &str = "dsproj";
 
@@ -55,6 +58,11 @@ pub struct Loaded {
     pub missing_media: Vec<String>,
 }
 
+/// The schema a project is written with: the oldest that holds everything in it.
+pub fn schema_version_for(project: &Project) -> u32 {
+    if project.transport.tempo.is_empty() { 1 } else { 2 }
+}
+
 /// Save atomically (write temp file, fsync, rename).
 pub fn save(project: &Project, dir: &Path) -> Result<(), PersistError> {
     fs::create_dir_all(dir).map_err(io(dir))?;
@@ -66,7 +74,7 @@ pub fn save(project: &Project, dir: &Path) -> Result<(), PersistError> {
     }
     let env = Envelope {
         format: FORMAT.into(),
-        schema_version: SCHEMA_VERSION,
+        schema_version: schema_version_for(&p),
         saved_with: concat!("dstudio-core ", env!("CARGO_PKG_VERSION")).into(),
         project: serde_json::to_value(&p)?,
     };
@@ -116,7 +124,7 @@ pub fn load(dir: &Path) -> Result<Loaded, PersistError> {
 fn migrate(from: u32, value: serde_json::Value) -> serde_json::Value {
     #[allow(clippy::match_single_binding)]
     match from {
-        // v1 is current. Future: `0 => migrate(1, v0_to_v1(value))`.
+        // v2 only adds `transport.tempo`, which v1 files don't have (it defaults to empty).
         _ => value,
     }
 }
@@ -172,6 +180,19 @@ fn repair(project: &mut Project) -> Result<(), PersistError> {
     let ts = t.time_signature;
     if ts.numerator == 0 || ts.numerator > 32 || ![1, 2, 4, 8, 16, 32].contains(&ts.denominator) {
         t.time_signature = TimeSignature { numerator: 4, denominator: 4 };
+    }
+    // Tempo changes: the ranges SetTempoMap accepts, sorted, one point per tick, and the tempo at
+    // bar 1 kept as the song tempo.
+    t.tempo.retain(|q| q.bpm.is_finite() && q.time >= 0);
+    for q in &mut t.tempo {
+        q.bpm = q.bpm.clamp(MIN_BPM, MAX_BPM);
+        q.time = q.time.min(crate::tempo::MAX_TEMPO_TICK);
+    }
+    t.tempo.sort_by_key(|q| q.time);
+    t.tempo.dedup_by_key(|q| q.time);
+    t.tempo.truncate(crate::tempo::MAX_TEMPO_POINTS);
+    if let Some(f) = t.tempo.first() {
+        t.bpm = f.bpm;
     }
     if t.key.is_some_and(|k| k.root > 11) {
         t.key = None;

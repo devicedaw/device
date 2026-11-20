@@ -114,7 +114,14 @@ impl Rig {
             instrument_plugin: None,
             synth: None,
         };
-        let snap = SessionSnapshot { tracks: vec![track], master_gain: 1.0, master_automation: vec![], device_assets: Default::default() };
+        let snap = SessionSnapshot {
+            tracks: vec![track],
+            master_gain: 1.0,
+            master_automation: vec![],
+            device_assets: Default::default(),
+            tempo: vec![],
+            click_quarters: 1.0,
+        };
         Rig { engine, snap, _dir: dir }
     }
 
@@ -310,6 +317,8 @@ fn drum_rig(notes: Vec<NoteSnapshot>) -> (Engine, SessionSnapshot, tempfile::Tem
         master_gain: 1.0,
         master_automation: vec![],
         device_assets: [(AssetId(5), info.asset_id)].into(),
+        tempo: vec![],
+        click_quarters: 1.0,
     };
     (engine, snap, dir)
 }

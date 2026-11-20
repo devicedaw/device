@@ -532,6 +532,7 @@ if(DSTUDIO_ENGINE_BUILD_TESTS)
     tests/test_routing.cpp
     tests/test_strip.cpp
     tests/test_automation.cpp
+    tests/test_tempo.cpp
     tests/test_frame_ring.cpp
     tests/test_wasapi_period.cpp
     tests/test_asio_convert.cpp

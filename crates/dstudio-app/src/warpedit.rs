@@ -254,7 +254,7 @@ impl Controller {
     /// Original BPM of a clip whose tempo was never set: the detected tempo,
     /// else the project tempo.
     fn default_original_bpm(&self, c: &Clip) -> f64 {
-        self.detected_bpm(c.asset).unwrap_or(self.project().transport.bpm)
+        self.detected_bpm(c.asset).unwrap_or(self.project().bpm_at(c.start))
     }
 
     /// The open audio clip's warp, switched on: the
@@ -307,7 +307,7 @@ impl Controller {
         if Self::ac_transpose_editable(c) {
             return format_semitones(c.warp.transpose as f64);
         }
-        format_semitones(12.0 * (self.project().transport.bpm * c.warp.speed / c.warp.original_bpm).log2())
+        format_semitones(12.0 * (self.project().bpm_at(c.start) * c.warp.speed / c.warp.original_bpm).log2())
     }
 
     /// Transpose drag (phase 0 press, 1 move, 2 release): right or up raises,

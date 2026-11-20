@@ -403,7 +403,8 @@ struct DeviceSession {
         t.points.push_back(std::move(pts));
         t.lanes.push_back(l);
     }
-    int32_t publish(se_engine* e) {
+    // With a tempo map (se_session_publish_v12) when `tempo` is not empty.
+    int32_t publish(se_engine* e, const std::vector<se_tempo_segment>& tempo = {}, double click_quarters = 1.0) {
         descs.clear();
         for (Track& t : tracks) {
             for (std::size_t i = 0; i < t.devices.size(); ++i) {
@@ -429,7 +430,13 @@ struct DeviceSession {
         s.tracks = descs.data();
         s.track_count = static_cast<uint32_t>(descs.size());
         s.master_gain = 1.0f;
-        return se_session_publish_v6(e, &s);
+        if (tempo.empty()) return se_session_publish_v6(e, &s);
+        se_session_desc_v12 d{};
+        d.v11.v10.v9.v8.v7.v6 = s;
+        d.tempo = tempo.data();
+        d.tempo_count = static_cast<uint32_t>(tempo.size());
+        d.click_quarters = click_quarters;
+        return se_session_publish_v12(e, &d);
     }
 };
 

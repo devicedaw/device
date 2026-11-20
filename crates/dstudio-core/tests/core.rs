@@ -82,7 +82,7 @@ fn validation_rejects_and_leaves_state_unchanged() {
     let rev = d.revision();
     assert!(d.execute(Command::SetTrackGain { track, gain: 100.0 }, Origin::User).is_err());
     assert!(d.execute(Command::SetTrackPan { track, pan: f32::NAN }, Origin::User).is_err());
-    assert!(d.execute(Command::SetTempo { bpm: 5.0 }, Origin::User).is_err());
+    assert!(d.execute(Command::SetTempo { bpm: 5.0, at: None }, Origin::User).is_err());
     assert!(d.execute(Command::AddClip { track, clip: clip(a, 0, 48_000 * 11) }, Origin::User).is_err(), "longer than asset");
     assert!(d.execute(Command::AddClip { track: TrackId(999), clip: clip(a, 0, 10) }, Origin::User).is_err());
     let inst = d.project().tracks[1].id;
@@ -166,7 +166,7 @@ fn batch_is_atomic_and_redo_reuses_ids() {
     let before = d.project().clone();
     let bad = Command::Batch {
         label: "Bad".into(),
-        commands: vec![Command::AddClip { track, clip: clip(a, 0, 10) }, Command::SetTempo { bpm: 0.0 }],
+        commands: vec![Command::AddClip { track, clip: clip(a, 0, 10) }, Command::SetTempo { bpm: 0.0, at: None }],
     };
     assert!(d.execute(bad, Origin::Assistant).is_err());
     assert_eq!(d.project(), &before, "failed batch rolls back fully (including next_id)");
@@ -189,7 +189,7 @@ fn batch_is_atomic_and_redo_reuses_ids() {
 fn commands_round_trip_as_json_for_ai_and_scripting() {
     let json = r#"{"op":"set_tempo","bpm":128.0}"#;
     let cmd: Command = serde_json::from_str(json).unwrap();
-    assert_eq!(cmd, Command::SetTempo { bpm: 128.0 });
+    assert_eq!(cmd, Command::SetTempo { bpm: 128.0, at: None });
     let cmd = Command::SetTrackPan { track: TrackId(3), pan: -0.5 };
     let back: Command = serde_json::from_str(&serde_json::to_string(&cmd).unwrap()).unwrap();
     assert_eq!(cmd, back);
@@ -210,7 +210,7 @@ fn save_and_reopen_project() {
     d.execute(Command::AddAsset { asset: a }, Origin::User).unwrap();
     let aid = d.project().assets[0].id;
     d.execute(Command::AddClip { track, clip: clip(aid, 2 * PPQ, 500) }, Origin::User).unwrap();
-    d.execute(Command::SetTempo { bpm: 97.5 }, Origin::User).unwrap();
+    d.execute(Command::SetTempo { bpm: 97.5, at: None }, Origin::User).unwrap();
 
     let proj_dir = dir.path().join("Song.dsproj");
     persist::save(d.project(), &proj_dir).unwrap();
@@ -307,7 +307,7 @@ fn load_repairs_values_the_commands_would_refuse() {
     let mut d = Document::new(p);
     let (sig, bpm) = (d.project().transport.time_signature, d.project().transport.bpm);
     d.execute(Command::SetTimeSignature { numerator: 3, denominator: 4 }, Origin::User).unwrap();
-    d.execute(Command::SetTempo { bpm: 120.0 }, Origin::User).unwrap();
+    d.execute(Command::SetTempo { bpm: 120.0, at: None }, Origin::User).unwrap();
     d.undo().unwrap();
     d.undo().unwrap();
     assert_eq!((d.project().transport.time_signature, d.project().transport.bpm), (sig, bpm));

@@ -100,7 +100,14 @@ fn publish(e: &Engine, asset: u64, frames: u32, route: impl FnOnce(&mut TrackSna
     let mut r = track(9);
     r.is_return = true;
     route(&mut t, &mut r);
-    let snap = SessionSnapshot { tracks: vec![t, r], master_gain: 1.0, master_automation: vec![], device_assets: Default::default() };
+    let snap = SessionSnapshot {
+        tracks: vec![t, r],
+        master_gain: 1.0,
+        master_automation: vec![],
+        device_assets: Default::default(),
+        tempo: vec![],
+        click_quarters: 1.0,
+    };
     e.publish(&snap).unwrap();
 }
 
@@ -167,7 +174,13 @@ fn routing_to_a_track_that_is_not_a_return_is_refused() {
     let e = engine();
     let mut t = track(1);
     t.sends.push(SendSnapshot { target: 2, gain: 1.0, pre_fader: false });
-    let snap =
-        SessionSnapshot { tracks: vec![t, track(2)], master_gain: 1.0, master_automation: vec![], device_assets: Default::default() };
+    let snap = SessionSnapshot {
+        tracks: vec![t, track(2)],
+        master_gain: 1.0,
+        master_automation: vec![],
+        device_assets: Default::default(),
+        tempo: vec![],
+        click_quarters: 1.0,
+    };
     assert!(e.publish(&snap).is_err());
 }

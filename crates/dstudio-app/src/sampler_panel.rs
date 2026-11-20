@@ -1384,7 +1384,7 @@ impl Controller {
     fn chop_for(&self, asset: &dstudio_core::Asset, transient: bool, division: u32, sensitivity: f32) -> Vec<Slice> {
         let frames = (asset.frames as f64 * self.rate / asset.sample_rate) as u64;
         let l0 = self.level0_of(asset.id).unwrap_or(&[]);
-        chop(l0, crate::peaks::L0_FRAMES as f64, self.rate, frames, transient, division, sensitivity, self.project().transport.bpm)
+        chop(l0, crate::peaks::L0_FRAMES as f64, self.rate, frames, transient, division, sensitivity, self.bpm_now())
     }
 
     // ---------------------------------------------------------------- loading

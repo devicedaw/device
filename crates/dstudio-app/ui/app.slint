@@ -676,6 +676,14 @@ component Timeline inherits Panel {
         for l in Studio.ruler-labels: Text {
             x: l.x + 4.5px; y: 0px; height: 11px; text: l.text; color: #bdbdbd; font-size: 7.75px; font-weight: 600; vertical-alignment: center;
         }
+        // Tempo changes (spec 015): a mark standing on the bar-number band's rule, and the BPM.
+        for m in Studio.tempo-marks: Rectangle {
+            Rectangle { x: m.x - 1px; y: 9px; width: 2px; height: 7.5px; border-radius: 1px; background: Studio.tempo-mark-color; }
+            Text {
+                x: m.text-x; y: 0px; height: 11px; text: m.text; color: Studio.tempo-mark-color;
+                font-size: 7.75px; font-weight: 600; vertical-alignment: center;
+            }
+        }
         Icon { x: Studio.section-add-x - 5.5px; y: 26.5px; width: 11px; height: 11px; d: Icons.plus; ink: Tokens.text-tertiary; }
         // Section names: 10 px weight 600, -0.04 em, in a dark shade of the block's hue.
         for l in Studio.section-labels: Text {
@@ -814,6 +822,7 @@ component Timeline inherits Panel {
         x: 0; y: root.height - Studio.master-h; width: Tokens.lane-x - 0.5px; height: Studio.master-h;
         automation: Studio.auto-shown; volume-pos: Studio.master-pos; vol-auto: Studio.master-vol-auto;
         level: Studio.master-level; auto-state: Studio.master-auto-state; muted: Studio.master-mute;
+        auto-cat: Studio.master-auto-cat; auto-param: Studio.master-auto-param; auto-accent: Studio.master-auto-accent;
     }
 }
 

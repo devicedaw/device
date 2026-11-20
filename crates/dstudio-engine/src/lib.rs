@@ -246,7 +246,7 @@ impl Engine {
     }
 
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v11`: audio clip fades; channel-strip trim, width and mono (spec 005); return tracks, sends and outputs (spec 002); audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
+    /// (`se_session_publish_v12`: the tempo map (spec 015); audio clip fades; channel-strip trim, width and mono (spec 005); return tracks, sends and outputs (spec 002); audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
     /// [`SynthParams`] (`synth: None` uses the engine defaults, which equal
     /// `SynthParams::default()`) or by the track's instrument plugin; each
@@ -467,9 +467,27 @@ impl Engine {
             .filter(|c| c.fades != (0, 0))
             .map(|c| ffi::se_clip_fade_desc { clip_id: c.clip_id, fade_in: c.fades.0, fade_out: c.fades.1 })
             .collect();
-        let desc = ffi::se_session_desc_v11 { v10, fades: fades.as_ptr(), fade_count: fades.len() as u32, _pad: 0 };
+        let v11 = ffi::se_session_desc_v11 { v10, fades: fades.as_ptr(), fade_count: fades.len() as u32, _pad: 0 };
+        // Tempo map (spec 015): none when the song has one tempo.
+        let tempo: Vec<ffi::se_tempo_segment> = s
+            .tempo
+            .iter()
+            .map(|g| ffi::se_tempo_segment {
+                start_frame: g.start_frame,
+                start_quarter: g.start_quarter,
+                start_bpm: g.start_bpm,
+                end_bpm: g.end_bpm,
+            })
+            .collect();
+        let desc = ffi::se_session_desc_v12 {
+            v11,
+            tempo: tempo.as_ptr(),
+            tempo_count: tempo.len() as u32,
+            _pad: 0,
+            click_quarters: if s.click_quarters.is_finite() && s.click_quarters > 0.0 { s.click_quarters } else { 1.0 },
+        };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish_v11(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v12(self.raw, &desc) })
     }
 
     fn device_store(
@@ -859,6 +877,8 @@ fn lane_desc(l: &LaneSnapshot, points: &[ffi::se_auto_point]) -> ffi::se_auto_la
         AutomationTarget::Trim => (ffi::SE_AUTO_TRIM, 0, 0, 0),
         AutomationTarget::Width => (ffi::SE_AUTO_WIDTH, 0, 0, 0),
         AutomationTarget::Mono => (ffi::SE_AUTO_MONO, 0, 0, 0),
+        // Never in a snapshot (SetAutomationLane refuses it); an unknown target fails the publish.
+        AutomationTarget::Tempo => (u8::MAX, 0, 0, 0),
     };
     ffi::se_auto_lane_desc {
         target,
@@ -2003,6 +2023,8 @@ mod tests {
                 master_gain: 1.0,
                 master_automation: vec![],
                 device_assets: Default::default(),
+                tempo: vec![],
+                click_quarters: 1.0,
             };
             e.publish(&snap).unwrap_or_else(|err| panic!("{}: {err}", p.preset));
         }
@@ -2036,6 +2058,8 @@ mod tests {
             master_gain: 1.0,
             master_automation: vec![],
             device_assets: Default::default(),
+            tempo: vec![],
+            click_quarters: 1.0,
         };
         assert_eq!(e.publish(&snap).unwrap_err().code, ffi::SE_ERR_INVALID_ARG);
     }
