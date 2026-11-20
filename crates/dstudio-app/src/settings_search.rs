@@ -305,7 +305,7 @@ mod tests {
         found.sort();
         want.sort();
         assert_eq!(found, want);
-        assert_eq!(help("Buffer size"), ENTRIES[11].help);
+        assert_eq!(help("Buffer size"), ENTRIES.iter().find(|e| e.label == "Buffer size").unwrap().help);
         assert_eq!(help("No such setting"), "");
     }
 }

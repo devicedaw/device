@@ -1,6 +1,6 @@
 # Update check and the "Update available" pill
 
-Status: Building · Spec: 022 · Issue: none · Roadmap: [010 › G16](../010-parity-roadmap/spec.md)
+Status: Done · Spec: 022 · Issue: none · Roadmap: [010 › G16](../010-parity-roadmap/spec.md)
 
 ## Problem
 
