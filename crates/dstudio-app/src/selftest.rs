@@ -3678,17 +3678,22 @@ fn steps() -> Vec<Step> {
         ),
         Do("click 'Add track'", Box::new(|a| click(a, tracks_x() + 37.35, geo().timeline_y + 45.8))),
         Check(
-            "the Add track menu offers Audio, Instrument, Return and Group tracks",
-            Box::new(|c, _| {
-                let l = c.route_menu_labels();
-                (l == ["Audio track", "Instrument track", "Return track", "Group track"]).then_some(()).ok_or(format!("{l:?}"))
+            "the Add track menu offers Audio, Instrument, Sampler, Drum and Return tracks, with their keys",
+            Box::new(|_, a| {
+                let l = menu_labels(a);
+                let items = a.global::<Studio>().get_menu_items();
+                let keys: Vec<String> = (0..items.row_count()).filter_map(|i| items.row_data(i)).map(|m| m.shortcut.to_string()).collect();
+                (l == ["Audio track", "Instrument track", "Sampler track", "Drum track", "Return track"] && keys[..2] == ["⌘ T", "⇧⌘ T"])
+                    .then_some(())
+                    .ok_or(format!("{l:?} {keys:?}"))
             }),
         ),
-        DoC(
+        Do(
             "pick 'Audio track'",
-            Box::new(|a, ctl| {
-                let (x, y) = route_row(ctl, 0);
-                click(a, x, y)
+            Box::new(|a| {
+                if let Some((x, y)) = menu_row_xy(a, "Audio track") {
+                    click(a, x, y)
+                }
             }),
         ),
         Check(
@@ -4040,11 +4045,12 @@ fn steps() -> Vec<Step> {
             }),
         ),
         Do("click '+ Add track' in the mixer", Box::new(|a| click(a, bottom_x() + 3.0 * 108.0 * 0.85 + 46.0, mixer_y() + 210.0))),
-        DoC(
+        Do(
             "pick 'Audio track' in the Add track menu",
-            Box::new(|a, ctl| {
-                let (x, y) = route_row(ctl, 0);
-                click(a, x, y)
+            Box::new(|a| {
+                if let Some((x, y)) = menu_row_xy(a, "Audio track") {
+                    click(a, x, y)
+                }
             }),
         ),
         Check(
@@ -4070,6 +4076,20 @@ fn steps() -> Vec<Step> {
 }
 
 /// Window point inside row `i` of the open routing menu (Add track, add send, Out; src/routing.rs).
+/// Labels of the open context menu's rows (track, lane, clip and Add track menus).
+fn menu_labels(a: &AppWindow) -> Vec<String> {
+    let items = a.global::<Studio>().get_menu_items();
+    (0..items.row_count()).filter_map(|i| items.row_data(i)).map(|m| m.label.to_string()).collect()
+}
+
+/// Window point of the open context menu's row `label`.
+fn menu_row_xy(a: &AppWindow, label: &str) -> Option<(f32, f32)> {
+    let s = a.global::<Studio>();
+    let items = s.get_menu_items();
+    let m = (0..items.row_count()).filter_map(|i| items.row_data(i)).find(|m| m.label == label)?;
+    Some((s.get_menu_x() + 40.0, s.get_menu_y() + m.y + crate::clipedit::MENU_ROW / 2.0))
+}
+
 fn route_row(ctl: &Ctl, i: usize) -> (f32, f32) {
     let c = ctl.borrow();
     let (x, y) = c.routing.menu.as_ref().map_or((0.0, 0.0), |m| (m.x, m.y));
@@ -6830,6 +6850,7 @@ fn automation_steps() -> Vec<Step> {
             "automation: clip imported, lanes hidden, timeline at full width, the add-track menu closed with the old project",
             Box::new(|c, a| {
                 let ok = c.routing.menu.is_none()
+                    && !c.menu.open
                     && c.project().tracks[0].clips.len() == 1
                     && !c.auto.shown
                     && !a.global::<Studio>().get_auto_shown()
@@ -14957,6 +14978,7 @@ fn track_menu_steps() -> Vec<Step> {
     }
     let before: Rc<RefCell<Vec<u64>>> = Rc::new(RefCell::new(Vec::new()));
     let (b0, b1, b2, b3, b4) = (before.clone(), before.clone(), before.clone(), before.clone(), before.clone());
+    let b5 = before.clone();
     vec![
         DoC(
             "track menu: mixer closed, lanes scrolled to the top, two ordinary tracks",
@@ -14981,19 +15003,61 @@ fn track_menu_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "track menu: Rename, Duplicate track, Duplicate track with clips, Color, Delete track; track 1 selected",
+            "track menu: Rename… to Delete track, the five add-track rows, Color, in order; track 1 selected",
             Box::new(|c, a| {
-                let labels = ["Rename…", "Duplicate track", "Duplicate track with clips", "Color", "Delete track"];
-                let ok = a.global::<Studio>().get_menu_open()
-                    && labels.iter().all(|l| menu_row(a, l).is_some())
-                    && c.selected_track == c.project().tracks.first().map(|t| t.id);
-                ok.then_some(()).ok_or(format!("open {} selected {:?}", a.global::<Studio>().get_menu_open(), c.selected_track))
+                let want = [
+                    "Rename…",
+                    "Duplicate track",
+                    "Duplicate with clips",
+                    "Bounce track in place",
+                    if c.auto.shown { "Hide automation" } else { "Show automation" },
+                    "Group track",
+                    "Delete track",
+                    "Audio track",
+                    "Instrument track",
+                    "Sampler track",
+                    "Drum track",
+                    "Return track",
+                    "Color",
+                ];
+                let l = menu_labels(a);
+                let ok = a.global::<Studio>().get_menu_open() && l == want && c.selected_track == c.project().tracks.first().map(|t| t.id);
+                ok.then_some(()).ok_or(format!("open {} {l:?} selected {:?}", a.global::<Studio>().get_menu_open(), c.selected_track))
             }),
         ),
         Do(
-            "track menu: choose Duplicate track with clips",
+            "track menu: choose Sampler track",
             Box::new(|a| {
-                if let Some((x, y)) = menu_row(a, "Duplicate track with clips") {
+                if let Some((x, y)) = menu_row(a, "Sampler track") {
+                    click(a, x, y);
+                }
+            }),
+        ),
+        Check(
+            "track menu: a Sampler track right below track 1, playing the Sampler, selected, one undo step",
+            Box::new(move |c, _| {
+                let p = c.project();
+                let t = &p.tracks[1];
+                let ok = p.tracks.len() == b5.borrow().len() + 1
+                    && t.kind == dstudio_core::TrackKind::Instrument
+                    && t.instrument_plugin.as_ref().is_some_and(|d| d.plugin.id == "sampler-steam")
+                    && c.selected_track == Some(t.id)
+                    && c.doc.undo_label() == Some("Add Sampler Track");
+                ok.then_some(()).ok_or(format!("{} tracks, undo {:?}", p.tracks.len(), c.doc.undo_label()))
+            }),
+        ),
+        Do("track menu: Cmd+Z the Sampler track", Box::new(|a| key(a, "z", true, false))),
+        DoC(
+            "track menu: right-click track 1 again",
+            Box::new(|a, ctl| {
+                let (x, y) = row_xy(&ctl.borrow(), 0);
+                right_click(a, x, y);
+            }),
+        ),
+        Do(
+            "track menu: choose Duplicate with clips",
+            Box::new(|a| {
+                if let Some((x, y)) = menu_row(a, "Duplicate with clips") {
                     click(a, x, y);
                 }
             }),

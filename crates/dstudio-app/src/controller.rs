@@ -374,6 +374,19 @@ pub enum MenuAction {
     /// A group track's menu: remove the group, keeping its tracks.
     TrackUngroup,
     TrackDelete,
+    /// Track header menu: Bounce track in place (src/clip_render.rs).
+    TrackBounce,
+    /// Track header menu: show or hide the automation lanes ("Hide automation" while shown).
+    TrackAutomation,
+    /// Add-track rows (the track header menu, the empty-lane menu and the Add track menu):
+    /// below the clicked track, or at the end from the Add track button (src/track_menu.rs).
+    AddAudioTrack,
+    AddInstrumentTrack,
+    AddSamplerTrack,
+    AddDrumTrack,
+    AddReturnTrack,
+    /// Empty-lane menu on an instrument track: open its instrument in the Devices view.
+    LaneOpenInstrument,
     /// An expanded automation row's menu (src/automation.rs).
     AutoLaneDelete,
     AutoLaneClose,
@@ -396,6 +409,8 @@ pub struct MenuState {
     pub lane: Option<(TrackId, Ticks)>,
     /// Track header menu: the track it was opened on.
     pub track: Option<TrackId>,
+    /// The Add track menu (the timeline's and mixer's Add track buttons) is open.
+    pub add_track: bool,
     /// The record button's count-in menu is open.
     pub count_in: bool,
     /// An expanded automation row's menu: the track and row index.
@@ -1629,6 +1644,7 @@ impl Controller {
     pub fn replace_project(&mut self, project: Project) {
         self.close_all_editors();
         self.route_menu_close(); // its items name tracks of the old project
+        self.menu_close(); // so do the track, lane and Add track menus
         self.onsets.clear();
         self.tempos.clear();
         self.doc_epoch += 1;
@@ -1729,6 +1745,7 @@ impl Controller {
         self.stop_return();
         self.close_all_editors();
         self.route_menu_close(); // its items name tracks of the old project
+        self.menu_close(); // so do the track, lane and Add track menus
         for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
             let _ = self.engine.release_asset(ea);
         }

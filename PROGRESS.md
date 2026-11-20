@@ -795,6 +795,16 @@ A saved project's `Name.dsproj` folder is renamed on disk; media inside it, Open
 An unsaved project keeps the name, and the first Save offers it. A name that is taken, empty, hidden or has a
 character file systems refuse is refused with a reason (`check_project_name`); no undo step, as it is a file
 operation. Review state `review-title-rename`; self-test `rename_project_steps`.
+### 2026-11-21: track, lane and Add track menus
+
+The track header menu is complete: Rename…, Duplicate track (⌘D), Duplicate with clips (⇧⌘D), Bounce track in
+place, Show / Hide automation, Group track (⌘G), Delete track, then Audio, Instrument, Sampler, Drum and Return track,
+which insert the new track right below (`track_menu_items`, `add_track_action`), then Color (the inline palette is
+G5). The empty-lane menu starts with Open <instrument> (the Devices view) and Insert empty MIDI clip on instrument
+tracks, Paste when the copy fits, then the track menu. The Add track menu (timeline and mixer) is the general context
+menu now, with the five add-track rows and their keys; the Group track row is gone (groups come from a selection).
+Sampler and Drum tracks are instrument tracks playing the Sampler or the Drum Rack. A new project closes these menus.
+Review states `review-add-track-menu` and `review-lane-menu`.
 
 
 ### 2026-11-21: help on every setting

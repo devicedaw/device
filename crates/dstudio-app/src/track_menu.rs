@@ -1,5 +1,7 @@
-//! Track header menu (right-click a track header): Rename, Duplicate track, Duplicate track with
-//! clips, Color and Delete track; and dragging a track header up or down to reorder the tracks.
+//! Track header menu (right-click a track header): Rename, Duplicate track, Duplicate with clips,
+//! Bounce track in place, Show automation, Group track, Delete track, the add-track rows (Audio,
+//! Instrument, Sampler, Drum and Return track, inserted below the track) and Color; the Add track
+//! menu with the same add-track rows; and dragging a track header up or down to reorder the tracks.
 
 use crate::controller::{Controller, MenuAction, slint_color, track_color, track_palette_len};
 use crate::{MenuItem, Studio};
@@ -32,28 +34,123 @@ pub fn move_target(from: usize, gap: usize) -> usize {
 }
 
 impl Controller {
-    /// Right press on a track header at window (wx, wy).
-    pub fn open_track_menu(&mut self, id: TrackId, wx: f32, wy: f32) {
-        let Some(t) = self.project().track(id) else { return };
-        let is_return = t.is_return();
-        let (is_bus, is_group) = (t.is_bus(), t.is_group());
+    /// The track header menu's rows for track `id`, in order (also the end of the empty-lane menu).
+    pub(crate) fn track_menu_items(&self, id: TrackId) -> Vec<(MenuAction, bool)> {
+        let Some(t) = self.project().track(id) else { return Vec::new() };
+        let (is_return, is_bus, is_group) = (t.is_return(), t.is_bus(), t.is_group());
         let can_copy = !t.is_bus() || self.project().tracks.iter().filter(|t| t.is_bus()).count() < dstudio_core::MAX_RETURNS;
-        self.select_track(id);
+        let can_bounce = !is_bus && dstudio_core::render_plan::track_span(self.project(), id).is_some() && !self.clip_render.busy();
         use MenuAction::*;
         let mut items = vec![(TrackRename, true), (TrackDuplicate, can_copy)];
         if !is_bus {
             items.push((TrackDuplicateClips, true));
+            items.push((TrackBounce, can_bounce));
         }
-        items.push((TrackColor, true));
+        items.push((TrackAutomation, true));
         if is_group {
             items.push((TrackUngroup, true));
         } else if !is_return {
             items.push((TrackGroup, true));
         }
         items.push((TrackDelete, true));
+        items.extend(Self::add_track_items());
+        items.push((TrackColor, true));
+        items
+    }
+
+    /// The add-track rows: Audio, Instrument, Sampler, Drum and Return track.
+    pub(crate) fn add_track_items() -> [(MenuAction, bool); 5] {
+        use MenuAction::*;
+        [(AddAudioTrack, true), (AddInstrumentTrack, true), (AddSamplerTrack, true), (AddDrumTrack, true), (AddReturnTrack, true)]
+    }
+
+    /// Right press on a track header at window (wx, wy).
+    pub fn open_track_menu(&mut self, id: TrackId, wx: f32, wy: f32) {
+        if self.project().track(id).is_none() {
+            return;
+        }
+        self.select_track(id);
+        let items = self.track_menu_items(id);
         let win = self.devices.win;
         self.open_menu(items, wx, wy, win);
         self.menu.track = Some(id);
+    }
+
+    /// An add-track row: the new track goes right below `below` (the clicked track), or at the end
+    /// of the ordinary tracks; a return track always joins the returns. The new track is selected.
+    pub fn add_track_action(&mut self, action: MenuAction, below: Option<TrackId>) {
+        let at = below.and_then(|t| self.project().track_index(t)).map(|i| i + 1).filter(|&i| i <= self.project().ordinary_track_count());
+        match action {
+            MenuAction::AddAudioTrack => {
+                self.add_audio_track_at(at);
+            }
+            MenuAction::AddInstrumentTrack => {
+                self.add_instrument_track_at(at, None);
+            }
+            MenuAction::AddSamplerTrack => {
+                self.add_instrument_track_at(at, dstudio_core::builtin::find("sampler-steam"));
+            }
+            MenuAction::AddDrumTrack => {
+                self.add_instrument_track_at(at, dstudio_core::builtin::find("drum-rack"));
+            }
+            MenuAction::AddReturnTrack => {
+                self.add_return_track(true);
+            }
+            _ => {}
+        }
+    }
+
+    /// A new audio track at index `at` (the end of the ordinary tracks when None), selected.
+    pub fn add_audio_track_at(&mut self, at: Option<usize>) -> Option<TrackId> {
+        let id = TrackId(self.project().next_id);
+        let track =
+            dstudio_core::Track::new(id, dstudio_core::TrackKind::Audio, "Audio", crate::controller::next_track_color(self.project()));
+        if self.execute(Command::AddTrack { index: at, track }) {
+            self.select_track(id);
+            return Some(id);
+        }
+        None
+    }
+
+    /// A new instrument track at index `at` playing `instrument` (a built-in: the Sampler or the
+    /// Drum Rack), or the default instrument when None; named after its instrument. One undo step.
+    pub fn add_instrument_track_at(
+        &mut self,
+        at: Option<usize>,
+        instrument: Option<&'static dstudio_core::builtin::DeviceDef>,
+    ) -> Option<TrackId> {
+        let id = TrackId(self.project().next_id);
+        let (mut commands, fallback) = match instrument {
+            Some(def) => {
+                let track = dstudio_core::Track::new(
+                    id,
+                    dstudio_core::TrackKind::Instrument,
+                    def.name,
+                    crate::controller::next_track_color(self.project()),
+                );
+                let cmds = vec![
+                    Command::AddTrack { index: None, track },
+                    Command::SetInstrumentPlugin { track: id, device: Some(def.instantiate()) },
+                ];
+                (cmds, None)
+            }
+            None => self.new_instrument_track(id),
+        };
+        if let Some(Command::AddTrack { index, .. }) = commands.first_mut() {
+            *index = at;
+        }
+        let label = match instrument {
+            Some(def) => format!("Add {} Track", def.name),
+            None => "Add Instrument Track".into(),
+        };
+        if !self.execute(Command::Batch { label, commands }) {
+            return None;
+        }
+        if let Some(why) = fallback {
+            self.set_status(why, 5);
+        }
+        self.select_track(id);
+        Some(id)
     }
 
     pub fn track_menu_activate(&mut self, id: TrackId, action: MenuAction) {
@@ -83,6 +180,13 @@ impl Controller {
                 self.selected_track = Some(id);
                 self.delete_selection();
             }
+            MenuAction::TrackBounce => self.bounce_track_in_place(id),
+            MenuAction::TrackAutomation => self.auto_toggle_shown(),
+            a @ (MenuAction::AddAudioTrack
+            | MenuAction::AddInstrumentTrack
+            | MenuAction::AddSamplerTrack
+            | MenuAction::AddDrumTrack
+            | MenuAction::AddReturnTrack) => self.add_track_action(a, Some(id)),
             _ => {}
         }
     }
