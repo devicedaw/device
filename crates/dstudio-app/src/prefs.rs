@@ -252,6 +252,7 @@ mod tests {
             browser_folders: vec!["/tmp/kit".into()],
             preview_volume: Some(0.5),
             assistant_width: 400.0,
+            assistant_full: true,
             recent_projects: vec!["/tmp/Song.dsproj".into()],
             recent_resolved: vec!["/private/tmp/Song.dsproj".into()],
             general: GeneralPrefs {
