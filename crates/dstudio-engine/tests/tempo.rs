@@ -62,3 +62,32 @@ fn without_changes_the_click_grid_is_unchanged() {
     let got = clicks(d.project(), 60_000);
     assert_eq!(got, vec![0, 24_000, 48_000], "frames_per_beat from se_metronome_set: no map was sent");
 }
+
+/// Mixdown, Stems and render in place render the project offline (`offline::render`, as the export
+/// worker does): the song's tempo map goes with it, so a click on the beat after a step sounds on
+/// the frame the map gives that beat, and an export as long as the map says ends with the song.
+#[test]
+fn an_offline_render_plays_on_the_tempo_map() {
+    use dstudio_engine::offline::{self, OfflineRender};
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    let mut d = Document::new(Project::default());
+    // 120 BPM for a bar, then 60: beat 6 sits at 2 s + 2 s.
+    let points = vec![TempoPoint { time: 0, bpm: 120.0, ramp: false }, TempoPoint { time: 4 * PPQ, bpm: 60.0, ramp: false }];
+    d.execute(Command::SetTempoMap { points, bpm: None }, Origin::User).unwrap();
+    let inst = d.project().tracks[1].id;
+    d.execute(Command::AddMidiClip { track: inst, clip: MidiClip::empty(0, 8 * PPQ) }, Origin::User).unwrap();
+    let clip = d.project().tracks[1].midi_clips[0].id;
+    let notes = vec![Note { id: 1, pitch: 72, start: 6 * PPQ, length: PPQ / 4, velocity: 127 }];
+    d.execute(Command::SetMidiNotes { clip, notes }, Origin::User).unwrap();
+    let p = d.project();
+    let at = p.ticks_to_frames(6 * PPQ, RATE);
+    assert_eq!(at, 4 * 48_000, "2 s for bar 1 at 120, 2 s for two beats at 60");
+    // The export length on the map: 8 beats are 2 s + 4 s.
+    let frames = p.ticks_to_frames(8 * PPQ, RATE) as usize;
+    assert_eq!(frames, 6 * 48_000);
+    let job = OfflineRender { project: p.clone(), rate: RATE, transients: HashMap::new(), start: 0, frames };
+    let out = offline::render(job, &AtomicBool::new(false), &AtomicUsize::new(0)).unwrap();
+    assert_eq!(out.len(), frames * 2);
+    let first = (0..frames).find(|&i| out[2 * i] != 0.0 || out[2 * i + 1] != 0.0).expect("the click sounds") as i64;
+    assert!((first - at).abs() <= 2, "the click starts at frame {first}, the map puts beat 6 at {at}");
+}

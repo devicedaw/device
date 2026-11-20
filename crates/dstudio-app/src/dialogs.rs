@@ -636,7 +636,12 @@ impl Controller {
         let rate = self.engine.sample_rate();
         let frames = self.export_frames();
         let beats = |ticks: i64| ticks as f64 / dstudio_core::PPQ as f64;
-        let render_beats = frames as f64 / rate * p.transport.bpm / 60.0;
+        // The renders' length in beats on the tempo map, and the warp markers that keep them unstretched on
+        // the set's tempo envelope (none for one tempo).
+        let map = p.tempo_map();
+        let render_secs = frames as f64 / rate;
+        let render_beats = map.ticks_at(render_secs) / dstudio_core::PPQ as f64;
+        let markers = live_set::render_markers(&map, render_secs);
         let mut tracks = Vec::new();
         let mut notes = String::new();
         let mut off = Vec::new();
@@ -696,7 +701,7 @@ impl Controller {
                         file_size: std::fs::metadata(&path).map_or(0, |m| m.len()),
                         frames,
                         sample_rate: rate.round() as u32,
-                        markers: Vec::new(),
+                        markers: markers.clone(),
                     }])
                 }
                 // Live sets don't carry groups yet: a group without a render is an empty audio track.
@@ -767,6 +772,7 @@ impl Controller {
         let tr = &p.transport;
         let set = LiveSet {
             bpm: tr.bpm,
+            tempo: live_set::tempo_envelope(&map),
             numerator: tr.time_signature.numerator as u32,
             denominator: tr.time_signature.denominator as u32,
             loop_on: tr.loop_enabled,
