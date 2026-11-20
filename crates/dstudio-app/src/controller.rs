@@ -2607,6 +2607,7 @@ impl Controller {
         }
         self.assistant.shown = self.assistant_open;
         s.set_chat_focus_epoch(self.assistant.focus_epoch);
+        s.set_assistant_full(self.settings.prefs.assistant_full);
         s.set_teach_mode(self.assistant.mode == dstudio_core::assistant::Mode::Teach);
         if self.chat_rev != Some(self.assistant.rev) {
             self.chat_rev = Some(self.assistant.rev);

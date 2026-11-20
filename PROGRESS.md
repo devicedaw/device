@@ -681,6 +681,12 @@ the default row), both as view changes, not undo steps. Double-click resets eith
 same double-click. `ZoomSlider` moved to `ui/widgets.slint` for both headers; mapping in `src/fit.rs`. Self-test
 section `zoom_slider_steps`.
 ### 2026-11-20: note audition
+### 2026-11-20: full-height assistant
+
+The assistant header's layout button (a placeholder until now) toggles the docked panel between the timeline row and
+the full window height; at full height the bottom panel and the mixer end where the assistant begins, so nothing
+overlaps. Saved with the preferences (`assistant_full`). Layout in `ui/app.slint` (`chat-full`, `chat-h`,
+`bottom-w`, which the layout anchors report). Review state `review-assistant-full`; self-test `assistant_full_steps`.
 
 The piano roll already previewed a pressed key, a note being drawn and a note dragged to another pitch, but only
 while the mouse was down, and a plain click on a note was silent. Now a click on a note plays it too, and a released

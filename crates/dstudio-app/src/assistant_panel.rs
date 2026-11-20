@@ -186,6 +186,13 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// The header's layout button: the full window height, or the timeline row only. Saved.
+    pub fn assistant_toggle_full(&mut self) {
+        self.settings.prefs.assistant_full = !self.settings.prefs.assistant_full;
+        self.save_prefs();
+        self.ui_dirty = true;
+    }
+
     pub fn assistant_set_mode(&mut self, teach: bool) {
         self.assistant.mode = if teach { Mode::Teach } else { Mode::Assist };
         self.ui_dirty = true;

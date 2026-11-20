@@ -1286,6 +1286,11 @@ export component AppWindow inherits Window {
     property <length> top-y: 78.2px;
     property <length> chat-x: root.width - 5px - root.chat-w;
     property <length> bottom-y: root.height - 5px - root.bottom-h;
+    // Full-height assistant: it runs down to the window's bottom edge and the bottom panel
+    // (or the mixer) ends where it begins.
+    property <bool> chat-full: Studio.assistant-open && Studio.assistant-full;
+    property <length> bottom-w: root.width - 10px - (root.chat-full ? root.chat-w + 5px : 0px);
+    property <length> chat-h: root.chat-full ? root.height - 5px - root.top-y : root.top-h;
     property <length> settings-x: max(0px, min(216.75px, root.width - 816px));
     property <length> settings-y: 5.5px;
     property <length> settings-w: min(816px, root.width);
@@ -1305,7 +1310,7 @@ export component AppWindow inherits Window {
         tracks-x: timeline.x, tracks-y: timeline.y + timeline.tracks-y,
         browser-x: 5px, browser-y: root.top-y,
         chat-x: root.chat-x, chat-y: root.top-y, chat-w: root.chat-w, chat-h: root.top-h,
-        bottom-x: 5px, bottom-y: root.bottom-y, bottom-w: root.width - 10px,
+        bottom-x: 5px, bottom-y: root.bottom-y, bottom-w: root.bottom-w,
         settings-x: root.settings-x, settings-y: root.settings-y, settings-w: root.settings-w,
     };
 
@@ -1356,13 +1361,13 @@ export component AppWindow inherits Window {
         }
         // Assistant panel: right-docked beside the timeline (nothing overlaps).
         if Studio.assistant-open: AssistantPanel {
-            x: root.chat-x; y: root.top-y; width: root.chat-w; height: root.top-h;
+            x: root.chat-x; y: root.top-y; width: root.chat-w; height: root.chat-h;
             focus-main => { fs.focus(); }
         }
         // Width splitter between timeline and assistant: 13 px hit strip over the 6 px gap,
         // col-resize cursor, double-click restores the default width.
         if Studio.assistant-open: TouchArea {
-            x: root.width - 5px - root.chat-w - 7.55px; y: 78.2px; width: 11.05px; height: root.top-h;
+            x: root.width - 5px - root.chat-w - 7.55px; y: 78.2px; width: 11.05px; height: root.chat-h;
             mouse-cursor: col-resize;
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.chat-resize(0, self.absolute-position.x + self.mouse-x); }
@@ -1372,12 +1377,12 @@ export component AppWindow inherits Window {
             double-clicked => { Studio.chat-resize-reset(); }
         }
         // Bottom panel: inspector + devices, or the mixer (taller; the row above shrinks).
-        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; focus-main => { fs.focus(); } }
-        if Studio.mixer-open: MixerPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; }
+        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.bottom-y; width: root.bottom-w; height: root.bottom-h; focus-main => { fs.focus(); } }
+        if Studio.mixer-open: MixerPanel { x: 5px; y: root.bottom-y; width: root.bottom-w; height: root.bottom-h; }
         // Timeline / bottom-panel splitter: an invisible 14 px strip across the gap, 8 px of it
         // above the panel's top edge (the resize handle).
         TouchArea {
-            x: 5px; y: root.height - 5px - root.bottom-h - 6.8px; width: root.width - 10px; height: 11.9px;
+            x: 5px; y: root.height - 5px - root.bottom-h - 6.8px; width: root.bottom-w; height: 11.9px;
             mouse-cursor: row-resize;
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.bottom-resize(0, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }

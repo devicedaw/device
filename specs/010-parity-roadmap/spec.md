@@ -120,7 +120,7 @@ target behaviour.
 - [ ] **G20. Assistant: "Let the assistant listen to audio".** Greyed today. When on, a turn may include a short
   analysis of the selected clip or the mix (loudness, spectrum summary, key and tempo guess) so answers can refer
   to the sound. Off by default if it sends anything off the machine.
-- [ ] **G21. Assistant: full-height layout.** The header's panel button is a placeholder ("Full height (not
+- [x] **G21. Assistant: full-height layout** (#136). The header's panel button is a placeholder ("Full height (not
   implemented)"). It must toggle the panel between the timeline row only and the full window height (over the
   bottom panel).
 - [ ] **G22. Assistant: works for normal users and knows the devices** (#138: key field and keychain, devices in the

@@ -16525,6 +16525,51 @@ fn bounce_in_place_steps() -> Vec<Step> {
     ]
 }
 
+/// Assistant full height (roadmap G21): the header's layout button takes the docked assistant
+/// down over the bottom panel's right end, which narrows; pressing it again puts it back. Saved.
+fn assistant_full_steps() -> Vec<Step> {
+    use Step::*;
+    let w0 = Rc::new(Cell::new(0.0f32));
+    let (w1, w2) = (w0.clone(), w0.clone());
+    vec![
+        DoC(
+            "assistant height: open the assistant at the timeline row height",
+            Box::new(move |a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.assistant_full = false;
+                c.assistant_open = true;
+                c.update_ui(a);
+            }),
+        ),
+        DoC(
+            "assistant height: press the header's layout button",
+            Box::new(move |a, ctl| {
+                ctl.borrow_mut().update_ui(a);
+                w1.set(geo().bottom_w);
+                a.global::<Studio>().invoke_chat_toggle_full();
+            }),
+        ),
+        Check(
+            "assistant height: full height is on and saved, the bottom panel narrowed by the assistant's width",
+            Box::new(move |c, _| {
+                let (before, now) = (w2.get(), geo().bottom_w);
+                (c.settings.prefs.assistant_full && now < before - 200.0)
+                    .then_some(())
+                    .ok_or(format!("full {} bottom {before} -> {now}", c.settings.prefs.assistant_full))
+            }),
+        ),
+        Do("assistant height: press it again", Box::new(|a| a.global::<Studio>().invoke_chat_toggle_full())),
+        Check(
+            "assistant height: back to the timeline row, the bottom panel full width again",
+            Box::new(move |c, _| {
+                let now = geo().bottom_w;
+                (!c.settings.prefs.assistant_full && (now - w0.get()).abs() < 0.5).then_some(()).ok_or(format!("bottom {now}"))
+            }),
+        ),
+        DoC("assistant height: close the assistant", Box::new(|_, ctl| ctl.borrow_mut().assistant_open = false)),
+    ]
+}
+
 /// Clip menu Bounce through a third-party plugin (src/clip_render.rs, CHR-38): the CLAP test gain
 /// on a track is edited after the project's state was saved, the clip is bounced, and the file has
 /// the live instance's gain (the plugin was prepared on this thread from its current state and
@@ -17918,6 +17963,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(note_redraw_steps());
     all.extend(api_key_steps());
     all.extend(ask_clip_steps());
+    all.extend(assistant_full_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.
