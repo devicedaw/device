@@ -247,8 +247,15 @@ pub fn parse_response(v: &Value) -> Result<String, String> {
 }
 
 fn call_anthropic(key: &str, model: &str, req: &Request) -> Result<String, String> {
-    let agent: ureq::Agent =
-        ureq::Agent::config_builder().http_status_as_error(false).timeout_global(Some(Duration::from_secs(180))).build().into();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(180)))
+        // The system's trusted certificates (Keychain, Windows store, the Linux CA bundle and
+        // SSL_CERT_FILE), so the assistant also works behind a proxy that re-signs HTTPS with
+        // a company certificate.
+        .tls_config(ureq::tls::TlsConfig::builder().root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
+        .build()
+        .into();
     let mut builder =
         agent.post(API_URL).header("x-api-key", key).header("anthropic-version", API_VERSION).header("content-type", "application/json");
     if supports_default_fallback(model) {
