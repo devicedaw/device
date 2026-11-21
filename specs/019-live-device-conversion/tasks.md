@@ -6,4 +6,4 @@
 - [x] T4. Slint: the Effects pill and menu.
 - [x] T5. Self-test: export with Convert to Live devices (A3).
 - [x] T6. README, PROGRESS, roadmap G24.
-- [ ] T7. A4: open an exported set in Live 12 and compare the devices' settings.
+- [x] T7. A4: open an exported set in Live 12 and compare the devices' settings.

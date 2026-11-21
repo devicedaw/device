@@ -1,6 +1,6 @@
 # Convert effects for Live sets
 
-Status: Verifying (A4 open) · Spec: 019 · Issue: none · Roadmap: [010 › G24](../010-parity-roadmap/spec.md)
+Status: Done · Spec: 019 · Issue: none · Roadmap: [010 › G24](../010-parity-roadmap/spec.md)
 
 ## What
 
@@ -42,7 +42,10 @@ than a printed sound, as long as the set still sounds like the project.
 - A3. Self-test: export with Convert to Live devices on a project with a Compressor on a track: the
   set has a Live Compressor with the mapped threshold on that track, passes its check, and the notes
   list it.
-- A4. Manual: the set opens in Live 12 with the devices and settings in place.
+- A4. Manual: the set opens in Live 12 with the devices and settings in place. Checked in Live 12.4:
+  Compressor (threshold, ratio, attack, release, output, knee, dry/wet, detector), Utility (gain,
+  width, balance) and an EQ Eight bell band all show the mapped values. The Compressor's sidechain
+  filter is written as Live 11's `SideChainEq` group, which the set's schema expects.
 
 ## Out of scope
 
