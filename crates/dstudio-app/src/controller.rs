@@ -223,6 +223,8 @@ pub enum JobResult {
     Assistant { started: Instant, mode: dstudio_core::assistant::Mode, result: Result<String, String> },
     /// A bug report or feedback was posted (feedback.rs).
     Feedback(Result<(), String>),
+    /// The latest release was looked up (updates.rs).
+    UpdateChecked(Result<Option<crate::updates::Release>, String>),
     /// Takes of one finished recording pass, loaded into the engine.
     Recorded {
         doc_epoch: u64,
@@ -463,6 +465,8 @@ pub struct Controller {
     pub(crate) pending_import: Option<crate::live_import::PendingImport>,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
+    /// The update check and what it found (updates.rs).
+    pub updates: crate::updates::Updates,
     /// "Change project key?": the key change waiting on Transpose MIDI / Don't transpose / Cancel.
     pub key_change: Option<crate::transport_fields::KeyChange>,
     /// Settings › General › Playhead on stop: where the last playback started, whether the
@@ -663,6 +667,7 @@ impl Controller {
             unsaved_open: false,
             pending_import: None,
             updates_open: false,
+            updates: Default::default(),
             key_change: None,
             play_start: None,
             paused: false,
@@ -881,10 +886,7 @@ impl Controller {
                 self.undo_history_open = true;
                 self.ui_dirty = true;
             }
-            "options.check_updates" => {
-                self.updates_open = true;
-                self.ui_dirty = true;
-            }
+            "options.check_updates" => self.updates_check(true),
             "file.export_ableton" => {
                 self.export_open();
                 self.export_pick_recipe(2);
@@ -1513,6 +1515,7 @@ impl Controller {
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
                 JobResult::Feedback(result) => self.finish_feedback(result),
+                JobResult::UpdateChecked(result) => self.finish_update_check(result),
                 JobResult::Recorded { doc_epoch, takes, midi, punch, rec_loop } => {
                     self.finish_recorded(doc_epoch, takes, midi, punch, rec_loop)
                 }
@@ -2682,6 +2685,7 @@ impl Controller {
         self.push_settings(&s);
         self.push_dialogs(&s);
         self.push_feedback(&s);
+        self.push_updates(&s);
         self.push_clip_render(&s);
         self.push_devices(&s);
         self.push_files(&s);

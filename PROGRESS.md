@@ -798,3 +798,15 @@ sentences wrap). Greyed rows (the assistant and voice ones) say "Not available i
 `src/settings_search.rs` next to the search keywords, so search and help share one table; a test checks that every
 row on those pages has one, in one short sentence, and that the table and `ui/settings.slint` name the same rows.
 Review state `review-settings-help`; self-test section `settings_help_steps`.
+### 2026-11-21: update check
+
+Roadmap G16, spec 022. Options › Check for Updates… asks GitHub for the latest published release
+(`/repos/devicedaw/device/releases/latest`) and compares versions by Semantic Versioning; pre-releases and drafts are
+never offered. A launch check runs once in the background (Settings › General › Check for updates at launch, on by
+default), shows nothing when off-line or rate limited, and reuses the last answer for 12 hours (`update-check.json`
+next to the preferences). A newer release shows a blue "Update available" pill with its version left of Report a bug;
+the pill and the menu open the dialog with the version, the first three items of the release notes and Download, which
+opens the release page. The request carries only `User-Agent: Device/<version>` and GitHub's API headers. The in-app
+install from the draft (download, checksum, swap and restart) is left for a follow-up that runs it against a real
+release on each platform. App side: `src/updates.rs`; review states `review-update-available`,
+`review-update-dialog`; self-test section `updates_steps`.

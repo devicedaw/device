@@ -402,7 +402,9 @@ To release:
 3. The Release workflow checks that the tag matches `Cargo.toml`, is on `main` and has a changelog section, builds
    and signs the packages (the macOS signing job waits for approval in the `release` environment), and creates a
    draft release. Its notes are the changelog section followed by GitHub's generated list of pull requests.
-4. Review the draft and its packages, then publish it.
+4. Review the draft and its packages, then publish it. Publishing makes it the latest release, which running copies
+   find at launch and in Options › Check for Updates… (`crates/dstudio-app/src/updates.rs`, spec 022). Pre-releases
+   are never offered there.
 
 The section for the notes is extracted by [`tools/release/changelog-notes.sh`](../tools/release/changelog-notes.sh),
 tested in CI by `tools/release/test-changelog-notes.sh`.

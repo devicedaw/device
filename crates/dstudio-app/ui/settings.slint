@@ -168,17 +168,18 @@ component GeneralPage inherits Rectangle {
     property <length> sw-x: root.width - 20.5px - 22.5px;
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "General"; font-size: 17.25px; font-weight: 700; }
     for s in [
-        { t: "Startup", y: 71.3px }, { t: "Projects", y: 125.8px }, { t: "Transport", y: 185.8px }, { t: "Sample licensing", y: 245.8px },
-        { t: "Timeline annotations", y: 300.2px }, { t: "Plugin windows", y: 354.7px }, { t: "Assistant", y: 449.6px },
+        { t: "Startup", y: 71.3px }, { t: "Projects", y: 145.4px }, { t: "Transport", y: 205.4px }, { t: "Sample licensing", y: 265.4px },
+        { t: "Timeline annotations", y: 319.8px }, { t: "Plugin windows", y: 374.3px }, { t: "Assistant", y: 469.2px },
     ]: FieldLabel { x: 20.5px; y: s.y; text: s.t; }
-    for y in [115.7px, 175.6px, 235.6px, 290.1px, 344.6px, 438.8px]: Rectangle { x: 20.5px; y: y; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
+    for y in [135.3px, 195.2px, 255.2px, 309.7px, 364.2px, 458.4px]: Rectangle { x: 20.5px; y: y; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
     // k: index into Studio.general-on, -1 = not available in DStudio (off, disabled).
     for r in [
-        { t: "Always load last session", y: 88.4px, k: 0 }, { t: "License samples when you use them", y: 262.9px, k: -1 },
-        { t: "Sections move clips", y: 317.4px, k: 4 }, { t: "Auto-show third-party effect windows", y: 371.8px, k: 1 },
-        { t: "Auto-show built-in effect windows", y: 391.4px, k: 2 }, { t: "Keep plugin windows on top", y: 411.6px, k: 3 },
-        { t: "Let the assistant listen to audio", y: 466.7px, k: -1 }, { t: "Hold talk key to record", y: 534.6px, k: -1 },
-        { t: "Auto-send", y: 554.8px, k: -1 },
+        { t: "Always load last session", y: 88.4px, k: 0 }, { t: "Check for updates at launch", y: 108px, k: 5 },
+        { t: "License samples when you use them", y: 282.5px, k: -1 },
+        { t: "Sections move clips", y: 337px, k: 4 }, { t: "Auto-show third-party effect windows", y: 391.4px, k: 1 },
+        { t: "Auto-show built-in effect windows", y: 411px, k: 2 }, { t: "Keep plugin windows on top", y: 431.2px, k: 3 },
+        { t: "Let the assistant listen to audio", y: 486.3px, k: -1 }, { t: "Hold talk key to record", y: 554.2px, k: -1 },
+        { t: "Auto-send", y: 574.4px, k: -1 },
     ]: Rectangle {
         x: 0; y: r.y; width: root.width; height: 14px;
         SearchHit { y: -5px; width: parent.width - 24px; height: 24px; label: r.t; enabled: r.k >= 0; }
@@ -186,26 +187,26 @@ component GeneralPage inherits Rectangle {
         Switch { x: root.sw-x; y: 2px; on: r.k >= 0 && Studio.general-on[r.k]; enabled: r.k >= 0; label: r.t; toggled => { Studio.general-toggle(r.k); } }
     }
     // Projects folder: where Save starts and what the browser's Projects tab lists.
-    SearchHit { y: 139.5px; width: root.width - 24px; height: 26px; label: "Projects folder"; }
-    SearchHit { y: 199.5px; width: root.width - 24px; height: 26px; label: "Playhead on stop"; }
-    RowLabel { x: 20.5px; y: 145.4px; text: "Projects folder"; }
+    SearchHit { y: 159.1px; width: root.width - 24px; height: 26px; label: "Projects folder"; }
+    SearchHit { y: 219.1px; width: root.width - 24px; height: 26px; label: "Playhead on stop"; }
+    RowLabel { x: 20.5px; y: 165px; text: "Projects folder"; }
     Rectangle {
-        x: root.width - 20.5px - 60px - 8.5px - 250px; y: 143.8px; width: 250px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
+        x: root.width - 20.5px - 60px - 8.5px - 250px; y: 163.4px; width: 250px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
         Text {
             x: 10px; width: parent.width - 20px; text: Studio.general-projects-folder; color: #d0d0d1; font-size: 10px; font-weight: 500;
             vertical-alignment: center; overflow: elide;
         }
     }
     Rectangle {
-        x: root.width - 20.5px - 60px; y: 143.8px; width: 60px; height: 17.25px; border-radius: 8.6px;
+        x: root.width - 20.5px - 60px; y: 163.4px; width: 60px; height: 17.25px; border-radius: 8.6px;
         background: choose-ta.has-hover ? #34353b : #292a2f;
         accessible-role: button; accessible-label: "Choose projects folder";
         Text { text: "Choose…"; color: #e5e5e8; font-size: 10px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
         choose-ta := TouchArea { mouse-cursor: pointer; clicked => { Studio.general-choose-projects-folder(); } }
     }
-    RowLabel { x: 20.5px; y: 205.4px; text: "Playhead on stop"; }
+    RowLabel { x: 20.5px; y: 225px; text: "Playhead on stop"; }
     Rectangle {
-        x: root.width - 20.5px - 172.5px; y: 203.8px; width: 172.5px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
+        x: root.width - 20.5px - 172.5px; y: 223.4px; width: 172.5px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
         for t[i] in ["Return to start", "Stop in place"]: Rectangle {
             property <bool> active: Studio.general-stop-in-place == (i == 1);
             x: i == 0 ? 2px : 87px; y: 1.5px; width: i == 0 ? 85px : parent.width - 87px - 2px; height: parent.height - 3px; border-radius: 7.1px;
@@ -215,17 +216,17 @@ component GeneralPage inherits Rectangle {
             TouchArea { clicked => { Studio.general-stop-mode(i == 1); } }
         }
     }
-    Icon { x: 20.5px + 1px; y: 490.4px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
-    FieldLabel { x: 20.5px + 17px; y: 489.4px; text: "Voice"; }
-    RowLabel { x: 20.5px; y: 512px; text: "Talk key"; dim: true; }
+    Icon { x: 20.5px + 1px; y: 510px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
+    FieldLabel { x: 20.5px + 17px; y: 509px; text: "Voice"; }
+    RowLabel { x: 20.5px; y: 531.6px; text: "Talk key"; dim: true; }
     for k[i] in ["⌃", "⌥"]: Rectangle {
-        x: root.width - 20.5px - 42.75px + i * 21.75px; y: 510.5px; width: 21px; height: 17px; border-radius: 6px; background: #292a2f; opacity: 0.4;
+        x: root.width - 20.5px - 42.75px + i * 21.75px; y: 530.1px; width: 21px; height: 17px; border-radius: 6px; background: #292a2f; opacity: 0.4;
         Text { text: k; color: #e5e5e8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
     }
-    RowLabel { x: 20.5px; y: 577.4px; text: "Input"; dim: true; }
-    SmallSelect { x: root.width - 20.5px - 117.5px; y: 575.9px; text: "Input 1"; opacity: 0.4; }
-    RowLabel { x: 20.5px; y: 603.1px; text: "Language"; dim: true; }
-    SmallSelect { x: root.width - 20.5px - 117.5px; y: 601.6px; text: "English"; opacity: 0.4; }
+    RowLabel { x: 20.5px; y: 597px; text: "Input"; dim: true; }
+    SmallSelect { x: root.width - 20.5px - 117.5px; y: 595.5px; text: "Input 1"; opacity: 0.4; }
+    RowLabel { x: 20.5px; y: 622.7px; text: "Language"; dim: true; }
+    SmallSelect { x: root.width - 20.5px - 117.5px; y: 621.2px; text: "English"; opacity: 0.4; }
 }
 
 // ---------------------------------------------------------------- Shortcuts page

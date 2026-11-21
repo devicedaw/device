@@ -270,6 +270,10 @@ Security and choose Open Anyway. The Windows packages are not signed yet, so Sma
 the first run (More info › Run anyway). `SHA256SUMS.txt` on the release lists every package's checksum; see
 [Release packages](docs/building.md#release-packages) for how the packages are made.
 
+Device looks for a newer release once at launch and from Options › Check for Updates…. When there is one, a blue
+**Update available** pill appears at the top right; it shows what changed and opens the release page to download it.
+The check sends only the app's version, and Settings › General › Check for updates at launch turns it off.
+
 ### Build from source
 
 You need [Rust](https://rustup.rs/) 1.90 or newer, CMake 3.25 or newer, Ninja, and a C++23 compiler (Apple clang,

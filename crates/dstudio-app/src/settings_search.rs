@@ -32,6 +32,12 @@ pub const ENTRIES: &[Entry] = &[
     ),
     e(
         0,
+        "Check for updates at launch",
+        &["updates", "new version", "release", "startup", "internet"],
+        "Asks GitHub once at launch whether a newer version of Device is out, sending only the version you run.",
+    ),
+    e(
+        0,
         "Projects folder",
         &["folder", "save", "location", "directory"],
         "Where Save starts and the folder the browser's Projects tab lists.",
@@ -299,7 +305,7 @@ mod tests {
         found.sort();
         want.sort();
         assert_eq!(found, want);
-        assert_eq!(help("Buffer size"), ENTRIES[11].help);
+        assert_eq!(help("Buffer size"), ENTRIES.iter().find(|e| e.label == "Buffer size").unwrap().help);
         assert_eq!(help("No such setting"), "");
     }
 }

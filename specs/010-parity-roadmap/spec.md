@@ -100,7 +100,7 @@ target behaviour.
 - [ ] **G15. Settings › Downloads page.** Today "Not available yet". It must list optional downloadable content
   (the factory sound library for the multi-sample instrument in G27, when it exists) with its version and size,
   and a Download / Re-download button with progress. Until there is downloadable content, the page says so.
-- [ ] **G16. Real update check and an "Update available" button.** Options › Check for Updates… only says
+- [x] **G16. Real update check and an "Update available" button.** (#148, spec 022). Options › Check for Updates… only says
   "There's no update server yet". It must compare the running version with the latest GitHub release (once at
   launch, quietly when off-line, and from the menu), and when a newer one exists show a blue "Update available"
   pill in the title bar left of Report a bug. The pill and the dialog show the new version and open its

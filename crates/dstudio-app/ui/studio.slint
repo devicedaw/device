@@ -1036,8 +1036,9 @@ export global Studio {
     callback export-name-edited(string);
     in property <bool> unsaved-open;
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show
-    // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top.
-    in property <[bool]> general-on: [false, true, false, true, false];
+    // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top,
+    // Sections move clips, Check for updates at launch.
+    in property <[bool]> general-on: [false, true, false, true, false, true];
     // Settings › General › Projects folder, shown with ~ for the home folder; Choose… picks another.
     in property <string> general-projects-folder: "~/Documents/Device Studio";
     callback general-choose-projects-folder();
@@ -1046,6 +1047,16 @@ export global Studio {
     callback general-stop-mode(bool);                       // true = Stop in place
     in property <bool> updates-open;                        // Options › Check for Updates…
     in property <string> app-version;
+    // Its message, release-note lines, "and N more changes", and whether an update is shown
+    // (Later / Download instead of OK). src/updates.rs.
+    in property <string> updates-text;
+    in property <[string]> updates-notes;
+    in property <string> updates-more;
+    in property <bool> updates-download;
+    callback updates-download-clicked();
+    // Title bar "Update available" pill: the new version ("" hides it); a click opens the dialog.
+    in property <string> update-version;
+    callback update-pill-clicked();
     in property <bool> undo-history-open;                   // Edit › Undo History…
     in property <[UndoHistoryRow]> undo-history-rows;
     in property <int> undo-history-current;                 // row index of the current state
