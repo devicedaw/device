@@ -73,6 +73,12 @@ pub struct Preferences {
     /// (its header button), instead of the timeline row only.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub assistant_full: bool,
+    /// Settings › General › Let AI apps control Device (spec 023): the MCP server is on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ai_apps: bool,
+    /// AI apps (their MCP client names) the user allowed to change projects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ai_apps_allowed: Vec<String>,
     /// File › Open Recent: project folders, newest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent_projects: Vec<String>,
@@ -264,6 +270,8 @@ mod tests {
             assistant_width: 400.0,
             recent_devices: vec![dstudio_core::builtin::find("delay").unwrap().plugin_ref()],
             assistant_full: true,
+            ai_apps: true,
+            ai_apps_allowed: vec!["Claude Desktop".into()],
             recent_projects: vec!["/tmp/Song.dsproj".into()],
             recent_resolved: vec!["/private/tmp/Song.dsproj".into()],
             general: GeneralPrefs {

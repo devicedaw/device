@@ -231,6 +231,8 @@ pub enum ImportTarget {
 }
 
 pub enum JobResult {
+    /// A call from an AI app over MCP (src/mcp.rs), answered on the UI thread.
+    Mcp(crate::mcp::McpCall),
     /// A file import finished. `doc_epoch` is the project it was started in: a
     /// result from a project that has since been closed is dropped.
     Imported { path: PathBuf, target: ImportTarget, at: Ticks, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
@@ -619,6 +621,8 @@ pub struct Controller {
     pub provider: Arc<Provider>,
     /// Where the assistant's API key is kept (src/api_key.rs).
     pub key_store: crate::api_key::KeyStore,
+    /// AI apps over MCP (spec 023, src/mcp.rs).
+    pub mcp: crate::mcp::McpState,
     ballistics: Ballistics,
     strips_model: Rc<VecModel<MixerStrip>>,
     strip_meters_model: Rc<VecModel<StripMeter>>,
@@ -785,6 +789,7 @@ impl Controller {
             assistant: AssistantState::default(),
             provider: Arc::new(Provider::Unavailable),
             key_store: crate::api_key::KeyStore::System,
+            mcp: crate::mcp::McpState::default(),
             ballistics: Ballistics::default(),
             strips_model: Rc::new(VecModel::default()),
             strip_meters_model: Rc::new(VecModel::default()),
@@ -962,6 +967,7 @@ impl Controller {
             || self.updates_open
             || self.undo_history_open
             || self.key_change.is_some()
+            || self.mcp.asking.is_some()
             || self.feedback.open
     }
 
@@ -1549,7 +1555,10 @@ impl Controller {
     pub fn poll_jobs(&mut self) {
         self.clip_render_tick();
         while let Ok(job) = self.jobs_rx.try_recv() {
-            self.pending_jobs = self.pending_jobs.saturating_sub(1);
+            // AI app calls arrive on this channel too but were never counted as jobs.
+            if !matches!(job, JobResult::Mcp(_)) {
+                self.pending_jobs = self.pending_jobs.saturating_sub(1);
+            }
             match job {
                 JobResult::Imported { doc_epoch, result: Ok((info, _)), .. } if doc_epoch != self.doc_epoch => {
                     // Started in a project that has since been closed: its target
@@ -1562,6 +1571,7 @@ impl Controller {
                     Err(e) => self.set_status(format!("Import failed: {e}"), 6),
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
+                JobResult::Mcp(call) => self.mcp_call(call),
                 JobResult::Feedback(result) => self.finish_feedback(result),
                 JobResult::UpdateChecked(result) => self.finish_update_check(result),
                 JobResult::CrashReport(result) => self.finish_crash_report(result),

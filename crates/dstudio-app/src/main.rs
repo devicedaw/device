@@ -82,6 +82,7 @@ mod highlight;
 mod live_devices;
 mod live_import;
 mod live_set;
+mod mcp;
 mod midi_export;
 mod midi_in;
 mod minimap;
@@ -1721,6 +1722,10 @@ fn suppress_appkit_menu_items() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // `device-studio mcp`: the relay an AI app starts (src/mcp.rs). No window, no audio.
+    if std::env::args().nth(1).as_deref() == Some("mcp") {
+        exit_now(mcp::run_relay());
+    }
     let args = parse_args()?;
     #[cfg(target_os = "macos")]
     suppress_appkit_menu_items();
@@ -1851,6 +1856,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         c.shortcuts_load();
         c.settings.headless = !use_prefs;
+        if use_prefs {
+            c.mcp_sync(); // Settings › General › Let AI apps control Device
+        }
         if args.self_test {
             // Recording in the self-test uses injected input only (render_offline_with_input)
             // into a scratch directory; it never opens or requires a real input device.
@@ -3341,6 +3349,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         _ => transport_fields::KeyChoice::Cancel,
     }));
     on!(on_general_toggle, |c, i: i32| c.general_toggle(i));
+    on!(on_ai_apps_copy, |c| c.mcp_copied());
+    on!(on_mcp_answer, |c, allow: bool| c.mcp_answer(allow));
     on!(on_privacy_toggle_crash_reports, |c| c.privacy_toggle_crash_reports());
     {
         let ctl = ctl.clone();
@@ -4383,7 +4393,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.pr_retry_note_offs();
             }
             c.pr_preview_tick();
-            if c.pending_jobs > 0 {
+            if c.pending_jobs > 0 || c.mcp.server.is_some() {
                 c.poll_jobs();
                 if let Some(a) = aw.upgrade() {
                     a.window().request_redraw();

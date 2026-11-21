@@ -131,6 +131,10 @@ wgpu.
   parameters, load samples into the Sampler and Drum Rack, and place audio clips. Ask in a clip's menu (or ⌘K with a
   clip selected) opens it about that clip, and its header button stretches it to the full window height, beside a
   narrower bottom panel. It uses your own Anthropic API key, pasted into the panel once and kept in the system keychain.
+- **Use your own AI app.** Turn on Settings › General › Let AI apps control Device and press Copy setup, and an AI app
+  that supports MCP on this computer (Claude Desktop, Claude Code, Cursor and others) can read the open project and edit
+  it: tracks, MIDI clips and notes, built-in effects and instruments and their settings, tempo, undo and play. Device
+  asks once before each app may make changes, and each request is one undo step (AI App Edit). No API key is needed.
 
 ### A closer look
 
@@ -246,6 +250,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Export | ✅ | |
 | Tempo changes | ✅ | |
 | Assistant | ✅ | Passes a live test against the Anthropic API (tracks, MIDI, built-in effects and their settings, tempo and volume, Point mode); needs your own Anthropic API key |
+| AI apps (MCP) | 🚧 | Tested with a scripted MCP client against the running app on Linux; not yet tried with Claude Desktop or another real AI app. ChatGPT can't connect (it only supports MCP servers on the internet) |
 | Windows and Linux audio | 🚧 | Windows: playback, recording, buffer sizes down to 128 samples and switching outputs checked on one PC's built-in sound card (WASAPI shared mode); ASIO drivers play and record, checked with FlexASIO only (no hardware ASIO driver yet); no exclusive mode. Linux plays through PipeWire or straight through ALSA in CI on a headless PipeWire server, but has not run on a physical sound card |
 | Releases and branding | 🚧 | 0.2.0 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is not notarised yet and Windows packages are not signed |
 

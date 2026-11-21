@@ -28,7 +28,7 @@ import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_st
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
-import { ExportModal, UnsavedPrompt, UpdatesModal, UndoHistoryModal, KeyChangeModal, FeedbackModal } from "dialogs.slint";
+import { ExportModal, UnsavedPrompt, UpdatesModal, UndoHistoryModal, KeyChangeModal, FeedbackModal, McpAskModal } from "dialogs.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 import { BuiltinCard, FoldedStrip } from "device_panel.slint";
 import { DeviceWindowFace } from "device_window.slint";
@@ -1402,7 +1402,7 @@ export component AppWindow inherits Window {
     // The key handler gets the focus back when a modal dialog closes, and takes it when one
     // without a text field of its own opens, so no field behind the dialog keeps typing (the
     // handler only passes Escape on while a dialog is open).
-    property <bool> modal-open: Studio.export-open || Studio.unsaved-open || Studio.updates-open || Studio.undo-history-open || Studio.key-change-open || Studio.feedback-open;
+    property <bool> modal-open: Studio.export-open || Studio.unsaved-open || Studio.updates-open || Studio.undo-history-open || Studio.key-change-open || Studio.feedback-open || Studio.mcp-ask-open;
     changed modal-open => {
         if (!self.modal-open || !(Studio.export-open || Studio.feedback-open)) {
             fs.focus();
@@ -1762,6 +1762,11 @@ export component AppWindow inherits Window {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { }
             KeyChangeModal { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+        }
+        if Studio.mcp-ask-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { }
+            McpAskModal { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
         }
         if Studio.undo-history-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;

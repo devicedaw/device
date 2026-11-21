@@ -1171,6 +1171,8 @@ impl Controller {
         s.set_unsaved_open(self.unsaved_open);
         s.set_updates_open(self.updates_open);
         s.set_key_change_open(self.key_change.is_some());
+        s.set_mcp_ask_open(self.mcp.asking.is_some());
+        s.set_mcp_ask_app(self.mcp.asking.as_ref().map(|(app, _)| app.as_str()).unwrap_or("").into());
         if let Some(k) = &self.key_change {
             s.set_key_change_text(k.message().into());
         }

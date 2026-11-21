@@ -907,3 +907,18 @@ the schema lists the palette and the state shows each track's colour, and `plan`
 run (core test `a_real_reply_that_colours_and_points_at_a_new_track_is_accepted`). The provider's HTTPS client
 trusts the system's certificates (ureq `platform-verifier`). The second run passed: 28.5 s for the five prompts,
 about 21 s of it the bassline.
+
+### 2026-11-21: AI apps can control Device (MCP)
+
+Spec 023. Settings › General › Let AI apps control Device (off by default) starts a listener on 127.0.0.1 and writes
+its port and a fresh secret to `mcp.json` next to the preferences file (0600; `DSTUDIO_MCP_FILE` overrides it). Copy
+setup copies a config snippet that makes the AI app start `device-studio mcp`, a windowless relay that speaks MCP
+over stdio and forwards tool calls to the app. Tools: `get_project`, `get_builtin_devices`, `apply_actions` (the
+assistant's action schema, checked by `assistant::plan` and committed as one **AI App Edit** undo step), `undo`,
+`redo` and `transport`. Calls run on the UI thread from `poll_jobs`; the first call from each app opens an
+"Allow <app>?" prompt and Allow is kept in preferences. Edits are refused while recording. Code: `mcp.rs`; unit tests
+cover the relay, the secret check and the discovery file. A scripted MCP client against the app under Xvfb added a
+track with an 8-note bassline, volume, tempo and a Reverb, had a bad batch and a malformed action refused with nothing
+changed, and undid and redid the edit as one step. It found that `poll_jobs` only ran while a background job was
+pending, so AI app calls waited forever; the poll timer now also runs while the server is on.
+

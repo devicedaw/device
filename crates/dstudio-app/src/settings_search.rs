@@ -67,6 +67,12 @@ pub const ENTRIES: &[Entry] = &[
         "Opens a built-in effect's large window as soon as you add it to a track.",
     ),
     e(0, "Keep plugin windows on top", &["float", "front", "editor"], "Keeps plugin windows in front of the main window."),
+    e(
+        0,
+        "Let AI apps control Device",
+        &["mcp", "claude", "chatgpt", "ai", "assistant", "cursor"],
+        "Lets AI apps such as Claude Desktop read and edit your project on this computer.",
+    ),
     // Audio
     e(
         1,
