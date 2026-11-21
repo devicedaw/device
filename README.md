@@ -122,7 +122,8 @@ wgpu.
   parameter, × closes one (its automation stays), and right-clicking a lane deletes its automation.
 - **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV or 192 or 320 kbps
   MP3 at 44.1 or 48 kHz (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
-  seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.
+  seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends. With Effects set to Convert to Live
+  devices, a track's Compressor, Utility and Channel EQ become Live devices with the same settings.
 - **Undo for everything.** Every edit is a validated, invertible command, so undo and redo cover the whole project.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
   one undo step. It knows each track's devices, sends and lanes, and can add built-in effects and instruments, set their

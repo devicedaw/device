@@ -79,6 +79,7 @@ mod gain_scope;
 mod gpu;
 mod groups;
 mod highlight;
+mod live_devices;
 mod live_import;
 mod live_set;
 mod midi_export;
@@ -594,6 +595,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-export-mp3" => {
                     a.reference_default = true;
                     a.dialog_state = 10;
+                }
+                "review-export-effects" => {
+                    a.reference_default = true;
+                    a.dialog_state = 11;
                 }
                 "review-undo-history" => {
                     a.reference_default = true;
@@ -3260,6 +3265,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_export_pick_recipe, |c, i: i32| c.export_pick_recipe(i));
     on!(on_export_toggle_tracks, |c| c.export_toggle_tracks_menu());
     on!(on_export_toggle_range, |c| c.export_toggle_range_menu());
+    on!(on_export_toggle_fx, |c| c.export_toggle_fx_menu());
+    on!(on_export_pick_fx, |c, row: i32| c.export_pick_fx(row));
     on!(on_export_pick_range, |c, row: i32| c.export_pick_range(row));
     on!(on_export_pick_tracks, |c, i: i32| c.export_pick_tracks(i));
     on!(on_export_name_edited, |c, t: slint::SharedString| c.export_set_name(t.as_str()));
@@ -4238,8 +4245,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     c.menu_action("edit.undo_history");
                 } else if state != 2 {
                     c.export_open();
-                    if (3..=5).contains(&state) {
-                        c.export_pick_recipe(if state == 5 { 2 } else { 1 });
+                    if (3..=5).contains(&state) || state == 11 {
+                        c.export_pick_recipe(if state == 4 || state == 3 { 1 } else { 2 });
+                    }
+                    if state == 11 {
+                        c.export_pick_fx(1);
+                        c.export_toggle_fx_menu();
                     }
                     if state == 4 {
                         c.export_toggle_tracks_menu();

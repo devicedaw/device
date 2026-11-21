@@ -877,3 +877,13 @@ clip, section or range, the FX slot keys act on them: ⌘D Duplicate selected ef
 the chain card's Unpack chain now uses too. Selecting a clip, a section, a range or a track, or pressing
 Escape, clears the selection. Settings › Shortcuts lists the three under Editing, bindable like the others.
 Review state `review-effect-selection`; unit tests in `effect_edit`; self-test `effect_select_steps`.
+### 2026-11-21: Live sets keep effects as Live devices
+
+Export › Project's Effects pill now offers Convert to Live devices (spec 019). A track whose effects are all
+Compressor, Utility or Channel EQ (on, not in a chain, not modulated, no automation, neutral trim, width and
+mono) is rendered before its effects; the set puts Live's Compressor, Utility and EQ Eight on that track with
+the settings mapped to Live's units, and Live's mixer gets the track's volume and pan. Other tracks render
+after their effects as before. The notes list both, with the reason, and any setting clamped to Live's range.
+`live_devices.rs` holds the mappings; `live_set.rs` writes them; `dialogs.rs::live_chain` decides per track
+and `make_dry` renders before the effects. Tests: `live_devices` unit tests, a structure check test, and the
+self-test section `live_convert_steps`.

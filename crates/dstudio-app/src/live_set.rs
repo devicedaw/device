@@ -80,6 +80,9 @@ pub struct SetTrack {
     /// Output "Sends Only": the track is heard through its sends alone, not on the master.
     pub sends_only: bool,
     pub content: SetContent,
+    /// Live devices on the track, in order (spec 019); empty when the track is rendered after
+    /// its effects.
+    pub devices: Vec<crate::live_devices::LiveDevice>,
 }
 
 pub enum SetContent {
@@ -691,11 +694,46 @@ impl Xml {
         self.v("TakeCounter", 1);
         self.close("Recorder");
     }
-    fn inner_chain(&mut self) {
+    fn inner_chain(&mut self, devices: &[crate::live_devices::LiveDevice]) {
         self.open("DeviceChain", &[]);
-        self.empty("Devices", &[]);
+        if devices.is_empty() {
+            self.empty("Devices", &[]);
+        } else {
+            self.open("Devices", &[]);
+            for d in devices {
+                self.live_device(d);
+            }
+            self.close("Devices");
+        }
         self.empty("SignalModulations", &[]);
         self.close("DeviceChain");
+    }
+    /// A Live device (src/live_devices.rs): the device head, then its elements in order.
+    fn live_device(&mut self, d: &crate::live_devices::LiveDevice) {
+        let id = self.id();
+        self.open(d.tag, &[("Id", id.to_string())]);
+        self.device_head(false);
+        for p in &d.params {
+            self.live_param(p);
+        }
+        self.close(d.tag);
+    }
+    fn live_param(&mut self, p: &crate::live_devices::LiveParam) {
+        use crate::live_devices::LiveParam;
+        match p {
+            LiveParam::Float(tag, v, range, modulation) => {
+                self.float_param(tag, *v, *range, *modulation);
+            }
+            LiveParam::Bool(tag, on) => self.on_off(tag, *on),
+            LiveParam::Value(tag, v) => self.v(tag, v),
+            LiveParam::Group(tag, items) => {
+                self.open(tag, &[]);
+                for i in items {
+                    self.live_param(i);
+                }
+                self.close(tag);
+            }
+        }
     }
     fn track(&mut self, set: &LiveSet, id: u64, t: &SetTrack) {
         let tag = match t.content {
@@ -752,7 +790,7 @@ impl Xml {
         self.open("FreezeSequencer", &[]);
         self.sample_sequencer_body(set, t.color, SCENES, 1, &[]);
         self.close("FreezeSequencer");
-        self.inner_chain();
+        self.inner_chain(&t.devices);
         self.close("DeviceChain");
         if matches!(t.content, SetContent::Midi(_)) {
             let rewire = self.id();
@@ -776,7 +814,7 @@ impl Xml {
         self.sample_sequencer_body(set, r.color, 0, 1, &[]);
         self.close("AudioSequencer");
         self.close("FreezeSequencer");
-        self.inner_chain();
+        self.inner_chain(&[]);
         self.close("DeviceChain");
         self.close("ReturnTrack");
     }
@@ -826,7 +864,7 @@ impl Xml {
         self.sample_sequencer_body(set, 69, 0, 1, &[]);
         self.close("AudioSequencer");
         self.close("FreezeSequencer");
-        self.inner_chain();
+        self.inner_chain(&[]);
         self.close("DeviceChain");
         self.close("MasterTrack");
     }
@@ -838,7 +876,7 @@ impl Xml {
         self.open("Mixer", &[]);
         self.mixer_body(true, 1.0, 0.0, None);
         self.close("Mixer");
-        self.inner_chain();
+        self.inner_chain(&[]);
         self.close("DeviceChain");
         self.close("PreHearTrack");
     }
@@ -1433,6 +1471,7 @@ mod tests {
                         sample_rate: 48_000,
                         markers: Vec::new(),
                     }]),
+                    devices: Vec::new(),
                 },
                 SetTrack {
                     name: "Keys (MIDI)".into(),
@@ -1452,6 +1491,7 @@ mod tests {
                             SetNote { pitch: 60, time: 2.0, duration: 1.0, velocity: 80 },
                         ],
                     }]),
+                    devices: Vec::new(),
                 },
                 SetTrack {
                     name: "Empty".into(),
@@ -1462,6 +1502,7 @@ mod tests {
                     sends: Vec::new(),
                     sends_only: false,
                     content: SetContent::Midi(vec![]),
+                    devices: Vec::new(),
                 },
             ],
             returns: vec![
@@ -1469,6 +1510,20 @@ mod tests {
                 SetReturn { name: "Return B".into(), color: 6, on: false, volume: 1.0, pan: 0.0, pre: true, sends: Vec::new() },
             ],
         }
+    }
+
+    #[test]
+    fn a_track_with_live_devices_passes_the_structure_check() {
+        // Spec 019: a Compressor and a Utility on the first track, written in order with fresh ids.
+        let mut set = sample_set();
+        let comp = dstudio_core::builtin::find("compressor").unwrap().instantiate();
+        let util = dstudio_core::builtin::find("utility").unwrap().instantiate();
+        set.tracks[0].devices = vec![crate::live_devices::convert(&comp).unwrap(), crate::live_devices::convert(&util).unwrap()];
+        let xml = to_xml(&set);
+        validate(&xml, None).unwrap();
+        let (c, u) = (xml.find("<Compressor2 Id=").expect("a Compressor"), xml.find("<StereoGain Id=").expect("a Utility"));
+        assert!(c < u, "in chain order");
+        assert!(xml[c..u].contains("<Threshold>") && xml[c..u].contains("</Compressor2>"));
     }
 
     #[test]
