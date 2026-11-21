@@ -327,7 +327,7 @@ mod tests {
 
 /// Real requests to the Anthropic API, end to end: prompt → provider → `plan` → `commit`, on a
 /// fresh default project per prompt. Ignored by default (each run costs a few cents); run with
-/// `ANTHROPIC_API_KEY` set:
+/// `DSTUDIO_TEST_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY` set:
 ///
 /// `cargo test -p dstudio-app --release live_api -- --ignored --nocapture --test-threads 1`
 #[cfg(test)]
@@ -338,10 +338,17 @@ mod live_api {
     use dstudio_core::{Project, TrackKind, builtin, gain_to_db};
     use std::time::Instant;
 
+    /// `DSTUDIO_TEST_ANTHROPIC_API_KEY` first (a name no other tool reads, for environments that
+    /// keep `ANTHROPIC_API_KEY` for themselves), then the app's own `ANTHROPIC_API_KEY`.
     fn provider() -> Option<Provider> {
+        if let Ok(key) = std::env::var("DSTUDIO_TEST_ANTHROPIC_API_KEY")
+            && !key.trim().is_empty()
+        {
+            return Some(Provider::from_key(&key));
+        }
         match Provider::from_env() {
             Provider::Unavailable => {
-                eprintln!("ANTHROPIC_API_KEY is not set: skipping the live assistant test");
+                eprintln!("Neither DSTUDIO_TEST_ANTHROPIC_API_KEY nor ANTHROPIC_API_KEY is set: skipping the live assistant test");
                 None
             }
             p => Some(p),
