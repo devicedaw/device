@@ -515,7 +515,8 @@ int32_t se_input_set_muted(se_engine* engine, uint8_t muted);
  * round-trip latency (input + output latency, se_device_status) minus the
  * plugin delay compensation L (se_pdc_report), so the take lines up with
  * what was heard; injected input has no device part (only L). A change of L
- * while recording ends the takes like a seek.
+ * while recording ends the takes like a seek. The manual recording offset
+ * (se_record_set_offset) is subtracted too.
  *
  * se_record_stop: stops capturing (the transport keeps its state), waits
  * for the writer, finalizes every file and returns the number of takes,
@@ -543,6 +544,16 @@ typedef struct se_recorded_take {
 } se_recorded_take; /* 1064 bytes, align 8 */
 
 int32_t se_record_get_take(se_engine* engine, size_t index, se_recorded_take* out);
+
+/* Manual recording offset (spec 020), engine frames: a correction for an
+ * interface that reports its latency wrongly. Positive values place takes
+ * earlier, negative ones later: start_frame = position − (input + output
+ * latency) − L − offset. It applies to every audio take, injected input
+ * included; MIDI capture does not use it. A change while recording ends the
+ * takes like a change of L. |frames| ≤ the engine sample rate (1 s), else
+ * SE_ERR_INVALID_ARG. Default 0. Any non-RT thread. */
+int32_t se_record_set_offset(se_engine* engine, int32_t frames);
+int32_t se_record_get_offset(se_engine* engine, int32_t* out_frames);
 
 /* Live view. Cheap, callable from any non-RT thread at UI rate. Every take
  * of the current recording, in start order (frames lag the audio thread by

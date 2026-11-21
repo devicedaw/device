@@ -1332,6 +1332,23 @@ impl Engine {
         unsafe { ffi::se_input_set_muted(self.raw, muted as u8) };
     }
 
+    /// Manual recording offset (Settings › Audio › Recording offset, spec 020), in engine
+    /// frames: positive places takes earlier, negative later, on top of the reported device
+    /// latency and delay compensation. Applies to audio takes only (not MIDI capture).
+    /// `SE_ERR_INVALID_ARG` beyond one second either way.
+    pub fn set_recording_offset(&self, frames: i32) -> Result<(), EngineError> {
+        // SAFETY: valid handle.
+        check(unsafe { ffi::se_record_set_offset(self.raw, frames) })
+    }
+
+    /// The offset set with [`Engine::set_recording_offset`] (0 by default).
+    pub fn recording_offset(&self) -> i32 {
+        let mut f = 0i32;
+        // SAFETY: valid handle and out pointer.
+        unsafe { ffi::se_record_get_offset(self.raw, &mut f) };
+        f
+    }
+
     /// Start capturing every armed track that has an input (as published),
     /// from the current transport position at the next audio block; starts
     /// the transport if stopped. Takes are written to `dir` (created if

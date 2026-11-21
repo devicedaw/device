@@ -1141,6 +1141,11 @@ export global Studio {
     in property <string> settings-note;
     in property <bool> set-pdc-on: true;
     in property <string> set-latency-text;
+    // Settings › Audio › Recording offset (spec 020): the selected input device's offset as
+    // shown ("+4.5 ms"), whether there is an input device to set it for, and the line under it.
+    in property <string> set-rec-offset-text: "0.0 ms";
+    in property <bool> set-rec-offset-enabled;
+    in property <string> set-rec-offset-hint;
     in property <[MidiInputRow]> midi-inputs;
     // Settings › MIDI › Default instrument: the choice's name, and whether it is a plugin the
     // last scan didn't find.
@@ -1190,6 +1195,8 @@ export global Studio {
     callback settings-menu-dismiss();
     callback settings-toggle-mute();
     callback settings-toggle-pdc();
+    callback settings-rec-offset-nudge(int);    // -1 / +1: 0.5 ms later / earlier
+    callback settings-rec-offset-typed(string); // the field's text on Enter or when it loses focus
     callback settings-test();
 
     // ---- device chain (Devices tab; src/devices.rs, ui/devices.slint) ----

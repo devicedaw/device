@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! device-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|review-clip-menu|reference-settings-audio|review-settings-audio-devices|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-midi-recording|review-settings-midi|review-device-chain|review-settings-plugins]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|review-clip-menu|reference-settings-audio|review-settings-audio-devices|review-settings-recording-offset|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-midi-recording|review-settings-midi|review-device-chain|review-settings-plugins]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
@@ -195,6 +195,8 @@ struct Args {
     settings_state: bool,
     /// review-settings-audio-devices: Settings › Audio with the Output menu open over the real device list.
     settings_devices_review: bool,
+    /// review-settings-recording-offset: Settings › Audio with a +4.5 ms recording offset on the fake input.
+    rec_offset_review: bool,
     /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project,
     /// 6 Check for Updates, 7 Undo History (after a few edits, the last one undone), 8 export dialog at 44.1 kHz,
     /// 9 with a loop region over bars 3-4 and the Range menu open on it.
@@ -639,6 +641,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_state = true;
                 }
+                "review-settings-recording-offset" => {
+                    a.reference_default = true;
+                    a.settings_state = true;
+                    a.rec_offset_review = true;
+                }
                 "review-settings-audio-devices" => {
                     a.reference_default = true;
                     a.settings_state = true;
@@ -922,7 +929,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-effect-selection, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-smart-fill, review-smart-fill-type, review-smart-fill-record, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-add-track-menu, review-lane-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, review-settings-recording-offset, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-effect-selection, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-smart-fill, review-smart-fill-type, review-smart-fill-record, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-add-track-menu, review-lane-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
                     ));
                 }
             },
@@ -2548,6 +2555,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if args.settings_devices_review {
             c.settings_dropdown(0);
         }
+        if args.rec_offset_review {
+            c.settings_set_rec_offset(4.5); // the fake input; --state runs never save preferences
+        }
     }
     if args.plugins_page_review {
         let mut c = ctl.borrow_mut();
@@ -3464,6 +3474,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_settings_menu_dismiss, |c| c.settings_menu_dismiss());
     on!(on_settings_toggle_mute, |c| c.settings_toggle_mute());
     on!(on_settings_toggle_pdc, |c| c.settings_toggle_pdc());
+    on!(on_settings_rec_offset_nudge, |c, d: i32| c.settings_rec_offset_nudge(d));
+    on!(on_settings_rec_offset_typed, |c, t: slint::SharedString| c.settings_rec_offset_typed(&t));
     on!(on_settings_midi_toggle, |c, i: i32| c.midi_toggle_input(i.max(0) as usize));
     on!(on_settings_test, |c| c.settings_test());
     on!(on_add_track, |c| c.add_audio_track());

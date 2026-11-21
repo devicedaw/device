@@ -454,6 +454,63 @@ TEST_CASE(record_seek_starts_new_take_loop_writes_linearly) {
     CHECK_EQ(st.overruns, 0u);
 }
 
+// Spec 020: the manual recording offset moves a take by exactly that many
+// frames (positive = earlier), keeps the samples, and is range-checked.
+TEST_CASE(record_offset_moves_takes_by_exactly_that_many_frames) {
+    EngineHandle e(48000, 256);
+    TempDir dir;
+    TrackIn t;
+    t.arm = true;
+    t.mode = SE_INPUT_MONO;
+    REQUIRE(publish_v4(e, {t}) == SE_OK);
+    int32_t got = -1;
+    REQUIRE(se_record_get_offset(e, &got) == SE_OK);
+    CHECK_EQ(got, 0); // default
+    for (const int32_t offset : {216, -4800, 0}) {
+        REQUIRE(se_record_set_offset(e, offset) == SE_OK);
+        REQUIRE(se_record_get_offset(e, &got) == SE_OK);
+        CHECK_EQ(got, offset);
+        REQUIRE(se_transport_seek(e, 10000) == SE_OK);
+        REQUIRE(se_record_start(e, dir.path.c_str()) == SE_OK);
+        render_in(e, 1, 1000, 0, {127, 256});
+        const auto takes = stop_takes(e);
+        REQUIRE(takes.size() == 1);
+        CHECK_EQ(takes[0].start_frame, 10000 - offset);
+        CHECK_EQ(takes[0].frames, 1000u);
+        check_take(takes[0], {0}, 0); // same samples, only the placement moves
+        REQUIRE(se_transport_stop(e) == SE_OK);
+    }
+    // Up to one second either way.
+    CHECK_EQ(se_record_set_offset(e, 48000), SE_OK);
+    CHECK_EQ(se_record_set_offset(e, -48000), SE_OK);
+    CHECK_EQ(se_record_set_offset(e, 48001), SE_ERR_INVALID_ARG);
+    CHECK_EQ(se_record_set_offset(e, -48001), SE_ERR_INVALID_ARG);
+    REQUIRE(se_record_get_offset(e, &got) == SE_OK);
+    CHECK_EQ(got, -48000); // a refused value changes nothing
+    CHECK_EQ(se_record_get_offset(e, nullptr), SE_ERR_INVALID_ARG);
+}
+
+// A change of the offset while recording ends the take and starts a new one
+// at the new placement, like a change of delay compensation.
+TEST_CASE(record_offset_change_while_recording_starts_a_new_take) {
+    EngineHandle e(48000, 256);
+    TempDir dir;
+    TrackIn t;
+    t.arm = true;
+    t.mode = SE_INPUT_MONO;
+    REQUIRE(publish_v4(e, {t}) == SE_OK);
+    REQUIRE(se_record_start(e, dir.path.c_str()) == SE_OK);
+    render_in(e, 1, 512, 0, {256});
+    REQUIRE(se_record_set_offset(e, 100) == SE_OK);
+    render_in(e, 1, 512, 512, {256});
+    const auto takes = stop_takes(e);
+    REQUIRE(takes.size() == 2);
+    CHECK_EQ(takes[0].start_frame, 0);
+    CHECK_EQ(takes[0].frames, 512u);
+    CHECK_EQ(takes[1].start_frame, 512 - 100);
+    CHECK_EQ(takes[1].frames, 512u);
+}
+
 TEST_CASE(record_errors) {
     EngineHandle e(48000, 256);
     TempDir dir;
@@ -737,6 +794,17 @@ TEST_CASE(device_recording_is_latency_compensated) {
     CHECK_EQ(takes[0].start_frame, 10000 - 250); // input + output latency
     CHECK_EQ(takes[0].frames, 40u * 128u);
     check_take(takes[0], {1}, 0);
+    // Spec 020: the manual offset adds to the reported device latency.
+    REQUIRE(se_record_set_offset(e, 37) == SE_OK);
+    REQUIRE(se_transport_seek(e, 20000) == SE_OK);
+    REQUIRE(se_record_start(e, dir.path.c_str()) == SE_OK);
+    for (int b = 0; b < 4; ++b) {
+        const float* in[2] = {c0.data(), c1.data()};
+        d->pump(128, in, 2, l, r);
+    }
+    const auto offset_takes = stop_takes(e);
+    REQUIRE(offset_takes.size() == 1);
+    CHECK_EQ(offset_takes[0].start_frame, 20000 - 250 - 37);
     REQUIRE(se_device_stop(e) == SE_OK);
 }
 

@@ -929,6 +929,8 @@ unsafe extern "C" {
     pub fn se_record_start(engine: *mut se_engine, utf8_dir: *const c_char) -> i32;
     pub fn se_record_stop(engine: *mut se_engine, out_take_count: *mut usize) -> i32;
     pub fn se_record_get_take(engine: *mut se_engine, index: usize, out: *mut se_recorded_take) -> i32;
+    pub fn se_record_set_offset(engine: *mut se_engine, frames: i32) -> i32;
+    pub fn se_record_get_offset(engine: *mut se_engine, out_frames: *mut i32) -> i32;
     pub fn se_record_state(
         engine: *mut se_engine,
         out_active: *mut u8,

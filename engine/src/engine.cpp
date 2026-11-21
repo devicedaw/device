@@ -1010,6 +1010,8 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
     rec_in_use_.store(true, std::memory_order_seq_cst);
     Recorder* const rec = rec_live_.load(std::memory_order_seq_cst);
     const bool muted = input_muted_.load(std::memory_order_relaxed);
+    // The manual recording offset (spec 020) adds to the device and plugin compensation.
+    const int64_t rec_offset = record_offset_.load(std::memory_order_relaxed);
     const uint32_t in_count =
         std::min(input.channels, input.planar != nullptr ? kMaxDeviceInputChannels : kMaxInjectedInputChannels);
     const float* in_ptrs[kMaxDeviceInputChannels];
@@ -1094,7 +1096,7 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
         // late, so takes are placed that much earlier too.
         const int64_t pdc_total = lines != nullptr ? graph->pdc.total : 0;
         if (rec != nullptr && rt_playing_)
-            rec->capture(in_ptrs, in_count, live_ctx_.zeros(), rt_position_, rec_latency + pdc_total, n);
+            rec->capture(in_ptrs, in_count, live_ctx_.zeros(), rt_position_, rec_latency + pdc_total + rec_offset, n);
         peak_l = std::max(peak_l, p.l);
         peak_r = std::max(peak_r, p.r);
         atomic_store_max(master_win_l_[slot], p.l);

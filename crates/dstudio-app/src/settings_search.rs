@@ -110,6 +110,12 @@ pub const ENTRIES: &[Entry] = &[
         &["latency", "pdc", "alignment"],
         "Delays the other tracks so that tracks with slow plugins stay in time with them.",
     ),
+    e(
+        1,
+        "Recording offset",
+        &["latency", "calibration", "late", "early", "takes", "timing"],
+        "Moves takes from this input device earlier (positive) or later, for interfaces that report their latency wrongly.",
+    ),
     // MIDI
     e(
         2,
@@ -274,7 +280,8 @@ mod tests {
     #[test]
     fn matching_ignores_case_and_spaces_and_uses_keywords() {
         assert_eq!(hits("buf"), ["Buffer size"]);
-        assert_eq!(hits("latency"), ["Sample rate", "Buffer size", "Plugin delay compensation"]);
+        assert_eq!(hits("latency"), ["Sample rate", "Buffer size", "Plugin delay compensation", "Recording offset"]);
+        assert_eq!(hits("calib"), ["Recording offset"]);
         assert_eq!(hits("synth"), ["Default instrument"]);
         assert_eq!(hits("folder"), ["Projects folder", "Scan directories"]);
         assert!(hits("zzz").is_empty() && hits("").is_empty() && hits("   ").is_empty());

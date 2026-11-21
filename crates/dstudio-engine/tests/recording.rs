@@ -218,3 +218,31 @@ fn default_engine_reports_devices_without_opening_input() {
     assert_eq!(engine.start_recording(dir.path()).unwrap_err().code, dstudio_engine::ffi::SE_ERR_STATE);
     assert!(engine.stop_recording().is_err());
 }
+
+/// Spec 020: the manual recording offset reaches the engine through the Rust wrapper and moves
+/// the take by exactly that many frames (negative = later).
+#[test]
+fn recording_offset_moves_the_take() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::new(Config { sample_rate: RATE, max_block_size: 1024 }).unwrap();
+    let mut doc = Document::new(Project::default());
+    doc.execute(Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Audio, "Vox", ColorIndex(0)) }, Origin::User)
+        .unwrap();
+    let track = doc.project().tracks.last().unwrap().id;
+    doc.execute(Command::SetTrackInput { track, input: Some(InputSource { channel: 0, stereo: false }) }, Origin::User).unwrap();
+    doc.execute(Command::SetTrackArm { track, arm: true }, Origin::User).unwrap();
+    let (snap, _) = snapshot::build(doc.project(), RATE, &HashMap::new());
+    engine.publish(&snap).unwrap();
+    assert_eq!(engine.recording_offset(), 0);
+    engine.set_recording_offset(-480).unwrap(); // takes 10 ms later
+    assert_eq!(engine.recording_offset(), -480);
+    assert_eq!(engine.set_recording_offset(48_001).unwrap_err().code, dstudio_engine::ffi::SE_ERR_INVALID_ARG);
+    engine.seek(96_000).unwrap();
+    engine.start_recording(dir.path()).unwrap();
+    let input: Vec<f32> = (0..4800).map(|k| input_sample(0, k)).collect();
+    let mut out = vec![0f32; 4800 * 2];
+    engine.render_offline_with_input(&input, 1, &mut out).unwrap();
+    let takes = engine.stop_recording().unwrap();
+    assert_eq!(takes.len(), 1);
+    assert_eq!((takes[0].start_frame, takes[0].frames), (96_480, 4800));
+}
