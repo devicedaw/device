@@ -1,7 +1,7 @@
 // Settings window as an in-app modal panel (see src/settings.rs for why), drawn at the
 // settings window rect: x 255, y 6.5, 960 pt wide (216.75 / 5.5 / 816 in 85 % units), running
-// off the bottom of the main window. Sidebar 187; the Audio, MIDI, Plugins and Shortcuts
-// pages are real, General is laid out with PLACEHOLDER controls, the rest say "Not available yet".
+// off the bottom of the main window. Sidebar 187; the General, Audio, MIDI, Plugins, Shortcuts
+// and Privacy pages are real; Downloads says there is nothing to download yet.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
 import { Studio, ChoiceItem, MidiInputRow, PluginRow, ShortcutKey, ShortcutRow } from "studio.slint";
@@ -97,22 +97,48 @@ component Switch inherits Rectangle {
     }
 }
 
-// Setting row label with an info badge after it.
+// Setting row label with an (i) after it. Hovering the (i) shows one sentence about the setting
+// (roadmap G12): the `help` of its entry in src/settings_search.rs ENTRIES, found by `setting`.
+// The bubble itself is drawn by SettingsPanel, above every page.
 component RowLabel inherits Rectangle {
     in property <string> text;
     in property <bool> heading;
     // A setting DStudio can't back (shown disabled).
     in property <bool> dim;
+    // The setting's label in ENTRIES, when the text shown differs (a count after it).
+    in property <string> setting: root.text;
+    property <string> help: root.dim ? "Not available in Device." : Studio.settings-help(root.setting);
     height: 14px;
-    opacity: root.dim ? 0.4 : 1;
+    width: info.x + info.width;
     t := Text {
         x: 0; text: root.text; color: root.heading ? #ececee : #e5e5e8; font-size: root.heading ? 10px : 10.25px;
         font-weight: root.heading ? 600 : 400; vertical-alignment: center; letter-spacing: root.heading ? 0 : 0.15px;
+        opacity: root.dim ? 0.4 : 1;
     }
-    Rectangle {
+    info := Rectangle {
         x: t.preferred-width + 6px; y: 2.75px; width: 8.5px; height: 8.5px; border-radius: 4.25px;
-        border-width: 0.75px; border-color: #767678;
-        Text { text: "i"; color: #767678; font-size: 6px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        border-width: 0.75px; border-color: tip-ta.has-hover ? #b5b5b8 : #767678;
+        opacity: root.dim ? 0.4 : 1;
+        visible: root.help != "";
+        accessible-role: AccessibleRole.text; accessible-label: "About " + root.setting; accessible-description: root.help;
+        Text { text: "i"; color: tip-ta.has-hover ? #b5b5b8 : #767678; font-size: 6px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        // A little larger than the badge, so it is easy to hit.
+        tip-ta := TouchArea {
+            x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px;
+            // Shown at once (the (i) is there for nothing else), hidden when the pointer leaves.
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.move && Studio.settings-tip != root.help) {
+                    Studio.settings-tip = root.help;
+                    Studio.settings-tip-x = info.absolute-position.x;
+                    Studio.settings-tip-y = info.absolute-position.y + info.height;
+                }
+            }
+            changed has-hover => {
+                if (!self.has-hover && Studio.settings-tip == root.help) {
+                    Studio.settings-tip = "";
+                }
+            }
+        }
     }
 }
 
@@ -136,23 +162,24 @@ component SearchHit inherits Rectangle {
 }
 
 // General page. Startup, Projects folder, Playhead on stop, Sections move clips and the three
-// plugin window switches work (prefs.general). Sample licensing and the Assistant section are
-// shown off and disabled: DStudio has no licensing, audio-listening assistant or voice input.
+// plugin window switches work (prefs.general). The Assistant section is shown off and disabled:
+// DStudio has no audio-listening assistant or voice input. (No sample licensing row: Device has
+// no online service, roadmap Q3.)
 component GeneralPage inherits Rectangle {
     property <length> sw-x: root.width - 20.5px - 22.5px;
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "General"; font-size: 17.25px; font-weight: 700; }
     for s in [
-        { t: "Startup", y: 71.3px }, { t: "Projects", y: 125.8px }, { t: "Transport", y: 185.8px }, { t: "Sample licensing", y: 245.8px },
-        { t: "Timeline annotations", y: 300.2px }, { t: "Plugin windows", y: 354.7px }, { t: "Assistant", y: 449.6px },
+        { t: "Startup", y: 71.3px }, { t: "Projects", y: 145.4px }, { t: "Transport", y: 205.4px },
+        { t: "Timeline annotations", y: 265.3px }, { t: "Plugin windows", y: 319.8px }, { t: "Assistant", y: 414.7px },
     ]: FieldLabel { x: 20.5px; y: s.y; text: s.t; }
-    for y in [115.7px, 175.6px, 235.6px, 290.1px, 344.6px, 438.8px]: Rectangle { x: 20.5px; y: y; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
+    for y in [135.3px, 195.2px, 255.2px, 309.7px, 403.9px]: Rectangle { x: 20.5px; y: y; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
     // k: index into Studio.general-on, -1 = not available in DStudio (off, disabled).
     for r in [
-        { t: "Always load last session", y: 88.4px, k: 0 }, { t: "License samples when you use them", y: 262.9px, k: -1 },
-        { t: "Sections move clips", y: 317.4px, k: 4 }, { t: "Auto-show third-party effect windows", y: 371.8px, k: 1 },
-        { t: "Auto-show built-in effect windows", y: 391.4px, k: 2 }, { t: "Keep plugin windows on top", y: 411.6px, k: 3 },
-        { t: "Let the assistant listen to audio", y: 466.7px, k: -1 }, { t: "Hold talk key to record", y: 534.6px, k: -1 },
-        { t: "Auto-send", y: 554.8px, k: -1 },
+        { t: "Always load last session", y: 88.4px, k: 0 }, { t: "Check for updates at launch", y: 108px, k: 5 },
+        { t: "Sections move clips", y: 282.5px, k: 4 }, { t: "Auto-show third-party effect windows", y: 336.9px, k: 1 },
+        { t: "Auto-show built-in effect windows", y: 356.5px, k: 2 }, { t: "Keep plugin windows on top", y: 376.7px, k: 3 },
+        { t: "Let the assistant listen to audio", y: 431.8px, k: -1 }, { t: "Hold talk key to record", y: 499.7px, k: -1 },
+        { t: "Auto-send", y: 519.9px, k: -1 },
     ]: Rectangle {
         x: 0; y: r.y; width: root.width; height: 14px;
         SearchHit { y: -5px; width: parent.width - 24px; height: 24px; label: r.t; enabled: r.k >= 0; }
@@ -160,26 +187,26 @@ component GeneralPage inherits Rectangle {
         Switch { x: root.sw-x; y: 2px; on: r.k >= 0 && Studio.general-on[r.k]; enabled: r.k >= 0; label: r.t; toggled => { Studio.general-toggle(r.k); } }
     }
     // Projects folder: where Save starts and what the browser's Projects tab lists.
-    SearchHit { y: 139.5px; width: root.width - 24px; height: 26px; label: "Projects folder"; }
-    SearchHit { y: 199.5px; width: root.width - 24px; height: 26px; label: "Playhead on stop"; }
-    RowLabel { x: 20.5px; y: 145.4px; text: "Projects folder"; }
+    SearchHit { y: 159.1px; width: root.width - 24px; height: 26px; label: "Projects folder"; }
+    SearchHit { y: 219.1px; width: root.width - 24px; height: 26px; label: "Playhead on stop"; }
+    RowLabel { x: 20.5px; y: 165px; text: "Projects folder"; }
     Rectangle {
-        x: root.width - 20.5px - 60px - 8.5px - 250px; y: 143.8px; width: 250px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
+        x: root.width - 20.5px - 60px - 8.5px - 250px; y: 163.4px; width: 250px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
         Text {
             x: 10px; width: parent.width - 20px; text: Studio.general-projects-folder; color: #d0d0d1; font-size: 10px; font-weight: 500;
             vertical-alignment: center; overflow: elide;
         }
     }
     Rectangle {
-        x: root.width - 20.5px - 60px; y: 143.8px; width: 60px; height: 17.25px; border-radius: 8.6px;
+        x: root.width - 20.5px - 60px; y: 163.4px; width: 60px; height: 17.25px; border-radius: 8.6px;
         background: choose-ta.has-hover ? #34353b : #292a2f;
         accessible-role: button; accessible-label: "Choose projects folder";
         Text { text: "Choose…"; color: #e5e5e8; font-size: 10px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
         choose-ta := TouchArea { mouse-cursor: pointer; clicked => { Studio.general-choose-projects-folder(); } }
     }
-    RowLabel { x: 20.5px; y: 205.4px; text: "Playhead on stop"; }
+    RowLabel { x: 20.5px; y: 225px; text: "Playhead on stop"; }
     Rectangle {
-        x: root.width - 20.5px - 172.5px; y: 203.8px; width: 172.5px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
+        x: root.width - 20.5px - 172.5px; y: 223.4px; width: 172.5px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
         for t[i] in ["Return to start", "Stop in place"]: Rectangle {
             property <bool> active: Studio.general-stop-in-place == (i == 1);
             x: i == 0 ? 2px : 87px; y: 1.5px; width: i == 0 ? 85px : parent.width - 87px - 2px; height: parent.height - 3px; border-radius: 7.1px;
@@ -189,17 +216,17 @@ component GeneralPage inherits Rectangle {
             TouchArea { clicked => { Studio.general-stop-mode(i == 1); } }
         }
     }
-    Icon { x: 20.5px + 1px; y: 490.4px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
-    FieldLabel { x: 20.5px + 17px; y: 489.4px; text: "Voice"; }
-    RowLabel { x: 20.5px; y: 512px; text: "Talk key"; dim: true; }
+    Icon { x: 20.5px + 1px; y: 455.5px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
+    FieldLabel { x: 20.5px + 17px; y: 454.5px; text: "Voice"; }
+    RowLabel { x: 20.5px; y: 477.1px; text: "Talk key"; dim: true; }
     for k[i] in ["⌃", "⌥"]: Rectangle {
-        x: root.width - 20.5px - 42.75px + i * 21.75px; y: 510.5px; width: 21px; height: 17px; border-radius: 6px; background: #292a2f; opacity: 0.4;
+        x: root.width - 20.5px - 42.75px + i * 21.75px; y: 475.6px; width: 21px; height: 17px; border-radius: 6px; background: #292a2f; opacity: 0.4;
         Text { text: k; color: #e5e5e8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
     }
-    RowLabel { x: 20.5px; y: 577.4px; text: "Input"; dim: true; }
-    SmallSelect { x: root.width - 20.5px - 117.5px; y: 575.9px; text: "Input 1"; opacity: 0.4; }
-    RowLabel { x: 20.5px; y: 603.1px; text: "Language"; dim: true; }
-    SmallSelect { x: root.width - 20.5px - 117.5px; y: 601.6px; text: "English"; opacity: 0.4; }
+    RowLabel { x: 20.5px; y: 542.5px; text: "Input"; dim: true; }
+    SmallSelect { x: root.width - 20.5px - 117.5px; y: 541px; text: "Input 1"; opacity: 0.4; }
+    RowLabel { x: 20.5px; y: 568.2px; text: "Language"; dim: true; }
+    SmallSelect { x: root.width - 20.5px - 117.5px; y: 566.7px; text: "English"; opacity: 0.4; }
 }
 
 // ---------------------------------------------------------------- Shortcuts page
@@ -388,7 +415,7 @@ component MidiPage inherits Rectangle {
         text: "Missing"; warn: true;
     }
     Rectangle { x: 20.5px; y: 136px; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
-    FieldLabel { x: 20.5px; y: 150px; text: "MIDI inputs" + (Studio.midi-inputs.length * root.row-h > root.list-h ? " (" + Studio.midi-inputs.length + ", scroll for more)" : ""); }
+    RowLabel { x: 20.5px; y: 150px; heading: true; setting: "MIDI inputs"; text: "MIDI inputs" + (Studio.midi-inputs.length * root.row-h > root.list-h ? " (" + Studio.midi-inputs.length + ", scroll for more)" : ""); }
     Flickable {
         x: 20.5px; y: root.list-y; width: root.width - 41px; height: root.list-h;
         content-height: Studio.midi-inputs.length * root.row-h;
@@ -422,6 +449,8 @@ component MidiPage inherits Rectangle {
 }
 
 component AudioPage inherits Rectangle {
+    // Enter or Escape in the Recording offset field hands the keyboard back to the main window.
+    callback focus-main();
     // Content area origin = panel x 187 (content left margin 20.5 pt -> x 207.5 panel-relative).
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Audio"; font-size: 17.25px; font-weight: 700; }
     SearchHit { y: 65px; width: root.width - 24px; height: 59px; label: "Output device"; }
@@ -430,7 +459,7 @@ component AudioPage inherits Rectangle {
     SearchHit { y: 226px; width: root.width - 24px; height: 59px; label: "Sample rate"; }
     SearchHit { y: 286px; width: root.width - 24px; height: 59px; label: "Buffer size"; }
     SearchHit { y: 347px; width: root.width - 24px; height: 26px; label: "Plugin delay compensation"; }
-    FieldLabel { x: 20.5px; y: 78.5px - 7px; text: "Output device"; }
+    RowLabel { x: 20.5px; y: 78.5px - 7px; text: "Output device"; heading: true; }
     Dropdown { x: 20.5px; y: 90px; width: root.width - 20.5px - 76.5px; text: Studio.set-output-text; field: 0; }
     // Test: plays a 0.5 s, -24 dBFS tone through the engine (src/settings.rs).
     Rectangle {
@@ -440,9 +469,9 @@ component AudioPage inherits Rectangle {
         Text { text: "Test"; color: #ececee; font-size: 10.5px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
         test-ta := TouchArea { clicked => { Studio.settings-test(); } }
     }
-    FieldLabel { x: 20.5px; y: 139.5px - 7px; text: "Input device"; }
+    RowLabel { x: 20.5px; y: 139.5px - 7px; text: "Input device"; heading: true; }
     Dropdown { x: 20.5px; y: 151px; width: root.width - 20.5px - 20.5px; text: Studio.set-input-text; field: 1; }
-    Text { x: 20.5px; y: 206px - 7px; height: 14px; text: "Mute audio input"; color: #d9d9dc; font-size: 10.25px; font-weight: 400; vertical-alignment: center; }
+    RowLabel { x: 20.5px; y: 206px - 7px; text: "Mute audio input"; }
     Rectangle {
         x: root.width - 20.5px - 20.5px; y: 201px; width: 20.5px; height: 10px; border-radius: 5px;
         background: Studio.set-input-muted ? Tokens.accent : #4a4b4f;
@@ -450,12 +479,12 @@ component AudioPage inherits Rectangle {
         Rectangle { x: Studio.set-input-muted ? parent.width - self.width - 1px : 1px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
         TouchArea { clicked => { Studio.settings-toggle-mute(); } }
     }
-    FieldLabel { x: 20.5px; y: 239.5px - 7px; text: "Sample rate"; }
+    RowLabel { x: 20.5px; y: 239.5px - 7px; text: "Sample rate"; heading: true; }
     Dropdown { x: 20.5px; y: 251px; width: root.width - 20.5px - 20.5px; text: Studio.set-rate-text; field: 2; }
-    FieldLabel { x: 20.5px; y: 299.5px - 7px; text: "Buffer size"; }
+    RowLabel { x: 20.5px; y: 299.5px - 7px; text: "Buffer size"; heading: true; }
     Dropdown { x: 20.5px; y: 312px; width: root.width - 20.5px - 20.5px; text: Studio.set-buffer-text; field: 3; }
     // Plugin delay compensation (engine ADR 0004): aligns tracks whose plugins add latency.
-    Text { x: 20.5px; y: 360px - 7px; height: 14px; text: "Plugin delay compensation"; color: #d9d9dc; font-size: 10.25px; font-weight: 400; vertical-alignment: center; }
+    RowLabel { x: 20.5px; y: 360px - 7px; text: "Plugin delay compensation"; }
     Rectangle {
         x: root.width - 20.5px - 20.5px; y: 355px; width: 20.5px; height: 10px; border-radius: 5px;
         background: Studio.set-pdc-on ? Tokens.accent : #4a4b4f;
@@ -464,8 +493,45 @@ component AudioPage inherits Rectangle {
         TouchArea { clicked => { Studio.settings-toggle-pdc(); } }
     }
     Text { x: 20.5px; y: 377px - 7px; height: 14px; text: Studio.set-latency-text; color: Tokens.text-tertiary; font-size: 9.5px; vertical-alignment: center; }
+    // Recording offset (spec 020): the selected input device's correction, in ms. Positive
+    // places takes earlier. −/+ step 0.5 ms; typing gives 0.1 ms (src/settings.rs).
+    SearchHit { y: 392px; width: root.width - 24px; height: 44px; label: "Recording offset"; }
+    RowLabel { x: 20.5px; y: 404px - 7px; text: "Recording offset"; }
+    Rectangle {
+        x: root.width - 20.5px - self.width; y: 396px; width: 104px; height: 22px; border-radius: 6px;
+        background: #28282b; border-width: 0.5px; border-color: rec-offset-field.has-focus ? #4a4b50 : #3d3e40;
+        opacity: Studio.set-rec-offset-enabled ? 1 : 0.45;
+        for b[i] in [{ t: "−", d: -1, label: "Move takes later" }, { t: "+", d: 1, label: "Move takes earlier" }]: Rectangle {
+            x: i == 0 ? 0 : parent.width - self.width; width: 22px; height: parent.height;
+            background: b-ta.has-hover && Studio.set-rec-offset-enabled ? #333438 : transparent;
+            border-radius: 6px;
+            accessible-role: button; accessible-label: b.label;
+            accessible-action-default => { Studio.settings-rec-offset-nudge(b.d); }
+            Text { text: b.t; color: #ececee; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+            b-ta := TouchArea { enabled: Studio.set-rec-offset-enabled; clicked => { Studio.settings-rec-offset-nudge(b.d); } }
+        }
+        rec-offset-field := TextInput {
+            x: 22px; width: parent.width - 44px; height: parent.height;
+            text: Studio.set-rec-offset-text;
+            enabled: Studio.set-rec-offset-enabled;
+            color: #ececee; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; single-line: true;
+            accessible-label: "Recording offset";
+            // Typing replaces the binding, so the shown value is put back after each commit.
+            accepted => { root.focus-main(); }
+            changed has-focus => {
+                Studio.search-focused = self.has-focus;
+                if !self.has-focus {
+                    Studio.settings-rec-offset-typed(self.text);
+                    self.text = Studio.set-rec-offset-text;
+                }
+            }
+        }
+        property <string> shown: Studio.set-rec-offset-text;
+        changed shown => { rec-offset-field.text = self.shown; }
+    }
+    Text { x: 20.5px; y: 424px - 7px; width: root.width - 41px; height: 14px; text: Studio.set-rec-offset-hint; color: Tokens.text-tertiary; font-size: 9.5px; vertical-alignment: center; overflow: elide; }
     if Studio.settings-note != "": Text {
-        x: 20.5px; y: 398px; width: root.width - 41px; height: 14px;
+        x: 20.5px; y: 444px; width: root.width - 41px; height: 14px;
         text: Studio.settings-note; color: Tokens.text-tertiary; font-size: 9px; vertical-alignment: center; overflow: elide;
     }
 }
@@ -492,7 +558,7 @@ component PluginsPage inherits Rectangle {
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Plugins"; font-size: 17.25px; font-weight: 700; }
     SearchHit { y: 66px; width: root.width - 24px; height: 24px; label: "Scan directories"; }
     SearchHit { y: root.after-dirs + 61px; width: root.width - 24px; height: 24px; label: "Plugin scanner"; }
-    FieldLabel { x: 20.5px; y: 71px; text: "Scan directories" + (Studio.scan-dirs.length > 8 ? " (" + Studio.scan-dirs.length + ", scroll for more)" : ""); }
+    RowLabel { x: 20.5px; y: 71px; heading: true; setting: "Scan directories"; text: "Scan directories" + (Studio.scan-dirs.length > 8 ? " (" + Studio.scan-dirs.length + ", scroll for more)" : ""); }
     // At most 8 rows tall (the page itself does not scroll); more folders
     // (CLAP_PATH / DSTUDIO_PLUGIN_PATH) scroll inside the list.
     property <int> dir-rows: min(Studio.scan-dirs.length, 8);
@@ -527,7 +593,7 @@ component PluginsPage inherits Rectangle {
     // Add folder: a folder picker; the folder is kept in the preferences and scanned with the others.
     PageButton { x: 20.5px; y: root.after-dirs + 8px; text: "Add folder"; clicked => { Studio.plugins-add-folder(); } }
     Rectangle { x: 20.5px; y: root.after-dirs + 50px; width: root.width - 41px; height: 0.5px; background: #313134; }
-    FieldLabel { x: 20.5px; y: root.after-dirs + 66px; text: "Plugin scanner"; }
+    RowLabel { x: 20.5px; y: root.after-dirs + 66px; text: "Plugin scanner"; heading: true; }
     for c[i] in [{ t: "Check for new plugins", rescan: false }, { t: "Rescan all plugins", rescan: true }]: Rectangle {
         x: 20.5px + i * ((root.width - 41px) / 2 + 4.5px); y: root.after-dirs + 86px;
         width: (root.width - 41px) / 2 - 4.5px; height: 68px; border-radius: 6px;
@@ -566,7 +632,48 @@ component PluginsPage inherits Rectangle {
     }
 }
 
+// Settings › Downloads (roadmap G15): optional content to download, such as the sound library
+// of the multi-sample instrument (roadmap G27). There is none yet, so the page says so and shows
+// nothing else. The list goes here when there is: one row per item with its name, version and
+// size and a Download / Re-download button with progress, from a model the controller pushes.
+component DownloadsPage inherits Rectangle {
+    FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Downloads"; font-size: 17.25px; font-weight: 700; }
+    SearchHit { y: 66px; width: root.width - 24px; height: 44px; label: "Downloadable content"; }
+    Text {
+        x: 20.5px; y: 71px; width: root.width - 41px; height: 14px;
+        text: "There is nothing to download yet."; color: #e5e5e8; font-size: 10.25px; letter-spacing: 0.15px; vertical-alignment: center;
+    }
+    Text {
+        x: 20.5px; y: 89px; width: root.width - 41px; height: 14px;
+        text: "Optional content, such as a sound library for the sampler, will be listed here with its version and size.";
+        color: Tokens.text-tertiary; font-size: 9.5px; vertical-alignment: center; overflow: elide;
+    }
+}
+
+// Settings › Privacy (spec 018, roadmap G14). Send crash reports works (src/crash.rs, saved in
+// the preferences); Usage tracking stays off and disabled, because Device collects nothing.
+component PrivacyPage inherits Rectangle {
+    property <length> sw-x: root.width - 20.5px - 22.5px;
+    FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Privacy"; font-size: 17.25px; font-weight: 700; }
+    SearchHit { y: 66px; width: root.width - 24px; height: 24px; label: "Send crash reports"; }
+    RowLabel { x: 20.5px; y: 71px; text: "Send crash reports"; }
+    Switch {
+        x: root.sw-x; y: 73px; on: Studio.privacy-crash-reports; label: "Send crash reports";
+        toggled => { Studio.privacy-toggle-crash-reports(); }
+    }
+    Rectangle { x: 20.5px; y: 100px; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
+    SearchHit { y: 110px; width: root.width - 24px; height: 42px; label: "Usage tracking"; }
+    RowLabel { x: 20.5px; y: 115px; text: "Usage tracking"; }
+    Switch { x: root.sw-x; y: 117px; on: false; enabled: false; label: "Usage tracking"; }
+    Text {
+        x: 20.5px; y: 132px; width: root.width - 41px - 40px; height: 14px;
+        text: "Device doesn't collect any usage data, so there is nothing to turn on."; color: Tokens.text-tertiary;
+        font-size: 9.5px; vertical-alignment: center; overflow: elide;
+    }
+}
+
 export component SettingsPanel inherits Rectangle {
+    callback focus-main();
     border-radius: 10px;
     background: Tokens.bg-panel;
     border-width: 0.5px;
@@ -622,23 +729,19 @@ export component SettingsPanel inherits Rectangle {
         Icon {
             x: 7px; y: (parent.height - 13px) / 2; width: 13px; height: 13px; ink: Studio.settings-page == i ? #e5e5e8 : #bdbec0; stroke-width: 1.15px;
             d: i == 0 ? Icons.gear : i == 1 ? Icons.speaker : i == 2 ? Icons.midi-port : i == 3 ? Icons.plugin : i == 4 ? Icons.keyboard
-                : i == 5 ? Icons.download : i == 6 ? Icons.person : i == 7 ? Icons.gauge : Icons.shield;
+                : i == 5 ? Icons.download : Icons.shield;
         }
         Text { x: 29px; text: name; color: Studio.settings-page == i ? #e5e5e8 : #bdbec0; font-size: 10px; font-weight: 500; vertical-alignment: center; }
         row-ta := TouchArea { clicked => { Studio.settings-page-select(i); } }
     }
     // ---- content ----
-    if Studio.settings-page == 1: AudioPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
+    if Studio.settings-page == 1: AudioPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; focus-main => { root.focus-main(); } }
     if Studio.settings-page == 3: PluginsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 0: GeneralPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 2: MidiPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 4: ShortcutsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
-    if Studio.settings-page > 4: Rectangle {
-        x: 187px; y: 0; width: root.width - 187px; height: root.height;
-        Text { x: 20.5px; y: 33px; height: 24px; text: Studio.settings-pages[Studio.settings-page]; color: #ececee; font-size: 17.25px; font-weight: 700; vertical-alignment: center; }
-        // PLACEHOLDER pages
-        Text { x: 20.5px; y: 72px; height: 14px; text: "Not available yet"; color: Tokens.text-tertiary; font-size: 10px; vertical-alignment: center; }
-    }
+    if Studio.settings-page == 6: PrivacyPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
+    if Studio.settings-page == 5: DownloadsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     // Dropdown list (click outside closes).
     if Studio.settings-menu-open: Rectangle {
         TouchArea { clicked => { Studio.settings-menu-dismiss(); } }
@@ -653,6 +756,27 @@ export component SettingsPanel inherits Rectangle {
             content-height: Studio.settings-menu-content-h;
             font-size: 10.5px; text-x: 11px;
             picked(i) => { Studio.settings-menu-pick(i); }
+        }
+    }
+    // A setting's help (RowLabel's (i), roadmap G12): under the (i), left-aligned with it, in
+    // the step sequencer's tooltip style; long sentences wrap.
+    changed open-page => { Studio.settings-tip = ""; }
+    property <int> open-page: Studio.settings-page;
+    init => { Studio.settings-tip = ""; }
+    if Studio.settings-tip != "": Rectangle {
+        property <length> max-w: 380px;
+        width: min(tip.preferred-width, self.max-w - 11.9px) + 11.9px;
+        height: max(18.7px, tip-wrapped.preferred-height + 8px);
+        x: min(max(5px, Studio.settings-tip-x - root.absolute-position.x - 3px), root.width - self.width - 5px);
+        y: Studio.settings-tip-y - root.absolute-position.y + 5px;
+        border-radius: 5.1px;
+        background: #212227; border-width: 0.5px; border-color: #ffffff33;
+        drop-shadow-blur: 20px; drop-shadow-offset-y: 7px; drop-shadow-color: #00000066;
+        accessible-role: none;
+        tip := Text { visible: false; text: Studio.settings-tip; font-size: 9.35px; }
+        tip-wrapped := Text {
+            x: 5.95px; width: parent.width - 11.9px; text: Studio.settings-tip; color: #ffffff; font-size: 9.35px;
+            vertical-alignment: center; wrap: word-wrap;
         }
     }
 }

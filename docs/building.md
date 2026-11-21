@@ -196,9 +196,9 @@ jobs that run side by side:
   screenshot); Linux takes a reference-state screenshot and runs `--no-audio`
   and `--self-test-audio`, all three side by side under Xvfb with Mesa
   lavapipe; Windows takes the screenshot under WARP on every run, and runs the
-  full self-test (about 30 minutes under WARP) on pushes to main, the nightly
-  run, manual runs, and pull requests labelled `windows-self-test` whose
-  changes reach the app. The screenshots and self-test logs are uploaded as an
+  full self-test under WARP on the nightly run, manual runs, and pull requests
+  labelled `windows-self-test` whose changes reach the app. Add the label and
+  push a commit to request the full test on a PR. The screenshots and self-test logs are uploaded as an
   artifact.
 
 A **lint** job checks the workflows (actionlint, which also runs shellcheck on
@@ -313,8 +313,10 @@ with [`tools/perf/bench_gate.py`](../tools/perf/bench_gate.py):
   so every table row gets the CPU instructions (all threads) spent producing
   it. Counts repeat almost exactly between runs, so a row more than **1 %**
   above the base fails the check.
-- **Time** (Linux, macOS, Windows, a warning only): the benchmarks run
-  natively, base and head interleaved for three rounds, fastest round per
+- **Time** (Linux, macOS, Windows, advisory): runs on eligible pushes to
+  main, manual Performance runs, and benchmark-affecting PRs with the
+  `perf-timing` label. Add the label to request the comparison immediately.
+  The benchmarks run natively, base and head interleaved for three rounds, fastest round per
   row. A row more than **15 %** slower is re-timed and reported as a warning:
   hosted runners are too noisy for a timing gate, but this catches what
   instruction counts cannot (cache misses, denormals, platform code). If the
@@ -338,6 +340,11 @@ python3 tools/perf/bench_gate.py all --base origin/main --mode time  # time only
 ```
 
 ### Release packages
+
+Before publishing, run the full Windows WARP self-test against the release
+candidate. Dispatch the CI workflow for the candidate ref with
+`gh workflow run ci.yml --ref <candidate-ref>` and check that
+`App — self-test (Windows, WARP)` passes.
 
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the
 installable packages:
@@ -402,7 +409,9 @@ To release:
 3. The Release workflow checks that the tag matches `Cargo.toml`, is on `main` and has a changelog section, builds
    and signs the packages (the macOS signing job waits for approval in the `release` environment), and creates a
    draft release. Its notes are the changelog section followed by GitHub's generated list of pull requests.
-4. Review the draft and its packages, then publish it.
+4. Review the draft and its packages, then publish it. Publishing makes it the latest release, which running copies
+   find at launch and in Options › Check for Updates… (`crates/dstudio-app/src/updates.rs`, spec 022). Pre-releases
+   are never offered there.
 
 The section for the notes is extracted by [`tools/release/changelog-notes.sh`](../tools/release/changelog-notes.sh),
 tested in CI by `tools/release/test-changelog-notes.sh`.

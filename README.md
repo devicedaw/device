@@ -43,11 +43,18 @@ wgpu.
 
 - **Timeline.** Double-click an empty spot on an instrument track to make a MIDI clip there (or right-click it, or
   use Create › MIDI Clip), import audio, move and trim clips, loop a range, and play against a metronome.
-  Right-click a track header to rename, recolour, delete or duplicate the track (with or without its clips), and
-  drag headers up and down to reorder the tracks. Shift-click clips, or drag a box over empty lane space, to select
+  With Smart Fill on, drag over a gap on a track to fill it with a part from the pattern library (or describe one
+  for the assistant to write), or to record straight into it.
+  Right-click a track header to rename, recolour, delete, group, bounce in place or duplicate the track (with or without
+  its clips), show its automation, or add an audio, instrument, Sampler, Drum or return track right below it; the same
+  rows end the menu of an empty lane, which starts with Open <instrument> and Insert empty MIDI clip. Drag headers up
+  and down to reorder the tracks. Shift-click clips, or drag a box over empty lane space, to select
   several and move, duplicate, copy, paste, disable or delete them together. Drag the square handles at an audio
   clip's top corners to fade it in and out. Set the tempo in the
   transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
+  For a song that changes tempo, pick Song › Tempo on the master row's lane: click the line to add a tempo change,
+  drag it, and right-click a point to ramp smoothly to the next one. The ruler marks every change, and the transport
+  bar shows and edits the tempo at the playhead. Exports, MIDI files and Live sets carry the tempo changes.
   A new key for a project with MIDI clips offers to transpose them with it.
   Markers label the parts of a song on the ruler; right-click one to cut, copy, paste, colour or rename it, or to insert
   a marker before or after it. Turn on Settings › General › Sections move clips and moving, resizing, copying or
@@ -59,7 +66,8 @@ wgpu.
   clip to cut it at the pointer).
   Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
   Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected
-  clip or marker, ⌘D duplicates the selected clip or marker. Settings › Shortcuts lists them all by section; click
+  clip or marker, ⌘D duplicates the selected clip or marker. Click an effect's header to select it (⇧ or ⌘ for more);
+  ⌘D duplicates the selected effects, ⌘G puts them in a new chain and ⌘⇧G unpacks a selected chain. Settings › Shortcuts lists them all by section; click
   one's keys to record new ones, search by name or key, and reset to the defaults at any time. Its Preset menu swaps in
   the keys of Ableton Live, Logic Pro, GarageBand, FL Studio, Fender Studio Pro, Bitwig, Pro Tools or BandLab. ↑/↓ select the track above
   or below, ⇧↑/⇧↓ (⌘⇧ for an octave) transpose the selected MIDI clips, U folds a group, A shows automation, I
@@ -70,16 +78,20 @@ wgpu.
   The mouse works with modifiers too: ⌥-drag copies clips, ⇧-drag on a clip's right edge time-stretches it, the
   top-right corner loops it, ⌥ + scroll sizes the track rows, a double-click deletes a note, and on knobs ⇧-drag
   fine-tunes and ⌥-click resets. Settings › Shortcuts lists them under Mouse & modifiers. Search settings, at the
-  top of the Settings sidebar, finds any setting by name or by what it's for (⌘F).
+  top of the Settings sidebar, finds any setting by name or by what it's for (⌘F), and hovering the (i) after a
+  setting's name says in one sentence what it does. Settings › Downloads will list optional content such as sound
+  libraries; there is none yet.
 - **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. Clicking, drawing or dragging a
   note, or clicking a key, plays it through the track's instrument for its length (up to a second). A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Printing clips.** Consolidate joins clips into one, Bounce to new track (⌘B, or Resample in the clip menu and the
-  audio clip editor) renders a clip through its track's devices onto a new track, and Export audio saves one clip as a
+  audio clip editor) renders a clip through its track's devices onto a new track, Bounce track in place prints a whole
+  track to one audio clip and turns it into an audio track (its devices kept, switched off), and Export audio saves one clip as a
   WAV. Renders run in the background while you keep working, and each is one undo step. Export MIDI saves a MIDI clip as
   a standard MIDI file, and Send to Sampler puts an audio clip on a new track, played by a Sampler.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
-  compensation is measured with an acoustic loopback test, not guessed. Right-click the record button for a one- or
+  compensation is measured with an acoustic loopback test, not guessed, and an interface that reports its latency
+  wrongly gets a recording offset of its own in Settings › Audio. Right-click the record button for a one- or
   two-bar count-in: the click plays from that far back and the take starts where you pressed record. Record with the
   loop on and every pass becomes a take of one clip: pick one from the clip menu's Takes, or split the clip and pick
   a take for each part to comp.
@@ -97,6 +109,8 @@ wgpu.
   Settings › MIDI › Default instrument picks what a new instrument track (⇧⌘T) plays: any of them, or an
   instrument plugin.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
+- **Device chain.** A level meter after every device shows what it puts out, and the + between two devices
+  inserts another one right there, from your recent effects or any category.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
   macros. Save a chain to reuse it in any project, or start from one of 85 ready-made chains for vocals, drums, bass,
   guitar, keys and synths, pads and textures, FX and glitch, and mix and master.
@@ -112,12 +126,14 @@ wgpu.
   parameter, × closes one (its automation stays), and right-clicking a lane deletes its automation.
 - **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV or 192 or 320 kbps
   MP3 at 44.1 or 48 kHz (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
-  seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.
+  seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends. With Effects set to Convert to Live
+  devices, a track's Compressor, Utility and Channel EQ become Live devices with the same settings.
 - **Undo for everything.** Every edit is a validated, invertible command, so undo and redo cover the whole project.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
   one undo step. It knows each track's devices, sends and lanes, and can add built-in effects and instruments, set their
-  parameters, load samples into the Sampler and Drum Rack, and place audio clips. It uses your own Anthropic API key,
-  pasted into the panel once and kept in the system keychain.
+  parameters, load samples into the Sampler and Drum Rack, and place audio clips. Ask in a clip's menu (or ⌘K with a
+  clip selected) opens it about that clip, and its header button stretches it to the full window height, beside a
+  narrower bottom panel. It uses your own Anthropic API key, pasted into the panel once and kept in the system keychain.
 
 ### A closer look
 
@@ -153,7 +169,10 @@ De-Noiser, whose window draws the card's graph at full size over a dB ladder, Pi
 interval against an A4 reference with the formant strip, Grains, whose window draws the buffer with its pitch and time
 axes over two cards of controls, Pitch Corrector, whose window draws the correction trace over labelled cent rules, and Shaper, whose window draws
 its lane tabs and curve editor across the display, and LFO, whose window draws two cycles of its wave across the
-window. Every effect has its window; the instruments and the Rack keep everything in their card.
+window. Every effect has its window; the instruments and the Rack keep everything in their card. The Synth comes with
+100 factory sounds in ten categories (bass, keys, plucks, leads, pads, brass, motion, textures, effects and drums);
+Devices › Instruments opens the Synth into those categories; clicking a sound plays a note with it in the preview
+bar, and dropping it adds the Synth with that sound.
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |
@@ -176,6 +195,10 @@ path relative to the project (when both are on the same drive) and by its absolu
 media with it and keep the same layout around the project folder, or leave the media at its original absolute path
 (always the case for media on another Windows drive). A backup of the project folder alone
 does not include the audio, so back up the media too. The format is versioned, but it isn't frozen until the first release.
+A project with tempo changes is saved in a newer version of the format, which 0.2.x builds refuse to open rather than
+play at one tempo; projects without them stay readable by 0.2.x.
+Click the project name in the title bar to rename it: a saved project's folder is renamed on disk; an unsaved one
+keeps the name for its first save.
 
 ## Under the hood
 
@@ -219,12 +242,13 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Built-in instruments | ✅ | |
 | Built-in effects | ✅ | More devices are planned |
 | Plugin hosting | ✅ | Linux editor windows use X11 (XWayland on Wayland desktops) |
-| Recording | 🚧 | Per-device manual recording offset |
+| Recording | ✅ | |
 | Mixer | ✅ | |
 | Automation | ✅ | |
 | Delay compensation | ✅ | |
 | Export | ✅ | |
-| Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
+| Tempo changes | ✅ | |
+| Assistant | ✅ | Passes a live test against the Anthropic API (tracks, MIDI, built-in effects and their settings, tempo and volume, Point mode); needs your own Anthropic API key |
 | Windows and Linux audio | 🚧 | Windows: playback, recording, buffer sizes down to 128 samples and switching outputs checked on one PC's built-in sound card (WASAPI shared mode); ASIO drivers play and record, checked with FlexASIO only (no hardware ASIO driver yet); no exclusive mode. Linux plays through PipeWire or straight through ALSA in CI on a headless PipeWire server, but has not run on a physical sound card |
 | Releases and branding | 🚧 | 0.2.0 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is not notarised yet and Windows packages are not signed |
 
@@ -258,6 +282,10 @@ The macOS app is not notarised yet: the first time you open it, macOS refuses; o
 Security and choose Open Anyway. The Windows packages are not signed yet, so SmartScreen asks you to confirm
 the first run (More info › Run anyway). `SHA256SUMS.txt` on the release lists every package's checksum; see
 [Release packages](docs/building.md#release-packages) for how the packages are made.
+
+Device looks for a newer release once at launch and from Options › Check for Updates…. When there is one, a blue
+**Update available** pill appears at the top right; it shows what changed and opens the release page to download it.
+The check sends only the app's version, and Settings › General › Check for updates at launch turns it off.
 
 ### Build from source
 
@@ -314,8 +342,8 @@ comes with benchmark results.
 
 Four GitHub Actions workflows check every change: **CI** builds and tests the engine, the workspace and the app on
 macOS, Windows and Linux; **Performance** builds the benchmarks at the base commit and with the change and fails a
-pull request when any benchmark row needs more than 1 % more CPU instructions (timings on all three systems are
-reported too); **Security** reviews new dependencies and checks `Cargo.lock` against the RustSec advisories every
+pull request when any benchmark row needs more than 1 % more CPU instructions. Native timing runs on relevant main
+pushes and on demand. **Security** reviews new dependencies and checks `Cargo.lock` against the RustSec advisories every
 week; **Release** builds the installable packages, attests their build provenance and drafts a GitHub release for a
 `vX.Y.Z` tag. See
 [Continuous integration](docs/building.md#continuous-integration) for the details and how to run the performance
@@ -350,6 +378,8 @@ finishes something it describes, the same pull request updates it:
 
 Found a bug or have an idea? Use **Report a bug** or **Share your feedback** at the top right of the app. Reports go
 privately to the maintainer ([services/feedback](services/feedback/)); system info is only sent if you leave it on.
+After a crash, the next launch sends a short crash report the same way (the app version, the OS and what failed, with
+nothing personal) unless you turn off Settings › Privacy › Send crash reports. Device collects no usage data.
 
 Device is not accepting outside contributions yet: issues, pull requests and comments are limited to the
 maintainer for now. You are welcome to read, build and fork the code. [CONTRIBUTING.md](CONTRIBUTING.md) describes how

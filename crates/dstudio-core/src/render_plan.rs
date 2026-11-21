@@ -6,7 +6,7 @@
 
 use crate::builtin;
 use crate::midi::{self, MidiClip};
-use crate::{ClipId, Project, Ticks, Track, TrackId, TrackKind};
+use crate::{Clip, ClipId, Project, Ticks, Track, TrackId, TrackKind};
 
 /// Track gain that makes the engine's constant-power pan law transparent at the centre: the law
 /// scales both channels by cos(45°), so a render that must come out at the source level (and be
@@ -153,6 +153,40 @@ pub fn bounce_track(src: &Track, id: TrackId) -> Track {
     (t.gain, t.pan, t.trim_db, t.width, t.mono) = (src.gain, src.pan, src.trim_db, src.width, src.mono);
     t.automation = src.automation.iter().filter(|l| l.target.is_channel()).cloned().collect();
     (t.sends, t.output) = (src.sends.clone(), src.output);
+    t
+}
+
+/// Bounce Track in Place's span: every enabled clip of an audio or instrument track, from the
+/// first start to the last end. None when the track has no enabled clip.
+pub fn track_span(p: &Project, track: TrackId) -> Option<ClipSpan> {
+    let t = p.track(track)?;
+    let ids: Vec<ClipId> = match t.kind {
+        TrackKind::Audio => t.clips.iter().map(|c| c.id).collect(),
+        TrackKind::Instrument => t.midi_clips.iter().map(|c| c.id).collect(),
+        TrackKind::Return | TrackKind::Group => return None,
+    };
+    let mut all: Vec<(ClipId, Ticks, Ticks)> = ids.into_iter().filter_map(|c| one(p, c).map(|(_, _, s, e)| (c, s, e))).collect();
+    all.sort_by_key(|&(_, s, _)| s);
+    let start = all.iter().map(|&(_, s, _)| s).min()?;
+    let end = all.iter().map(|&(_, _, e)| e).max()?;
+    Some(ClipSpan { track, kind: t.kind, clips: all.into_iter().map(|(c, ..)| c).collect(), start, end })
+}
+
+/// The track after Bounce Track in Place: an audio track with the same id, name, colour, mix,
+/// sends, output and lanes, holding only `clip` (the render, taken before the channel strip).
+/// Its effects and instrument stay on the track, switched off, since their sound is in the
+/// render; an instrument track's MIDI clips and MIDI input go.
+pub fn bounced_in_place(src: &Track, clip: Clip) -> Track {
+    let mut t = src.clone();
+    if t.kind == TrackKind::Instrument {
+        t.kind = TrackKind::Audio;
+        t.midi_clips.clear();
+        (t.input, t.arm, t.monitor) = (None, false, false);
+    }
+    t.clips = vec![clip];
+    for d in t.devices.iter_mut().chain(t.instrument_plugin.iter_mut()) {
+        d.enabled = false;
+    }
     t
 }
 

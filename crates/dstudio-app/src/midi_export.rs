@@ -40,7 +40,7 @@ impl Controller {
     pub fn export_midi(&mut self, id: ClipId, path: &Path, reveal: bool) {
         let p = self.project();
         let Some(clip) = p.midi_clip(id) else { return };
-        let bytes = dstudio_core::smf::clip_to_smf(clip, p.transport.bpm, p.transport.time_signature);
+        let bytes = dstudio_core::smf::clip_to_smf_on(clip, &p.tempo_map(), p.transport.time_signature);
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }

@@ -71,9 +71,11 @@ impl MenuAction {
             MenuAction::ToMidi => "Convert to MIDI Clip",
             MenuAction::Ask => "Ask",
             MenuAction::Paste => "Paste",
-            MenuAction::InsertMidiClip => "Insert MIDI clip",
+            MenuAction::InsertMidiClip => "Insert empty MIDI clip",
             MenuAction::AutoLaneDelete => "Delete automation",
             MenuAction::AutoLaneClose => "Close lane",
+            MenuAction::TempoRamp => "Ramp to Next Point",
+            MenuAction::TempoHold => "Hold Until Next Point",
             MenuAction::SectionRename => "Rename…",
             MenuAction::SectionColor => "Color",
             MenuAction::SectionInsert => "Insert",
@@ -81,11 +83,20 @@ impl MenuAction {
             MenuAction::SectionClear => "Clear all markers",
             MenuAction::TrackRename => "Rename…",
             MenuAction::TrackDuplicate => "Duplicate track",
-            MenuAction::TrackDuplicateClips => "Duplicate track with clips",
-            MenuAction::TrackColor => "Color",
+            MenuAction::TrackDuplicateClips => "Duplicate with clips",
             MenuAction::TrackDelete => "Delete track",
             MenuAction::TrackGroup => "Group track",
             MenuAction::TrackUngroup => "Ungroup",
+            MenuAction::TrackBounce => "Bounce track in place",
+            MenuAction::TrackAutomation => "Show automation",
+            MenuAction::TrackCopyEffects => "Copy effects",
+            MenuAction::TrackPasteEffects => "Paste effects",
+            MenuAction::AddAudioTrack => "Audio track",
+            MenuAction::AddInstrumentTrack => "Instrument track",
+            MenuAction::AddSamplerTrack => "Sampler track",
+            MenuAction::AddDrumTrack => "Drum track",
+            MenuAction::AddReturnTrack => "Return track",
+            MenuAction::LaneOpenInstrument => "Open instrument",
             MenuAction::CountInOff => "No count-in",
             MenuAction::CountIn1 => "Count-in: 1 bar",
             MenuAction::CountIn2 => "Count-in: 2 bars",
@@ -102,10 +113,14 @@ impl MenuAction {
             MenuAction::Disable | MenuAction::Enable => "0",
             MenuAction::Ask => "⌘ K",
             MenuAction::Paste => "⌘ V",
-            MenuAction::InsertMidiClip => "⇧⌘ M",
+            MenuAction::InsertMidiClip => "⌘⇧ M",
             MenuAction::SectionDelete | MenuAction::TrackDelete => "Del",
-            MenuAction::TrackRename => "⌘ R",
+            MenuAction::TrackDuplicate => "⌘ D",
+            MenuAction::TrackDuplicateClips => "⌘⇧ D",
             MenuAction::TrackGroup => "⌘ G",
+            MenuAction::TrackUngroup => "⌘⇧ G",
+            MenuAction::AddAudioTrack => "⌘ T",
+            MenuAction::AddInstrumentTrack => "⌘⇧ T",
             _ => "",
         }
     }
@@ -123,19 +138,20 @@ impl MenuAction {
                 | MenuAction::SectionRename
                 | MenuAction::SectionDelete
                 | MenuAction::SectionClear
-                | MenuAction::TrackDuplicate
+                | MenuAction::TrackBounce
+                | MenuAction::TrackAutomation
+                | MenuAction::TrackGroup
+                | MenuAction::TrackCopyEffects
                 | MenuAction::TrackDelete
+                | MenuAction::AddAudioTrack
+                | MenuAction::TrackRename
+                | MenuAction::InsertMidiClip
         )
     }
     fn submenu(self) -> bool {
         matches!(
             self,
-            MenuAction::Bounce
-                | MenuAction::Takes
-                | MenuAction::Transpose
-                | MenuAction::SectionColor
-                | MenuAction::SectionInsert
-                | MenuAction::TrackColor
+            MenuAction::Bounce | MenuAction::Takes | MenuAction::Transpose | MenuAction::SectionColor | MenuAction::SectionInsert
         )
     }
 }
@@ -147,14 +163,30 @@ fn take_rows(clip: Option<&dstudio_core::Clip>) -> Vec<(String, String, bool)> {
     (0..c.takes.len()).map(|i| (format!("Take {}", i + 1), if cur == Some(i) { "✓".into() } else { String::new() }, true)).collect()
 }
 
-/// Bounce submenu: (label, shortcut text, enabled). Two entries;
-/// DStudio builds Bounce to new track. Bounce track in place needs a track that changes kind (MIDI to
-/// audio, its instrument and devices removed), which the model cannot do yet, so it stays greyed.
-const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true), ("Bounce track in place", "", false)];
+/// Bounce submenu: (label, shortcut text, enabled): Bounce to new track, Bounce track in place
+/// (the clip's whole track, src/clip_render.rs).
+const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true), ("Bounce track in place", "", true)];
 
 /// Transpose submenu: (label, shortcut text, semitones).
 const TRANSPOSE: [(&str, &str, i32); 4] =
     [("Octave up", "+12", 12), ("Semitone up", "+1", 1), ("Semitone down", "−1", -1), ("Octave down", "−12", -12)];
+
+/// The track menu's width (its colour grid is 14 swatches across) and the grid's geometry
+/// (design units; ui/pianoroll.slint `ContextMenu`).
+pub const TRACK_MENU_W: f32 = 236.6;
+const GRID_TOP: f32 = 7.65;
+const GRID_ROW: f32 = 15.3;
+const GRID_SWATCH: f32 = 11.9;
+const GRID_BOTTOM: f32 = 6.4;
+
+/// Height of the colour grid from its first swatch's top: its rows and the padding under them.
+fn grid_h(n: usize) -> f32 {
+    if n == 0 {
+        return 0.0;
+    }
+    let rows = n.div_ceil(14) as f32;
+    (rows - 1.0) * GRID_ROW + GRID_SWATCH + GRID_BOTTOM
+}
 
 pub(crate) fn layout_items(items: impl Iterator<Item = (String, String, bool, bool, bool)>) -> (Vec<MenuItem>, f32) {
     let mut y = MENU_PAD;
@@ -329,8 +361,9 @@ impl Controller {
         Some(id)
     }
 
-    /// Right-click on an empty spot of track row `i`: Insert MIDI clip (instrument tracks) and
-    /// Paste (when the copied clip fits the track), both acting at that spot.
+    /// Right-click on an empty spot of track row `i`: Open <instrument> and Insert empty MIDI clip
+    /// (instrument tracks), Paste (when the copied clip fits the track), both acting at that spot,
+    /// then the track header menu.
     fn open_lane_menu(&mut self, i: usize, x: f32, wx: f32, wy: f32, win: (f32, f32)) {
         let Some(t) = self.project().tracks.get(i) else {
             self.menu_close();
@@ -344,7 +377,18 @@ impl Controller {
         };
         self.select_track(track);
         let pointer = (self.view.beat_at(x).max(0.0) * PPQ as f64).round() as Ticks;
-        self.open_menu(vec![(MenuAction::InsertMidiClip, kind == TrackKind::Instrument), (MenuAction::Paste, paste)], wx, wy, win);
+        // "Open <instrument>" and Insert empty MIDI clip on instrument tracks, Paste when the
+        // copied clip fits, then the whole track header menu (its Rename row starts a group).
+        let mut items = Vec::new();
+        if kind == TrackKind::Instrument {
+            items.push((MenuAction::LaneOpenInstrument, true));
+            items.push((MenuAction::InsertMidiClip, true));
+        }
+        if paste {
+            items.push((MenuAction::Paste, true));
+        }
+        items.extend(self.track_menu_items(track));
+        self.open_menu(items, wx, wy, win);
         self.menu.lane = Some((track, pointer));
     }
 
@@ -595,7 +639,7 @@ impl Controller {
     /// Right-click on the lanes (lane-local x/y for hit-testing, window wx/wy for placement).
     pub fn lane_context(&mut self, x: f32, y: f32, wx: f32, wy: f32, win: (f32, f32)) {
         use crate::timeline::{Hit, hit_test};
-        if self.section_context(x, y, wx, wy, win) {
+        if self.section_context(x, y, wx, wy, win) || self.tempo_point_context(x, y, wx, wy, win) {
             return;
         }
         let hit = hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y);
@@ -659,12 +703,11 @@ impl Controller {
             items.push(if pattern { ToMidi } else { ToPattern });
         }
         items.push(Ask);
-        // PLACEHOLDER entry (disabled): Ask.
         self.menu.items = items
             .iter()
             .map(|&a| {
                 let enabled = match a {
-                    Cut | Copy | Duplicate | Delete | Rename | Disable | Enable | Takes => true,
+                    Cut | Copy | Duplicate | Delete | Rename | Disable | Enable | Takes | Ask => true,
                     Split => splittable,
                     ShowInFinder => !midi,
                     Consolidate => self.can_render_clip(id, false),
@@ -694,17 +737,32 @@ impl Controller {
         self.menu.section = None;
         self.menu.lane = None;
         self.menu.track = None;
+        self.menu.add_track = false;
         self.menu.count_in = false;
         self.menu.auto_lane = None;
+        self.menu.tempo_point = None;
         self.ui_dirty = true;
     }
 
     /// An entry's text: its label, or "Delete Pan automation" naming the row's parameter.
-    fn menu_label(&self, a: MenuAction) -> String {
+    pub(crate) fn menu_label(&self, a: MenuAction) -> String {
         match (a, self.menu.auto_lane) {
             (MenuAction::AutoLaneDelete, Some((track, i))) => {
                 let name = self.extra_targets(track).get(i).map(|t| t.labels().1.to_string()).unwrap_or_default();
                 format!("Delete {name} automation")
+            }
+            (MenuAction::TrackAutomation, _) if self.auto.shown => "Hide automation".into(),
+            (MenuAction::LaneOpenInstrument, _) => {
+                let d = self.menu.lane.and_then(|(t, _)| self.project().track(t)).and_then(|t| t.instrument_plugin.as_ref());
+                let name = d.map_or_else(
+                    || "instrument".to_string(),
+                    |d| {
+                        d.label
+                            .clone()
+                            .unwrap_or_else(|| dstudio_core::builtin::def_of(d).map_or(d.plugin.name.clone(), |def| def.name.to_string()))
+                    },
+                );
+                format!("Open {name}")
             }
             _ => a.label().to_string(),
         }
@@ -720,7 +778,21 @@ impl Controller {
             self.menu.track = None;
             self.menu.count_in = false;
             self.menu.auto_lane = None;
+            self.menu.tempo_point = None;
             self.ui_dirty = true;
+        }
+    }
+
+    /// The track whose colour grid the open menu shows: the track header menu's or the empty
+    /// lane menu's track.
+    pub(crate) fn menu_grid_track(&self) -> Option<TrackId> {
+        self.menu.track.or(self.menu.lane.map(|(t, _)| t)).filter(|_| self.menu.open)
+    }
+
+    /// The grid's swatch `cell` was clicked.
+    pub fn menu_swatch_pick(&mut self, cell: usize) {
+        if let Some(t) = self.menu_grid_track() {
+            self.track_swatch_pick(t, cell);
         }
     }
 
@@ -737,8 +809,18 @@ impl Controller {
             self.track_menu_activate(id, action);
             return;
         }
+        if self.menu.add_track {
+            self.menu_close();
+            self.add_track_action(action, None);
+            return;
+        }
         if self.menu.count_in {
             self.count_in_menu_activate(action);
+            return;
+        }
+        if let Some(i) = self.menu.tempo_point {
+            self.menu_close();
+            self.tempo_set_ramp(i, action == MenuAction::TempoRamp);
             return;
         }
         if let Some((track, i)) = self.menu.auto_lane {
@@ -760,7 +842,14 @@ impl Controller {
                     let at = self.lane_floor(at);
                     self.paste_clip_at(Some((track, at)));
                 }
-                _ => {}
+                MenuAction::LaneOpenInstrument => {
+                    self.select_track(track);
+                    self.select_clip(None);
+                    self.bottom_tab = crate::controller::BottomTab::Devices;
+                    self.ui_dirty = true;
+                }
+                // The rest is the track header menu.
+                other => self.track_menu_activate(track, other),
             }
             return;
         }
@@ -782,6 +871,7 @@ impl Controller {
             MenuAction::Delete => self.delete_selection(),
             MenuAction::Split => self.split_clip(),
             MenuAction::Consolidate => self.consolidate_clip(id),
+            MenuAction::Ask => self.ask_about_clip(id),
             MenuAction::Resample => self.bounce_clip(id),
             MenuAction::SendToSampler => {
                 self.send_to_sampler(id);
@@ -836,10 +926,6 @@ impl Controller {
             self.section_submenu_activate(id, index);
             return;
         }
-        if let Some(track) = self.menu.track {
-            self.track_color_pick(track, index);
-            return;
-        }
         let Some(id) = self.menu.clip else { return };
         if self.menu.sub_for == Some(MenuAction::Takes) {
             if self.project().clip(id).is_some_and(|c| index < c.takes.len()) {
@@ -853,7 +939,10 @@ impl Controller {
             if BOUNCE.get(index).is_some_and(|b| b.2) {
                 self.menu_close();
                 self.selected_clip = Some(id);
-                self.bounce_clip(id);
+                match (index, self.clip_track(id)) {
+                    (1, Some(track)) => self.bounce_track_in_place(track),
+                    _ => self.bounce_clip(id),
+                }
             }
             return;
         }
@@ -1182,13 +1271,22 @@ impl Controller {
             let sub_for = self.menu.sub_for.unwrap_or(MenuAction::Transpose);
             let sub_y = items.iter().zip(&self.menu.items).find(|(_, (a, _))| *a == sub_for).map(|(m, _)| m.y).unwrap_or(0.0);
             sync_model(&self.menu_model, items);
-            s.set_menu_x(self.menu.pos.0);
-            s.set_menu_y(self.menu.pos.1);
+            // Track menus (header and empty lane) end with the colour grid.
+            let grid = self.menu_grid_track().map(|t| self.track_swatches(t)).unwrap_or_default();
+            // Under the rows: a separator, then the swatches (as the reference draws them).
+            let swatch_y = h - MENU_PAD + MENU_SEP / 2.0 + GRID_TOP;
+            let (w, h) = if grid.is_empty() { (MENU_W, h) } else { (TRACK_MENU_W, swatch_y + grid_h(grid.len())) };
+            s.set_menu_swatch_y(swatch_y);
+            s.set_menu_swatches(slint::ModelRc::new(slint::VecModel::from(grid)));
+            s.set_menu_w(w);
+            // The grid makes the menu taller than when it was placed: keep it inside the window.
+            let win_h = self.devices.win.1;
+            let y = if win_h > 0.0 { self.menu.pos.1.min(win_h - h - 4.0).max(4.0) } else { self.menu.pos.1 };
+            s.set_menu_x(self.menu.pos.0.min(self.devices.win.0 - w - 4.0).max(4.0));
+            s.set_menu_y(y);
             s.set_menu_h(h);
             s.set_sub_open(self.menu.sub_open);
-            let (sub, sub_h) = if sub_for == MenuAction::TrackColor {
-                self.track_color_rows()
-            } else if matches!(sub_for, MenuAction::SectionColor | MenuAction::SectionInsert) {
+            let (sub, sub_h) = if matches!(sub_for, MenuAction::SectionColor | MenuAction::SectionInsert) {
                 self.section_submenu_rows()
             } else {
                 let rows: Vec<(String, String, bool)> = if sub_for == MenuAction::Takes {
@@ -1474,8 +1572,8 @@ mod lane_tests {
         let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 
-    /// Right-click on an empty instrument lane: Insert MIDI clip makes the clip in that bar, and
-    /// Paste (once a clip is copied) puts the copy there.
+    /// Right-click on an empty instrument lane: Insert empty MIDI clip makes the clip in that bar,
+    /// and Paste (once a clip is copied) puts the copy there.
     #[test]
     fn the_empty_lane_menu_inserts_and_pastes_where_it_was_opened() {
         let mut c = controller();
@@ -1484,16 +1582,22 @@ mod lane_tests {
         let (x, y) = lane_point(&c, row, 3, 1.0);
         c.lane_context(x, y, 500.0, 300.0, (1400.0, 900.0));
         assert!(c.menu.open);
-        assert_eq!(c.menu.items, [(MenuAction::InsertMidiClip, true), (MenuAction::Paste, false)], "nothing copied yet");
-        c.menu_activate(0);
+        // Open <instrument>, Insert empty MIDI clip, no Paste until something is copied, then the
+        // track header menu.
+        assert_eq!(
+            c.menu.items[..3],
+            [(MenuAction::LaneOpenInstrument, true), (MenuAction::InsertMidiClip, true), (MenuAction::TrackRename, true)]
+        );
+        assert_eq!(c.menu_label(MenuAction::LaneOpenInstrument), "Open Synth");
+        c.menu_activate(1);
         assert_eq!(midi_clips(&c, inst), [(3 * bar, bar)]);
 
         assert!(c.copy_clip());
         c.rebuild_vis();
         let (x, y) = lane_point(&c, row, 5, 3.0);
         c.lane_context(x, y, 500.0, 300.0, (1400.0, 900.0));
-        assert_eq!(c.menu.items[1], (MenuAction::Paste, true));
-        c.menu_activate(1);
+        assert_eq!(c.menu.items[2], (MenuAction::Paste, true));
+        c.menu_activate(2);
         assert_eq!(midi_clips(&c, inst), [(3 * bar, bar), (5 * bar, bar)]);
     }
 }

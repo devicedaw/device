@@ -62,6 +62,10 @@ pub struct ExportUi {
     pub tracks_menu: bool,
     pub range: ExportRange,
     pub range_menu: bool,
+    /// Project (Live set): effects with a Live device stay as Live devices (spec 019) instead of
+    /// being rendered.
+    pub convert_fx: bool,
+    pub fx_menu: bool,
     pub bits24: bool,
     /// Mixdown and Stems write MP3 (at `kbps`) instead of WAV.
     pub mp3: bool,
@@ -88,6 +92,8 @@ impl Default for ExportUi {
             tracks_menu: false,
             range: ExportRange::Project,
             range_menu: false,
+            convert_fx: false,
+            fx_menu: false,
             bits24: true,
             mp3: false,
             kbps: crate::mp3::BITRATES[1],
@@ -270,6 +276,41 @@ pub(crate) fn stem_snapshot(mix: &dstudio_core::snapshot::SessionSnapshot, id: T
     snap
 }
 
+/// Spec 019: track `id` of a stem snapshot without its effects, at unity volume and centre pan.
+pub(crate) fn make_dry(snap: &mut dstudio_core::snapshot::SessionSnapshot, id: TrackId) {
+    if let Some(t) = snap.tracks.iter_mut().find(|t| t.track_id == id.0) {
+        t.devices.clear();
+        t.gain = 1.0;
+        t.pan = 0.0;
+    }
+}
+
+/// Spec 019: the Live devices for track `t`'s effects, or why it is rendered after them instead.
+/// Bypassed effects are left out. Trim, width, mono and automation have no place on Live's side,
+/// and chains, LFOs and modulated effects no Live device here.
+pub(crate) fn live_chain(t: &dstudio_core::Track) -> Result<Vec<crate::live_devices::LiveDevice>, String> {
+    if t.trim_db.abs() > 1e-6 || (t.width - 1.0).abs() > 1e-6 || t.mono {
+        return Err("its trim, width or mono".into());
+    }
+    if !t.automation.is_empty() {
+        return Err("its automation".into());
+    }
+    let mut out = Vec::new();
+    for d in t.devices.iter().filter(|d| d.enabled) {
+        if d.chain.is_some() || dstudio_core::modulation::outputs(d) > 0 {
+            return Err("a chain or LFO".into());
+        }
+        if t.devices.iter().any(|m| m.links.iter().any(|l| l.target == d.id)) {
+            return Err(format!("{} is modulated", d.display_name()));
+        }
+        out.push(crate::live_devices::convert(d)?);
+    }
+    if out.is_empty() {
+        return Err("every effect is bypassed".into());
+    }
+    Ok(out)
+}
+
 /// "3.7 MB • 0:14" for "files" stereo PCM files of "frames" each at "bits".
 pub fn estimate_text(frames: u64, rate: f64, bits: u32, files: usize) -> String {
     format_estimate_text(frames, rate, FileFormat::Wav { bits: bits as u16 }, files)
@@ -429,6 +470,7 @@ impl Controller {
         };
         self.export.tracks_menu = false;
         self.export.range_menu = false;
+        self.export.fx_menu = false;
         self.export_follow_auto_name();
         self.ui_dirty = true;
     }
@@ -436,20 +478,37 @@ impl Controller {
     pub fn export_toggle_tracks_menu(&mut self) {
         self.export.tracks_menu = !self.export.tracks_menu;
         self.export.range_menu = false;
+        self.export.fx_menu = false;
         self.ui_dirty = true;
     }
 
     pub fn export_toggle_range_menu(&mut self) {
         self.export.range_menu = !self.export.range_menu;
         self.export.tracks_menu = false;
+        self.export.fx_menu = false;
+        self.ui_dirty = true;
+    }
+
+    pub fn export_toggle_fx_menu(&mut self) {
+        self.export.fx_menu = !self.export.fx_menu;
+        self.export.tracks_menu = false;
+        self.export.range_menu = false;
+        self.ui_dirty = true;
+    }
+
+    /// Effects menu rows (Project): 0 Render, 1 Convert to Live devices.
+    pub fn export_pick_fx(&mut self, row: i32) {
+        self.export.convert_fx = row == 1;
+        self.export.fx_menu = false;
         self.ui_dirty = true;
     }
 
     /// Escape inside the dialog: closes an open menu and reports whether there was one.
     pub fn export_close_menu(&mut self) -> bool {
-        let open = self.export.tracks_menu || self.export.range_menu;
+        let open = self.export.tracks_menu || self.export.range_menu || self.export.fx_menu;
         self.export.tracks_menu = false;
         self.export.range_menu = false;
+        self.export.fx_menu = false;
         self.ui_dirty |= open;
         open
     }
@@ -614,6 +673,19 @@ impl Controller {
                 fed.push(r.id);
             }
         }
+        // Spec 019: with Convert to Live devices, a track whose effects all have a Live device keeps
+        // them and is rendered before them.
+        let mut live: Vec<(TrackId, Vec<crate::live_devices::LiveDevice>)> = Vec::new();
+        let mut kept_rendered: Vec<String> = Vec::new();
+        if self.export.convert_fx {
+            for t in self.project().tracks.iter().filter(|t| !t.is_return() && has_clips(t) && !t.devices.is_empty()) {
+                match live_chain(t) {
+                    Ok(devs) => live.push((t.id, devs)),
+                    Err(why) => kept_rendered.push(format!("{} ({why})", t.name)),
+                }
+            }
+        }
+        let dry: Vec<TrackId> = live.iter().map(|(id, _)| *id).collect();
         let rendered: Vec<(TrackId, String)> = self
             .project()
             .tracks
@@ -630,13 +702,18 @@ impl Controller {
             // The set records the renders' length and rate as the engine made them.
             let rate = self.engine.sample_rate().round() as u32;
             let bits = if self.export.bits24 { 24 } else { 16 };
-            self.export_plan(&folder.join(RENDERS), &files, rate, FileFormat::Wav { bits })?.1
+            self.export_plan_dry(&folder.join(RENDERS), &files, &dry, rate, FileFormat::Wav { bits })?.1
         };
         let p = self.project();
         let rate = self.engine.sample_rate();
         let frames = self.export_frames();
         let beats = |ticks: i64| ticks as f64 / dstudio_core::PPQ as f64;
-        let render_beats = frames as f64 / rate * p.transport.bpm / 60.0;
+        // The renders' length in beats on the tempo map, and the warp markers that keep them unstretched on
+        // the set's tempo envelope (none for one tempo).
+        let map = p.tempo_map();
+        let render_secs = frames as f64 / rate;
+        let render_beats = map.ticks_at(render_secs) / dstudio_core::PPQ as f64;
+        let markers = live_set::render_markers(&map, render_secs);
         let mut tracks = Vec::new();
         let mut notes = String::new();
         let mut off = Vec::new();
@@ -696,7 +773,7 @@ impl Controller {
                         file_size: std::fs::metadata(&path).map_or(0, |m| m.len()),
                         frames,
                         sample_rate: rate.round() as u32,
-                        markers: Vec::new(),
+                        markers: markers.clone(),
                     }])
                 }
                 // Live sets don't carry groups yet: a group without a render is an empty audio track.
@@ -720,16 +797,20 @@ impl Controller {
                     sends,
                     sends_only: false,
                     content,
+                    devices: Vec::new(),
                 });
                 continue;
             }
             if t.mute {
                 off.push(t.name.clone());
             }
-            // A rendered track already carries its volume and pan.
-            let (volume, pan) = if render.is_some() { (1.0, 0.0) } else { (t.gain, t.pan) };
-            let (sends, sends_only) = sends_of(t, render.is_some());
-            tracks.push(SetTrack { name: t.name.clone(), color, on: !t.mute, volume, pan, sends, sends_only, content });
+            // A rendered track already carries its volume and pan; one rendered before its effects
+            // (spec 019) doesn't, and Live's mixer and devices take them.
+            let devices = live.iter().find(|(id, _)| *id == t.id).map(|(_, d)| d.clone()).unwrap_or_default();
+            let baked = render.is_some() && devices.is_empty();
+            let (volume, pan) = if baked { (1.0, 0.0) } else { (t.gain, t.pan) };
+            let (sends, sends_only) = sends_of(t, baked);
+            tracks.push(SetTrack { name: t.name.clone(), color, on: !t.mute, volume, pan, sends, sends_only, content, devices });
             if render.is_some() && !t.midi_clips.is_empty() {
                 for (k, lane) in midi_lanes(&t.midi_clips).iter().enumerate() {
                     let clips = lane
@@ -760,6 +841,7 @@ impl Controller {
                         sends: Vec::new(),
                         sends_only: false,
                         content: SetContent::Midi(clips),
+                        devices: Vec::new(),
                     });
                 }
             }
@@ -767,6 +849,7 @@ impl Controller {
         let tr = &p.transport;
         let set = LiveSet {
             bpm: tr.bpm,
+            tempo: live_set::tempo_envelope(&map),
             numerator: tr.time_signature.numerator as u32,
             denominator: tr.time_signature.denominator as u32,
             loop_on: tr.loop_enabled,
@@ -807,10 +890,40 @@ impl Controller {
             );
             let _ = writeln!(notes, "Instrument tracks keep their MIDI clips on a second track next to the audio, turned off.");
         }
+        if self.export.convert_fx {
+            let names: Vec<String> = live
+                .iter()
+                .filter_map(|(id, devs)| {
+                    let t = p.track(*id)?;
+                    Some(format!("{} ({})", t.name, devs.iter().map(|d| d.name).collect::<Vec<_>>().join(", ")))
+                })
+                .collect();
+            if names.is_empty() {
+                let _ = writeln!(
+                    notes,
+                    "\nConvert to Live devices: no track's effects all have a Live device, so every track was rendered after its effects."
+                );
+            } else {
+                let _ = writeln!(
+                    notes,
+                    "\nThese tracks were rendered before their effects, which are Live devices with the same settings on the track, and Live's mixer has their volume and pan: {}.",
+                    names.join("; ")
+                );
+            }
+            if !kept_rendered.is_empty() {
+                let _ = writeln!(notes, "Rendered after their effects instead: {}.", kept_rendered.join("; "));
+            }
+            let clamped: Vec<String> = live.iter().flat_map(|(_, d)| d.iter().flat_map(|d| d.clamped.clone())).collect();
+            if !clamped.is_empty() {
+                let _ = writeln!(notes, "Settings outside Live's range were set to its limit: {}.", clamped.join("; "));
+            }
+        }
         if !off.is_empty() {
             let _ = writeln!(notes, "\nMuted in DStudio, so turned off in the set: {}.", off.join(", "));
         }
-        let _ = writeln!(notes, "\nNot carried over: automation and device settings. Track colours are not matched to Live's palette.");
+        let not_carried =
+            if live.is_empty() { "automation and device settings" } else { "automation, and the settings of rendered devices" };
+        let _ = writeln!(notes, "\nNot carried over: {not_carried}. Track colours are not matched to Live's palette.");
         if !returns.is_empty() {
             let names: Vec<&str> = returns.iter().map(|r| r.name.as_str()).collect();
             let _ = writeln!(
@@ -860,6 +973,19 @@ impl Controller {
         rate: u32,
         format: FileFormat,
     ) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
+        self.export_plan_dry(dir, files, &[], rate, format)
+    }
+
+    /// [Self::export_plan], with the tracks in `dry` rendered before their effects, at unity
+    /// volume and centre pan (spec 019).
+    fn export_plan_dry(
+        &mut self,
+        dir: &Path,
+        files: &[(Option<TrackId>, String)],
+        dry: &[TrackId],
+        rate: u32,
+        format: FileFormat,
+    ) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
         let (start, frames) = self.export_span();
         let frames = frames as usize;
         let engine_rate = self.engine.sample_rate().round() as u32;
@@ -884,7 +1010,7 @@ impl Controller {
             }
         }
         let paths: Vec<PathBuf> = passes.iter().map(|p| p.path.clone()).collect();
-        let (written, restarted) = self.render_passes(passes, start, frames, rate, &resampler, format);
+        let (written, restarted) = self.render_passes(passes, dry, start, frames, rate, &resampler, format);
         match (written, restarted) {
             (Ok(()), restarted) => Ok((paths, restarted)),
             (Err(e), restarted) => {
@@ -906,6 +1032,7 @@ impl Controller {
     fn render_passes(
         &mut self,
         passes: Vec<Pass>,
+        dry: &[TrackId],
         start: i64,
         frames: usize,
         out_rate: u32,
@@ -926,7 +1053,11 @@ impl Controller {
         let written = (|| {
             for pass in passes {
                 if let Some(id) = pass.track {
-                    e.publish(&stem_snapshot(&mix, id)).map_err(|e| e.to_string())?;
+                    let mut snap = stem_snapshot(&mix, id);
+                    if dry.contains(&id) {
+                        make_dry(&mut snap, id);
+                    }
+                    e.publish(&snap).map_err(|e| e.to_string())?;
                 } else if solo_passes {
                     e.publish(&mix).map_err(|e| e.to_string())?;
                 }
@@ -1098,6 +1229,17 @@ impl Controller {
             }
             .into(),
         );
+        s.set_export_fx_label(if self.export.convert_fx { "Convert to Live devices" } else { "Render" }.into());
+        s.set_export_fx_menu_open(self.export.fx_menu);
+        if self.export.fx_menu {
+            let convert = self.export.convert_fx;
+            let rows = vec![
+                ChoiceItem { label: "Render".into(), checked: !convert, hint: false, y: MENU_PAD, h: MENU_ROW },
+                ChoiceItem { label: "Convert to Live devices".into(), checked: convert, hint: false, y: MENU_PAD + MENU_ROW, h: MENU_ROW },
+            ];
+            s.set_export_fx_menu_h(MENU_PAD * 2.0 + MENU_ROW * 2.0);
+            sync_model(&self.export_fx_model, rows);
+        }
         s.set_export_range_menu_open(self.export.range_menu);
         if self.export.range_menu {
             let rows = vec![

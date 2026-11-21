@@ -885,6 +885,7 @@ mod tests {
     fn set() -> LiveSet {
         LiveSet {
             bpm: 100.0,
+            tempo: Vec::new(),
             numerator: 3,
             denominator: 4,
             loop_on: true,
@@ -911,6 +912,7 @@ mod tests {
                         sample_rate: 48_000,
                         markers: vec![(0.0, 0.0), (1.0, 2.0), (3.0, 4.0)],
                     }]),
+                    devices: Vec::new(),
                 },
                 SetTrack {
                     name: "Keys".into(),
@@ -929,6 +931,7 @@ mod tests {
                             SetNote { pitch: 64, time: 3.5, duration: 1.0, velocity: 90 },
                         ],
                     }]),
+                    devices: Vec::new(),
                 },
             ],
         }

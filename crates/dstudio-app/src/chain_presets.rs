@@ -120,7 +120,11 @@ fn read_dir(dir: &std::path::Path) -> Vec<ChainPreset> {
 }
 
 /// Menu rows of the chains in `folder`; each row runs `pick`.
-fn chain_rows(lib: &ChainLib, folder: &str, pick: impl Fn(ChainRef) -> MenuPick) -> Vec<(String, String, Option<MenuPick>, bool)> {
+pub(crate) fn chain_rows(
+    lib: &ChainLib,
+    folder: &str,
+    pick: impl Fn(ChainRef) -> MenuPick,
+) -> Vec<(String, String, Option<MenuPick>, bool)> {
     lib.in_folder(folder).into_iter().map(|r| (r.name.clone(), String::new(), Some(pick(r)), false)).collect()
 }
 
@@ -280,12 +284,9 @@ impl Controller {
     /// goes. One undo step.
     fn chain_unpack(&mut self, head: DeviceId) {
         let Some(t) = self.track_of(head) else { return };
-        let Some(hi) = t.devices.iter().position(|d| d.id == head) else { return };
-        let members: Vec<DeviceId> = modu::members(&t.devices, hi).rev().map(|i| t.devices[i].id).collect();
-        // Members leave from the last one, so each leaves the end of the run.
-        let mut commands: Vec<Command> = members.into_iter().map(|device| Command::SetDeviceChain { device, chain: None }).collect();
-        commands.push(Command::RemoveDevice { device: head });
-        self.execute(Command::Batch { label: "Unpack Chain".into(), commands });
+        if let Some(cmd) = dstudio_core::effect_edit::unpack(self.project(), t.id, &[head]) {
+            self.execute(cmd);
+        }
     }
 
     /// A rename field closed: "Save as…" saves under the typed name, a rename relabels.

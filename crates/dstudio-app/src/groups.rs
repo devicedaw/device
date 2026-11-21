@@ -94,29 +94,6 @@ impl Controller {
         None
     }
 
-    /// Add track › Group track: a group holding the selected track, or an empty group after the
-    /// ordinary tracks when no audio or instrument track is selected.
-    pub fn add_group_track(&mut self) -> Option<TrackId> {
-        if let Some(sel) = self.selected_track.filter(|&id| self.groupable(id)) {
-            return self.group_tracks(&[sel]);
-        }
-        let p = self.project();
-        if p.tracks.iter().filter(|t| t.is_bus()).count() >= MAX_RETURNS {
-            self.set_status(format!("A project has at most {MAX_RETURNS} group and return tracks"), 3);
-            return None;
-        }
-        let id = TrackId(p.next_id);
-        let track = Track::new(id, TrackKind::Group, &p.next_group_name(), crate::controller::next_track_color(p));
-        let index = Some(p.ordinary_track_count());
-        self.doc.seal_coalescing();
-        let ok = self.execute(Command::Batch { label: "Add Group Track".into(), commands: vec![Command::AddTrack { index, track }] });
-        self.doc.seal_coalescing();
-        ok.then(|| {
-            self.select_track(id);
-            id
-        })
-    }
-
     /// Remove group `group`: its tracks stay where they are and play into the master again.
     /// One undo step, "Ungroup".
     pub fn ungroup(&mut self, group: TrackId) -> bool {

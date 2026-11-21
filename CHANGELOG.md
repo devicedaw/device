@@ -15,6 +15,9 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 - **Report a bug** and **Share your feedback** (top right) now open a form that sends your report straight to the
   developer. Your email is optional and never shown publicly, and system info is only included if you leave it on.
+- Device tells you when a new version is out. It checks once at launch and from Options › Check for Updates…, and a
+  blue **Update available** pill at the top right shows the new version and what changed, with a link to download
+  it. Only the app's version is sent; Settings › General › Check for updates at launch turns the check off.
 
 ## [0.2.0] - 2026-11-18
 

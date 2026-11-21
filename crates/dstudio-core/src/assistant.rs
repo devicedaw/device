@@ -149,7 +149,28 @@ fn valid_target(p: &Project, t: &str) -> bool {
 
 /// Parse raw model output (JSON) into a turn.
 pub fn parse_turn(json_text: &str) -> Result<AssistantTurn, AssistantError> {
-    serde_json::from_str(json_text).map_err(|e| AssistantError::Malformed(e.to_string()))
+    let mut v: Value = serde_json::from_str(json_text).map_err(|e| AssistantError::Malformed(e.to_string()))?;
+    lenient_colors(&mut v);
+    serde_json::from_value(v).map_err(|e| AssistantError::Malformed(e.to_string()))
+}
+
+/// Colours are numbers (a track's palette index, a section's 0xRRGGBB), but models sometimes send
+/// a CSS colour ("#3a7bd5") or a name. A `color` that isn't a number becomes 0 rather than failing
+/// the whole turn: the colour is cosmetic, and the user can change it in one click.
+fn lenient_colors(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            for (k, child) in map.iter_mut() {
+                if k == "color" && !child.is_number() {
+                    *child = json!(0);
+                } else {
+                    lenient_colors(child);
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(lenient_colors),
+        _ => {}
+    }
 }
 
 /// Validate a turn for `mode` against the document without changing it.
@@ -159,12 +180,8 @@ pub fn plan(doc: &Document, mode: Mode, turn: &AssistantTurn) -> Result<Plan, As
     let mut edits = Vec::new();
     for (index, action) in turn.actions.iter().enumerate() {
         match action {
-            AssistantAction::Highlight { target, note } => {
-                if !valid_target(doc.project(), target) {
-                    return Err(AssistantError::UnknownTarget(target.clone()));
-                }
-                highlights.push((target.clone(), note.clone()));
-            }
+            // Checked after the dry run: a turn may point at a track it creates.
+            AssistantAction::Highlight { target, note } => highlights.push((target.clone(), note.clone())),
             AssistantAction::Explain { text } => explanations.push(text.clone()),
             AssistantAction::Edit { .. }
             | AssistantAction::SetTrackVolumeDb { .. }
@@ -205,6 +222,9 @@ pub fn plan(doc: &Document, mode: Mode, turn: &AssistantTurn) -> Result<Plan, As
         cmd.clone().apply(&mut scratch).map_err(|error| AssistantError::InvalidEdit { index, error })?;
         summary.push(describe(&cmd, &before, &scratch));
         commands.push(cmd);
+    }
+    if let Some((target, _)) = highlights.iter().find(|(target, _)| !valid_target(&scratch, target)) {
+        return Err(AssistantError::UnknownTarget(target.clone()));
     }
     let batch = (!commands.is_empty()).then(|| Command::Batch { label: "Assistant Edit".into(), commands });
     Ok(Plan { batch, highlights, explanations, summary })
@@ -299,6 +319,7 @@ pub fn describe_state(p: &Project) -> Value {
             "number": i + 1,
             "name": t.name,
             "kind": t.kind,
+            "color": t.color.0,
             "volume_db": round1(gain_to_db(t.gain)),
             "pan": t.pan,
             "mute": t.mute,
@@ -341,7 +362,8 @@ pub fn tool_schema() -> Value {
             {"type": "object", "required": ["type", "command"], "properties": {
                 "type": {"const": "edit"},
                 "command": {"type": "object", "required": ["op"], "description":
-                    "Edit command. ops: add_track{index?, track{id:0,kind:audio|instrument,name,color,gain,pan,mute,solo,clips:[]}}, \
+                    "Edit command. ops: add_track{index?, track{id:0,kind:audio|instrument,name,color(palette index, an integer 0..12: 0 sky, 1 periwinkle, \
+                     2 violet, 3 purple, 4 pink, 5 orange, 6 teal, 7 coral, 8 amber, 9 lime, 10 green, 11 mint, 12 aqua),gain,pan,mute,solo,clips:[]}}, \
                      remove_track{track}, rename_track{track,name}, set_track_gain{track,gain(linear 0..3.98)}, \
                      set_track_pan{track,pan(-1..1)}, set_track_mute{track,mute}, set_track_solo{track,solo}, \
                      set_master_gain{gain}, move_clip{clip,track,start(ticks)}, trim_clip{clip,start,source_offset,source_length}, \
@@ -423,7 +445,7 @@ fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
         Command::SetTrackSolo { track, solo } => format!("{} {}.", if *solo { "Soloed" } else { "Unsoloed" }, track_name(after, *track)),
         Command::SetMasterGain { gain } => format!("Set master volume to {:.1} dB.", gain_to_db(*gain)),
         Command::SetMasterMute { mute } => format!("{} the master.", if *mute { "Muted" } else { "Unmuted" }),
-        Command::SetTempo { bpm } => format!("Changed tempo to {bpm} BPM."),
+        Command::SetTempo { bpm, .. } => format!("Changed tempo to {bpm} BPM."),
         Command::SetTimeSignature { numerator, denominator } => format!("Changed time signature to {numerator}/{denominator}."),
         Command::MoveClip { clip, track, start } => format!(
             "Moved {} to bar {:.2} on {}.",

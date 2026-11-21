@@ -179,5 +179,6 @@ void kernel_add_mul2(float* __restrict dst_l, float* __restrict dst_r, const flo
                      uint32_t n) noexcept;
 void kernel_mul(float* __restrict buf, const float* __restrict gain, uint32_t n) noexcept;
 float kernel_peak(const float* __restrict buf, uint32_t n) noexcept;
+void meter_output(PluginInstance& p, const float* l, const float* r, uint32_t frames) noexcept;
 
 } // namespace dstudio

@@ -149,7 +149,7 @@ fn tempo_synced_devices_follow_the_song_tempo_in_quarters_in_compound_meter() {
     // eighth-note click, nor 6000 from a 120 BPM default).
     let mut r = rig(2.0);
     let (a, asset) = (r.doc.project().tracks[0].id, r.doc.project().assets[0].id);
-    r.doc.execute(Command::SetTempo { bpm: 90.0 }, Origin::User).unwrap();
+    r.doc.execute(Command::SetTempo { bpm: 90.0, at: None }, Origin::User).unwrap();
     r.doc.execute(Command::SetTimeSignature { numerator: 6, denominator: 8 }, Origin::User).unwrap();
     let mut gate = dstudio_core::builtin::find("trance-gate").unwrap().instantiate();
     for (k, v) in [("p1_steps", 2.0), ("p1_lo", 1.0), ("release", 1.0)] {

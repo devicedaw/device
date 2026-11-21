@@ -104,11 +104,11 @@ export component ExportModal inherits Rectangle {
     if Studio.export-recipe == 2: RowLabel { x: 17px; y: 136px; text: "Effects"; }
     if Studio.export-recipe == 2: Rectangle {
         x: 71.4px; y: 136px; width: fx-text.preferred-width + 11.9px + 22.1px; height: 20.4px; border-radius: 10.2px;
-        background: fx-ta.has-hover ? #2e2f34 : DialogTokens.pill;
-        accessible-role: combobox; accessible-label: "DStudio effects"; accessible-value: "Render";
-        fx-text := Text { x: 11.9px; text: "Render"; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+        background: fx-ta.has-hover || Studio.export-fx-menu-open ? #2e2f34 : DialogTokens.pill;
+        accessible-role: combobox; accessible-label: "DStudio effects"; accessible-value: Studio.export-fx-label;
+        fx-text := Text { x: 11.9px; text: Studio.export-fx-label; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
         Icon { x: parent.width - 18.7px; y: 6.2px; width: 8px; height: 8px; d: Icons.chevron-down; ink: DialogTokens.label; stroke-width: 1.4px; }
-        fx-ta := TouchArea { clicked => { Studio.chat-placeholder("Convert effects to Live devices"); } }
+        fx-ta := TouchArea { clicked => { Studio.export-toggle-fx(); } }
     }
     if Studio.export-recipe != 2: RowLabel { x: 17px; y: 105.4px + root.dy; text: "Range"; }
     if Studio.export-recipe != 2: Rectangle {
@@ -165,6 +165,15 @@ export component ExportModal inherits Rectangle {
             picked(i) => { Studio.export-pick-tracks(i); }
         }
     }
+    // Effects menu (Project; click outside closes it): Render, Convert to Live devices.
+    if Studio.export-fx-menu-open: Rectangle {
+        TouchArea { clicked => { Studio.export-toggle-fx(); } }
+        ChoiceList {
+            x: 71.4px; y: 136px + 20.4px + 3.4px; width: 160px; height: Studio.export-fx-menu-h;
+            items: Studio.export-fx-items;
+            picked(i) => { Studio.export-pick-fx(i); }
+        }
+    }
     // Range menu (click outside closes it): Full project, Loop region (dimmed when there is none).
     if Studio.export-range-menu-open: Rectangle {
         TouchArea { clicked => { Studio.export-toggle-range(); } }
@@ -196,16 +205,17 @@ export component UnsavedPrompt inherits Rectangle {
 }
 
 // Options › Check for Updates…. A modal (400 pt wide, 24 pt corners, 20 pt padding, 16 pt
-// title, 12 pt body, 32 pt pill buttons); DStudio has no update server yet, so the
-// dialog reports the running version with an OK button.
+// title, 12 pt body, 32 pt pill buttons). The text comes from src/updates.rs: checking, the latest
+// version, why a check failed (OK), or an update with a few lines of its notes (Later / Download,
+// which opens the release page).
 export component UpdatesModal inherits Rectangle {
-    width: 340px; height: 132.6px;
+    width: 340px; height: max(132.6px, body.y + body.preferred-height + 30.6px + 27.2px + 17px);
     border-radius: 20.4px; background: DialogTokens.surface;
     border-width: 0.45px; border-color: #ffffff22;
     drop-shadow-blur: 21px; drop-shadow-offset-y: 6.8px; drop-shadow-color: #00000080;
     accessible-role: groupbox; accessible-label: "Check for updates";
     TouchArea { }
-    Text { x: 17px; y: 17px; height: 13.6px; text: "Check for updates"; color: #ffffff; font-size: 13.6px; font-weight: 700; letter-spacing: -0.54px; vertical-alignment: center; }
+    Text { x: 17px; y: 17px; height: 13.6px; text: Studio.updates-download ? "Update available" : "Check for updates"; color: #ffffff; font-size: 13.6px; font-weight: 700; letter-spacing: -0.54px; vertical-alignment: center; }
     Rectangle {
         x: root.width - 17px - 13.6px; y: 17px; width: 13.6px; height: 13.6px;
         accessible-role: button; accessible-label: "Close";
@@ -213,12 +223,30 @@ export component UpdatesModal inherits Rectangle {
         Icon { width: parent.width; height: parent.height; d: Icons.close; stroke-width: 1.1px; ink: close-ta.has-hover ? #ffffffb3 : #ffffff8c; }
         close-ta := TouchArea { clicked => { Studio.updates-close(); } }
     }
-    Text {
-        x: 17px; y: 40.8px; width: root.width - 34px; height: 30.6px; wrap: word-wrap;
-        text: "You're running Device v\{Studio.app-version}. There's no update server yet, so new versions arrive as new builds.";
-        color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: top;
+    body := VerticalLayout {
+        x: 17px; y: 40.8px; width: root.width - 34px; height: self.preferred-height;
+        spacing: 5px;
+        Text {
+            text: Studio.updates-text; wrap: word-wrap;
+            color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px;
+            accessible-role: text; accessible-label: self.text;
+        }
+        if Studio.updates-notes.length > 0: Text {
+            text: "What's new"; color: DialogTokens.label; font-size: 9.35px; font-weight: 600;
+        }
+        for line in Studio.updates-notes: HorizontalLayout {
+            spacing: 5px;
+            Text { text: "•"; width: 6px; color: #8e9096; font-size: 10.2px; vertical-alignment: top; }
+            Text { text: line; wrap: word-wrap; color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; accessible-role: text; accessible-label: line; }
+        }
+        if Studio.updates-more != "": HorizontalLayout {
+            padding-left: 11px;
+            Text { text: Studio.updates-more; color: DialogTokens.label; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; }
+        }
     }
-    PillButton { x: root.width - 17px - 40.8px; y: root.height - 17px - 27.2px; width: 40.8px; height: 27.2px; text: "OK"; primary: true; clicked => { Studio.updates-close(); } }
+    if !Studio.updates-download: PillButton { x: root.width - 17px - 40.8px; y: root.height - 17px - 27.2px; width: 40.8px; height: 27.2px; text: "OK"; primary: true; clicked => { Studio.updates-close(); } }
+    if Studio.updates-download: PillButton { x: root.width - 17px - 78.2px; y: root.height - 17px - 27.2px; width: 78.2px; height: 27.2px; text: "Download"; primary: true; clicked => { Studio.updates-download-clicked(); } }
+    if Studio.updates-download: PillButton { x: root.width - 17px - 78.2px - 6.8px - 60.9px; y: root.height - 17px - 27.2px; width: 60.9px; height: 27.2px; text: "Later"; clicked => { Studio.updates-close(); } }
 }
 
 // "Change project key?" when a project with a key and MIDI clips gets a new key. The same

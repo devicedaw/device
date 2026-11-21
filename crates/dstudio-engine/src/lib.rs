@@ -246,7 +246,7 @@ impl Engine {
     }
 
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v11`: audio clip fades; channel-strip trim, width and mono (spec 005); return tracks, sends and outputs (spec 002); audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
+    /// (`se_session_publish_v12`: the tempo map (spec 015); audio clip fades; channel-strip trim, width and mono (spec 005); return tracks, sends and outputs (spec 002); audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
     /// [`SynthParams`] (`synth: None` uses the engine defaults, which equal
     /// `SynthParams::default()`) or by the track's instrument plugin; each
@@ -467,9 +467,27 @@ impl Engine {
             .filter(|c| c.fades != (0, 0))
             .map(|c| ffi::se_clip_fade_desc { clip_id: c.clip_id, fade_in: c.fades.0, fade_out: c.fades.1 })
             .collect();
-        let desc = ffi::se_session_desc_v11 { v10, fades: fades.as_ptr(), fade_count: fades.len() as u32, _pad: 0 };
+        let v11 = ffi::se_session_desc_v11 { v10, fades: fades.as_ptr(), fade_count: fades.len() as u32, _pad: 0 };
+        // Tempo map (spec 015): none when the song has one tempo.
+        let tempo: Vec<ffi::se_tempo_segment> = s
+            .tempo
+            .iter()
+            .map(|g| ffi::se_tempo_segment {
+                start_frame: g.start_frame,
+                start_quarter: g.start_quarter,
+                start_bpm: g.start_bpm,
+                end_bpm: g.end_bpm,
+            })
+            .collect();
+        let desc = ffi::se_session_desc_v12 {
+            v11,
+            tempo: tempo.as_ptr(),
+            tempo_count: tempo.len() as u32,
+            _pad: 0,
+            click_quarters: if s.click_quarters.is_finite() && s.click_quarters > 0.0 { s.click_quarters } else { 1.0 },
+        };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish_v11(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v12(self.raw, &desc) })
     }
 
     fn device_store(
@@ -625,6 +643,26 @@ impl Engine {
     /// input left, input right, output left, output right. All zero while metering is off.
     pub fn builtin_levels(&self, device_id: u64, out: &mut [f32; 4]) -> Result<(), EngineError> {
         check(unsafe { ffi::se_builtin_levels(self.raw, device_id, out.as_mut_ptr()) })
+    }
+
+    /// Turns the chain output meter of a live device (any format) on or off.
+    pub fn device_set_output_metering(&self, device_id: u64, on: bool) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_device_set_output_metering(self.raw, device_id, u8::from(on)) })
+    }
+
+    /// Output peaks (linear, left / right) of `ids` since the previous call, into `out`
+    /// (resized to `ids.len()`). Zero for unknown devices and while metering is off.
+    pub fn device_output_peaks(&self, ids: &[u64], out: &mut Vec<[f32; 2]>) {
+        out.clear();
+        out.resize(ids.len(), [0.0; 2]);
+        if ids.is_empty() {
+            return;
+        }
+        // SAFETY: `out` holds 2 * ids.len() contiguous floats.
+        let rc = unsafe { ffi::se_device_output_peaks(self.raw, ids.as_ptr(), ids.len(), out.as_mut_ptr().cast::<f32>()) };
+        if rc != 0 {
+            out.iter_mut().for_each(|p| *p = [0.0; 2]);
+        }
     }
 
     /// Stereo correlation of a live built-in device's input and output since the previous
@@ -859,6 +897,8 @@ fn lane_desc(l: &LaneSnapshot, points: &[ffi::se_auto_point]) -> ffi::se_auto_la
         AutomationTarget::Trim => (ffi::SE_AUTO_TRIM, 0, 0, 0),
         AutomationTarget::Width => (ffi::SE_AUTO_WIDTH, 0, 0, 0),
         AutomationTarget::Mono => (ffi::SE_AUTO_MONO, 0, 0, 0),
+        // Never in a snapshot (SetAutomationLane refuses it); an unknown target fails the publish.
+        AutomationTarget::Tempo => (u8::MAX, 0, 0, 0),
     };
     ffi::se_auto_lane_desc {
         target,
@@ -1290,6 +1330,23 @@ impl Engine {
     /// input meters and recordings get zeros (recordings keep their timing).
     pub fn set_input_muted(&self, muted: bool) {
         unsafe { ffi::se_input_set_muted(self.raw, muted as u8) };
+    }
+
+    /// Manual recording offset (Settings › Audio › Recording offset, spec 020), in engine
+    /// frames: positive places takes earlier, negative later, on top of the reported device
+    /// latency and delay compensation. Applies to audio takes only (not MIDI capture).
+    /// `SE_ERR_INVALID_ARG` beyond one second either way.
+    pub fn set_recording_offset(&self, frames: i32) -> Result<(), EngineError> {
+        // SAFETY: valid handle.
+        check(unsafe { ffi::se_record_set_offset(self.raw, frames) })
+    }
+
+    /// The offset set with [`Engine::set_recording_offset`] (0 by default).
+    pub fn recording_offset(&self) -> i32 {
+        let mut f = 0i32;
+        // SAFETY: valid handle and out pointer.
+        unsafe { ffi::se_record_get_offset(self.raw, &mut f) };
+        f
     }
 
     /// Start capturing every armed track that has an input (as published),
@@ -2003,6 +2060,8 @@ mod tests {
                 master_gain: 1.0,
                 master_automation: vec![],
                 device_assets: Default::default(),
+                tempo: vec![],
+                click_quarters: 1.0,
             };
             e.publish(&snap).unwrap_or_else(|err| panic!("{}: {err}", p.preset));
         }
@@ -2036,6 +2095,8 @@ mod tests {
             master_gain: 1.0,
             master_automation: vec![],
             device_assets: Default::default(),
+            tempo: vec![],
+            click_quarters: 1.0,
         };
         assert_eq!(e.publish(&snap).unwrap_err().code, ffi::SE_ERR_INVALID_ARG);
     }

@@ -10,7 +10,8 @@ export const LIMITS = {
   body: 64 * 1024, // bytes of JSON accepted at all
 };
 
-const KINDS = { bug: "Bug", feedback: "Feedback" };
+// `crash` reports are sent by the app itself on the launch after a crash (Settings › Privacy).
+const KINDS = { bug: "Bug", feedback: "Feedback", crash: "Crash" };
 const EMAIL_RE = /^[^\s@<>()[\]",;:]+@[^\s@<>()[\]",;:]+\.[^\s@<>()[\]",;:]{2,}$/;
 
 /** Trims a string field; anything that is not a string becomes "". */
@@ -89,12 +90,12 @@ export function body(report, { includeEmail = true } = {}) {
   if (report.log) {
     lines.push("", "<details><summary>Recent log</summary>", "", fence(report.log), "", "</details>");
   }
-  lines.push("", "_Sent from the in-app form._");
+  lines.push("", report.kind === "crash" ? "_Sent by the app after a crash._" : "_Sent from the in-app form._");
   return lines.join("\n");
 }
 
 export function labels(report) {
-  return [report.kind === "bug" ? "bug" : "feedback", "from-app"];
+  return [report.kind === "feedback" ? "feedback" : report.kind, "from-app"];
 }
 
 /**

@@ -32,12 +32,53 @@ pub struct AudioPrefs {
     /// written before this field default to compensation ON).
     #[serde(default)]
     pub pdc_off: bool,
+    /// Settings › Audio › Recording offset (spec 020): input device id -> milliseconds,
+    /// positive = takes placed earlier. Devices left at 0 are not stored.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub recording_offsets: std::collections::BTreeMap<String, f64>,
+}
+
+/// Recording offset range, milliseconds (spec 020). Values are kept to 0.1 ms.
+pub const RECORDING_OFFSET_MAX_MS: f64 = 100.0;
+
+/// `ms` clamped to ±[RECORDING_OFFSET_MAX_MS] and rounded to 0.1 ms; a value that isn't a
+/// number is 0.
+pub fn clamp_recording_offset(ms: f64) -> f64 {
+    if !ms.is_finite() {
+        return 0.0;
+    }
+    let v = (ms.clamp(-RECORDING_OFFSET_MAX_MS, RECORDING_OFFSET_MAX_MS) * 10.0).round() / 10.0;
+    if v == 0.0 { 0.0 } else { v } // no -0.0
 }
 
 impl AudioPrefs {
     /// True when the preferences ask for anything beyond the system defaults.
     pub fn is_custom(&self) -> bool {
         self.output.is_some() || self.input.is_some() || self.sample_rate > 0.0 || self.buffer_size > 0
+    }
+
+    /// The recording offset of the selected input device in ms (0 with no input, or one never
+    /// set). A value edited into the file by hand is clamped like a typed one.
+    pub fn recording_offset_ms(&self) -> f64 {
+        self.input.as_ref().and_then(|id| self.recording_offsets.get(id)).map_or(0.0, |&v| clamp_recording_offset(v))
+    }
+
+    /// Store `ms` (clamped and rounded) for the selected input device; 0 removes the entry.
+    /// Returns false when no input device is selected.
+    pub fn set_recording_offset_ms(&mut self, ms: f64) -> bool {
+        let Some(id) = self.input.clone() else { return false };
+        let v = clamp_recording_offset(ms);
+        if v == 0.0 {
+            self.recording_offsets.remove(&id);
+        } else {
+            self.recording_offsets.insert(id, v);
+        }
+        true
+    }
+
+    /// The offset in engine frames at `rate` (positive = earlier).
+    pub fn recording_offset_frames(&self, rate: f64) -> i32 {
+        (self.recording_offset_ms() * rate / 1000.0).round() as i32
     }
 
     pub fn device_config(&self) -> dstudio_engine::DeviceConfig {
@@ -66,6 +107,13 @@ pub struct Preferences {
     /// Docked assistant width in design units (drag its splitter); 0 = default.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub assistant_width: f32,
+    /// Device chain "+" menu › Recent: effects added lately, newest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_devices: Vec<dstudio_core::PluginRef>,
+    /// The docked assistant spans the full window height, over the bottom panel's right end
+    /// (its header button), instead of the timeline row only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub assistant_full: bool,
     /// File › Open Recent: project folders, newest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent_projects: Vec<String>,
@@ -97,6 +145,10 @@ pub struct Preferences {
     /// changes on top of it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub shortcut_preset: String,
+    /// Settings › Privacy › Send crash reports switched off (spec 018); on by default, so
+    /// files without it send them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub crash_reports_off: bool,
 }
 
 fn is_zero_u8(v: &u8) -> bool {
@@ -160,6 +212,8 @@ pub struct GeneralPrefs {
     /// Timeline annotations: moving, resizing, adding or deleting a marker moves the clips and
     /// automation in and after it.
     pub sections_move_clips: bool,
+    /// Startup: look for a newer release once at launch (updates.rs).
+    pub check_updates_at_launch: bool,
 }
 
 impl Default for GeneralPrefs {
@@ -172,6 +226,7 @@ impl Default for GeneralPrefs {
             plugin_windows_on_top: true,
             projects_folder: None,
             sections_move_clips: false,
+            check_updates_at_launch: true,
         }
     }
 }
@@ -248,6 +303,8 @@ mod tests {
             browser_folders: vec!["/tmp/kit".into()],
             preview_volume: Some(0.5),
             assistant_width: 400.0,
+            recent_devices: vec![dstudio_core::builtin::find("delay").unwrap().plugin_ref()],
+            assistant_full: true,
             recent_projects: vec!["/tmp/Song.dsproj".into()],
             recent_resolved: vec!["/private/tmp/Song.dsproj".into()],
             general: GeneralPrefs {
@@ -265,6 +322,7 @@ mod tests {
             count_in_bars: 2,
             shortcuts: [("transport.record".to_string(), vec!["primary+shift+r".to_string()])].into_iter().collect(),
             shortcut_preset: "Logic Pro".into(),
+            crash_reports_off: true,
         };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
@@ -282,6 +340,7 @@ mod tests {
         assert!(loaded.shortcuts.is_empty(), "files without shortcut changes keep the defaults");
         assert!(loaded.shortcut_preset.is_empty(), "files without a preset use Device Studio's keys");
         assert_eq!(loaded.count_in_bars, 0, "files without a count-in record straight away");
+        assert!(!loaded.crash_reports_off, "files without the Privacy switch send crash reports");
         assert_eq!(loaded.general.projects_folder, None, "files without a projects folder use the default one");
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -308,6 +367,39 @@ mod tests {
                 .unwrap();
         assert_eq!(bad.midi.default_instrument, None, "an entry that doesn't parse is the Synth");
         assert_eq!((bad.midi.disabled_inputs.len(), bad.count_in_bars), (1, 1), "and the rest still loads");
+    }
+
+    #[test]
+    fn recording_offsets_are_kept_per_input_device() {
+        let mut a = AudioPrefs::default();
+        assert!(!a.set_recording_offset_ms(4.0), "no input device: nothing to store it under");
+        assert_eq!(a.recording_offset_ms(), 0.0);
+        a.input = Some("interface-a".into());
+        assert!(a.set_recording_offset_ms(4.26));
+        assert_eq!(a.recording_offset_ms(), 4.3, "rounded to 0.1 ms");
+        assert_eq!(a.recording_offset_frames(48_000.0), 206); // 4.3 ms at 48 kHz, rounded
+        a.input = Some("interface-b".into());
+        assert_eq!(a.recording_offset_ms(), 0.0, "another device starts at 0");
+        a.set_recording_offset_ms(-250.0);
+        assert_eq!(a.recording_offset_ms(), -100.0, "clamped to -100 ms");
+        assert_eq!(a.recording_offset_frames(44_100.0), -4410);
+        a.input = Some("interface-a".into());
+        assert_eq!(a.recording_offset_ms(), 4.3, "each device keeps its own");
+        // Round trip through the file format; a device set back to 0 is not stored.
+        let p = Preferences { audio: a.clone(), ..Default::default() };
+        let back: Preferences = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back.audio, a);
+        a.set_recording_offset_ms(0.0);
+        assert_eq!(a.recording_offsets.len(), 1);
+        a.input = Some("interface-b".into());
+        a.set_recording_offset_ms(0.04);
+        assert!(!serde_json::to_string(&a).unwrap().contains("recording_offsets"), "nothing stored when every offset is 0");
+        assert_eq!(clamp_recording_offset(f64::NAN), 0.0);
+        // Files from before this setting load with no offsets; a hand-edited value is clamped.
+        let old: AudioPrefs = serde_json::from_str(r#"{"input":"interface-a"}"#).unwrap();
+        assert_eq!(old.recording_offset_ms(), 0.0);
+        let wild: AudioPrefs = serde_json::from_str(r#"{"input":"x","recording_offsets":{"x":999}}"#).unwrap();
+        assert_eq!(wild.recording_offset_ms(), 100.0);
     }
 
     #[test]

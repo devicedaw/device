@@ -515,7 +515,8 @@ int32_t se_input_set_muted(se_engine* engine, uint8_t muted);
  * round-trip latency (input + output latency, se_device_status) minus the
  * plugin delay compensation L (se_pdc_report), so the take lines up with
  * what was heard; injected input has no device part (only L). A change of L
- * while recording ends the takes like a seek.
+ * while recording ends the takes like a seek. The manual recording offset
+ * (se_record_set_offset) is subtracted too.
  *
  * se_record_stop: stops capturing (the transport keeps its state), waits
  * for the writer, finalizes every file and returns the number of takes,
@@ -543,6 +544,16 @@ typedef struct se_recorded_take {
 } se_recorded_take; /* 1064 bytes, align 8 */
 
 int32_t se_record_get_take(se_engine* engine, size_t index, se_recorded_take* out);
+
+/* Manual recording offset (spec 020), engine frames: a correction for an
+ * interface that reports its latency wrongly. Positive values place takes
+ * earlier, negative ones later: start_frame = position − (input + output
+ * latency) − L − offset. It applies to every audio take, injected input
+ * included; MIDI capture does not use it. A change while recording ends the
+ * takes like a change of L. |frames| ≤ the engine sample rate (1 s), else
+ * SE_ERR_INVALID_ARG. Default 0. Any non-RT thread. */
+int32_t se_record_set_offset(se_engine* engine, int32_t frames);
+int32_t se_record_get_offset(se_engine* engine, int32_t* out_frames);
 
 /* Live view. Cheap, callable from any non-RT thread at UI rate. Every take
  * of the current recording, in start order (frames lag the audio thread by
@@ -1297,6 +1308,20 @@ int32_t se_builtin_set_metering(se_engine* engine, uint64_t device_id, uint8_t o
  * -> SE_ERR_INVALID_ARG. */
 int32_t se_builtin_levels(se_engine* engine, uint64_t device_id, float* out);
 
+/* Output meter of a live device in a track's chain (any format, the
+ * instrument included): the level meter drawn after the device's card. Off
+ * by default; while it is on, the audio thread keeps the peak of the
+ * device's output in every block (the audio passing through while the
+ * device is bypassed). Turning it off clears the held peaks.
+ * MAIN THREAD. Unknown device -> SE_ERR_NOT_FOUND. */
+int32_t se_device_set_output_metering(se_engine* engine, uint64_t device_id, uint8_t on);
+
+/* Output peaks of `count` devices since the previous call, as linear
+ * amplitude: out[2*i] left and out[2*i+1] right of device_ids[i]. Reading
+ * resets them. Zero for unknown devices and while metering is off.
+ * MAIN THREAD. NULL device_ids or out with count > 0 -> SE_ERR_INVALID_ARG. */
+int32_t se_device_output_peaks(se_engine* engine, const uint64_t* device_ids, size_t count, float* out);
+
 /* Stereo correlation of a live built-in device's input (out[0]) and output
  * (out[1]) since the previous call: -1 cancels in mono, 0 uncorrelated, +1 in
  * phase; 2 where that side was silent or metering is off. Reading resets it.
@@ -1556,6 +1581,57 @@ typedef struct se_session_desc_v11 {
 
 /* MAIN THREAD (like se_session_publish_v5). */
 int32_t se_session_publish_v11(se_engine* engine, const se_session_desc_v11* session);
+
+/* ---- tempo changes (ABI v1 addition, specs/015-tempo-changes) -------------
+ * se_session_publish_v12 is se_session_publish_v11 plus the song's tempo map.
+ * Clips, notes, automation and the loop still arrive in frames (the core
+ * converts them through the map); the map is for what counts musical time on
+ * the audio thread. With tempo_count > 0, in live playback, se_render_offline
+ * and se_export_wav:
+ *  - tempo-synced built-in devices and the plugin host see the tempo at the
+ *    first frame of each block and the song position (quarter notes from
+ *    bar 1) at every position they ask for, both from the map; the value of
+ *    se_transport_set_tempo is ignored;
+ *  - metronome beat k sounds at timeline frame llround(frame_at(k *
+ *    click_quarters)) instead of llround(k * frames_per_beat) (enable, gain
+ *    and beats_per_bar still come from se_metronome_set).
+ * With tempo_count == 0 everything is exactly as with se_session_publish_v11.
+ *
+ * Segment i starts at frame f0 = start_frame and quarter q0 = start_quarter
+ * with tempo a = start_bpm, and runs to the next segment's start quarter q1,
+ * where it reaches b = end_bpm (b == a: the tempo holds; else it ramps
+ * linearly in BPM over quarters). With R the engine sample rate and
+ * k = (b - a) / (q1 - q0):
+ *   hold: q(f) = q0 + (f - f0) * a / (60 R)
+ *   ramp: q(f) = q0 + (a / k) * (exp(k (f - f0) / (60 R)) - 1)
+ *         frame_at(q) = f0 + (60 R / k) * ln(1 + k (q - q0) / a)
+ *         tempo(f) = a * exp(k (f - f0) / (60 R))
+ * Before frame 0 the first segment's tempo holds.
+ *
+ * Validation (else SE_ERR_INVALID_ARG): tempo non-NULL when counted, at most
+ * SE_MAX_TEMPO_SEGMENTS; segment 0 starts at frame 0 and quarter 0; start
+ * frames and start quarters finite and strictly increasing; tempos finite in
+ * [1, 10000]; the last segment holds (end_bpm == start_bpm); click_quarters
+ * finite and > 0 (only checked when tempo_count > 0). The map is copied; the
+ * audio thread only reads it. */
+#define SE_MAX_TEMPO_SEGMENTS 65536u
+typedef struct se_tempo_segment {
+    double start_frame;   /* exact (unrounded) timeline frame where the segment starts */
+    double start_quarter; /* quarter notes from bar 1 at start_frame */
+    double start_bpm;
+    double end_bpm;       /* == start_bpm: hold; else the tempo at the next segment's start */
+} se_tempo_segment; /* 32 bytes, align 8 */
+
+typedef struct se_session_desc_v12 {
+    se_session_desc_v11 v11;
+    const se_tempo_segment* tempo;
+    uint32_t tempo_count;
+    uint32_t _pad;
+    double click_quarters; /* quarter notes per metronome beat (4 / time-signature denominator) */
+} se_session_desc_v12; /* 144 bytes, align 8 */
+
+/* MAIN THREAD (like se_session_publish_v5). */
+int32_t se_session_publish_v12(se_engine* engine, const se_session_desc_v12* session);
 
 /* ---- MIDI input (specs/003-midi-input-and-recording) ----------------------
  * The engine reads MIDI input ports (Core MIDI on macOS, the Windows

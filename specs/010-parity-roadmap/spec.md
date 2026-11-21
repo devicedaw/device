@@ -46,26 +46,26 @@ target behaviour.
   next to the tool button are painted rectangles (`ui/app.slint`, "vertical zoom (placeholder)"). Both must drag:
   horizontal zoom follows and sets the real zoom level (`src/zoom.rs`), vertical sets every track's height
   (same steps as ⌥-scroll). Double-click resets. The clip editor's pair works the same way.
-- [ ] **G3. Track header menu, complete** (`src/track_menu.rs`). Today: Rename, Duplicate track, Duplicate track
+- [x] **G3. Track header menu, complete** (#141) (`src/track_menu.rs`). Today: Rename, Duplicate track, Duplicate track
   with clips, Color, Group or Ungroup, Delete track. It must be, in order, with separators between groups:
   Rename… / Duplicate track (⌘D) / Duplicate with clips (⇧⌘D) / Bounce track in place / Show automation (Hide
   automation when shown) / Group track (⌘G) / Delete track (Del) / Audio track (⌘T) / Instrument track (⇧⌘T) /
   Sampler track / Drum track / Return track / and an inline colour grid at the bottom (see G5). The add-track
   rows insert the new track below the clicked one. Keys shown in the menu must be the ones that work.
-- [ ] **G4. Bounce track in place** (spec). Greyed in the clip Bounce submenu (`src/clipedit.rs`, `BOUNCE`) and
+- [x] **G4. Bounce track in place** (spec, [017](../017-bounce-in-place/spec.md), #127). Greyed in the clip Bounce submenu (`src/clipedit.rs`, `BOUNCE`) and
   missing from the track menu. Renders the whole track through its devices to audio, replaces its clips with
   the rendered audio, and turns an instrument track into an audio track, keeping name, colour, sends, output
   and automation of volume and pan; the instrument and effects are kept but switched off so the change can be
   undone and redone as one step ("Bounce Track in Place").
-- [ ] **G5. Track colours: a full palette shown inline.** The track menu has a 13-colour submenu. It must show a
+- [x] **G5. Track colours: a full palette shown inline** (#141; the target's grid has 43 colours, 14 a row). The track menu has a 13-colour submenu. It must show a
   grid of 40 colours (13 per row, 3 full rows and one) directly at the bottom of the menu, with a check on the
   current one, and new tracks cycle through the same palette. Saved projects keep their colour index, and old
   indexes map to the same colour.
-- [ ] **G6. Empty lane menu** (`open_lane_menu` in `src/clipedit.rs`). Right-clicking empty space in a lane
+- [x] **G6. Empty lane menu** (#141) (`open_lane_menu` in `src/clipedit.rs`). Right-clicking empty space in a lane
   only offers Insert MIDI clip and Paste. It must start with "Open <instrument name>" on instrument tracks
   (opens the Devices view on that instrument), then "Insert empty MIDI clip (⇧⌘M)" and Paste when there is
   something to paste, then the whole track menu from G3.
-- [ ] **G7. Add track menu** (`open_add_track_menu` in `src/routing.rs`, timeline and mixer). Today: Audio,
+- [x] **G7. Add track menu** (#141) (`open_add_track_menu` in `src/routing.rs`, timeline and mixer). Today: Audio,
   Instrument, Return, Group. It must list Audio track (⌘T), Instrument track (⇧⌘T), Sampler track, Drum track,
   Return track, with the keys shown. Sampler track and Drum track are instrument tracks that start with the
   Sampler or the Drum Rack instead of the default instrument. Groups are made from selected tracks with ⌘G or
@@ -77,35 +77,35 @@ target behaviour.
 - [x] **G9. Note audition in the piano roll** (#129). Clicking, drawing or dragging a note (pitch change) and clicking a
   key on the keyboard must play the note through the track's instrument for its length (capped), without
   recording anything. The README status table lists this as missing.
-- [ ] **G10. Rename the project from the title bar.** Clicking the project name in the window title turns it
+- [x] **G10. Rename the project from the title bar** (#137). Clicking the project name in the window title turns it
   into a text field (Return saves, Escape cancels). For a saved project it renames the project file and its
   folder on disk; for an unsaved one it sets the name used by the first save. Undo is not needed (it is a file
   operation), but a failed rename must say why and leave the name as it was.
-- [ ] **G11. Recording offset per audio device.** Settings › Audio needs a manual recording offset (ms, per input
+- [x] **G11. Recording offset per audio device.** (#151, spec 020). Settings › Audio needs a manual recording offset (ms, per input
   device, saved with the device's preferences) for interfaces that report latency wrongly. The README lists it
   as missing.
 
 ## P1: everyday UI and behaviour
 
-- [ ] **G12. Help on every setting.** Each settings row has a small (i) button whose hover shows one sentence
+- [x] **G12. Help on every setting.** (#146). Each settings row has a small (i) button whose hover shows one sentence
   explaining the setting ("Restore the last session on launch.", "Plugin loaded on new instrument tracks.",
   "Folders scanned for VST3 and AU plugins.", …). Device's settings pages have none. Add the icon and tooltips
   to General, Audio, MIDI, Plugins and Privacy.
 - [x] **G13. Settings search** (spec 014). The search box at the top of the settings sidebar is drawn but does nothing
   (`ui/settings.slint`, "PLACEHOLDER: no settings search yet"). Typing must filter the sidebar to pages with
   matching rows, and highlight the matching rows on the open page. Escape clears.
-- [ ] **G14. Settings › Privacy page.** Today "Not available yet". It must hold "Send crash reports" (on by
+- [x] **G14. Settings › Privacy page.** (#150, spec 018). Today "Not available yet". It must hold "Send crash reports" (on by
   default; sends a crash report through the same service as Report a bug, with nothing personal) and "Usage
   tracking" (off; Device collects nothing, so the row explains that and stays off), each with help text.
-- [ ] **G15. Settings › Downloads page.** Today "Not available yet". It must list optional downloadable content
+- [x] **G15. Settings › Downloads page.** (#155). Today "Not available yet". It must list optional downloadable content
   (the factory sound library for the multi-sample instrument in G27, when it exists) with its version and size,
   and a Download / Re-download button with progress. Until there is downloadable content, the page says so.
-- [ ] **G16. Real update check and an "Update available" button.** Options › Check for Updates… only says
+- [x] **G16. Real update check and an "Update available" button.** (#148, spec 022). Options › Check for Updates… only says
   "There's no update server yet". It must compare the running version with the latest GitHub release (once at
   launch, quietly when off-line, and from the menu), and when a newer one exists show a blue "Update available"
   pill in the title bar left of Report a bug. The pill and the dialog show the new version and open its
   download page.
-- [ ] **G17. Ask from a clip (⌘K).** The clip menu's Ask row is disabled (`src/clipedit.rs`, "PLACEHOLDER entry
+- [x] **G17. Ask from a clip (⌘K)** (#134). The clip menu's Ask row is disabled (`src/clipedit.rs`, "PLACEHOLDER entry
   (disabled): Ask"), and `assistant.ask` (⌘K) is not handled. It must open the assistant panel with the clip
   set as its context chip and the cursor in the composer.
 - [ ] **G18. Assistant: Getting started tour.** On first launch the assistant panel shows a "Getting started"
@@ -120,7 +120,7 @@ target behaviour.
 - [ ] **G20. Assistant: "Let the assistant listen to audio".** Greyed today. When on, a turn may include a short
   analysis of the selected clip or the mix (loudness, spectrum summary, key and tempo guess) so answers can refer
   to the sound. Off by default if it sends anything off the machine.
-- [ ] **G21. Assistant: full-height layout.** The header's panel button is a placeholder ("Full height (not
+- [x] **G21. Assistant: full-height layout** (#136). The header's panel button is a placeholder ("Full height (not
   implemented)"). It must toggle the panel between the timeline row only and the full window height (over the
   bottom panel).
 - [ ] **G22. Assistant: works for normal users and knows the devices** (#138: key field and keychain, devices in the
@@ -130,13 +130,16 @@ target behaviour.
   parameters, sends, automation, the Sampler or the Drum Rack, or create audio clips. Add a key field (stored
   in the system keychain), describe chains and devices in the state and tool schema, test against the live API
   once, and update the README status row.
-- [ ] **G23. Smart Fill** (spec). The Smart Fill pill in the timeline header is a placeholder. It toggles a mode
+- [x] **G23. Smart Fill** (#156, spec [021](../021-smart-fill/spec.md)). The Smart Fill pill in the timeline header is a placeholder. It toggles a mode
   in which selecting an empty time range on a track offers generated material that fits the surrounding clips
   (pattern for drum tracks, notes for instrument tracks, from Device's own pattern library in
   `dstudio-core/src/library.rs`). Needs a decision on scope (Q2).
-- [ ] **G24. Export: convert effects for Live sets.** In File › Export › Project, "Convert effects to Live
+- [x] **G24. Export: convert effects for Live sets** (#152, spec [019](../019-live-device-conversion/spec.md); Compressor, Utility and Channel EQ first). In File › Export › Project, "Convert effects to Live
   devices" is a placeholder; effects are always rendered. Map the built-in effects that have a close Live
   device (EQ, compressor, delay, reverb, utility…) to that device with matching settings, and render the rest.
+- [x] **G37. Tempo changes during a song** (#131, #133, #135, spec [015](../015-tempo-changes/spec.md)). A
+  "Song › Tempo" lane on the master row holds tempo steps and ramps that playback, recording, the metronome,
+  synced devices and every export follow.
 
 - [x] **G36. Sends between return tracks** (#132, spec 016). A return sends into the returns after it, from the
   mixer's Sends section and its Sends tab, with one solo rule for every bus and the sends kept in the Live set.
@@ -146,28 +149,35 @@ target behaviour.
 Found by putting Device's review states (`--state reference-default`, `reference-mixer`, `reference-pianoroll`)
 next to the target on the same window size.
 
-- [ ] **G30. I (input monitoring) on audio track headers.** Audio track headers show M S R; only instrument
+- [x] **G30. I (input monitoring) on audio track headers.** (#144) Audio track headers show M S R; only instrument
   headers have I (`ui/track_header.slint`, `if root.t.instrument`). Every recordable track shows M S R I in the
   header, as the channel strip already does.
-- [ ] **G31. A second "Add track" row below the last track.** The track list has "+ Add track" only at the
+- [x] **G31. A second "Add track" row below the last track.** (already in Device: the row below the last track opens the same menu and adds at the end) The track list has "+ Add track" only at the
   top. There is a second one in the empty space below the last track (above Master), opening the same menu
   (G7), and adding the track at the end.
-- [ ] **G32. Default track colours.** A new project's first track is pink and the second orange. The first
+- [x] **G32. Default track colours.** (#144) A new project's first track is pink and the second orange. The first
   track (audio) should be teal and the second (instrument) orange, and new tracks continue through the palette
   from there (ties in with G5).
-- [ ] **G33. Piano roll loop bar in the clip's colour.** The loop bar above the piano roll is a pale pink on an
+- [x] **G33. Piano roll loop bar in the clip's colour.** (#144) The loop bar above the piano roll is a pale pink on an
   orange instrument clip. It must be the track colour at full strength, like the clip header in the timeline.
-- [ ] **G34. Shape tab available on an empty MIDI clip.** In the clip sidebar the Shape tab is greyed until the
+- [x] **G34. Shape tab available on an empty MIDI clip.** (#144) In the clip sidebar the Shape tab is greyed until the
   clip has notes; it should always be selectable for a MIDI clip (the rack just has nothing to shape yet).
-- [ ] **G35. Instruments in the Devices browser open into their presets.** Devices › Instruments lists the
+- [x] **G35. Instruments in the Devices browser open into their presets.** (#145; the Synth's folder. Click to preview is G40.) Devices › Instruments lists the
   built-in instruments as plain rows under "Built-in". Each instrument with factory presets is a folder
   (with the preset count on the right) that opens into category folders (with counts) and then presets;
   clicking a preset previews it, dragging or double-clicking adds the instrument with that preset. Depends on
   G25 for the Synth's content.
 
+- [x] **G38. Copy effects in the track menu** (#141). The target's track menu has a Copy effects row (between
+  Group track and Delete track) that the list above missed. Device copies the track's effect chain; a Paste effects
+  row then appears in the track menu and adds copies of them to another track's chain.
+
 ## P2: content and polish
 
-- [ ] **G25. Synth factory library** [devices]. The Synth has 12 named sounds and numbered placeholders
+- [x] **G40. Preview a preset from the Devices browser.** (#149) Clicking a sound in an instrument's browser folder
+  plays a short note through the instrument with that sound, without adding it to a track (G35 shows the
+  sounds; double-click and drag add them).
+- [x] **G25. Synth factory library** [devices] (#140; the browser's category folders come with G35). The Synth has 12 named sounds and numbered placeholders
   (`dstudio-core/src/builtin/synth_v2/mod.rs`, `PRESETS`). The browser's Devices › Instruments › Synth folder
   must hold about 100 original sounds in categories (Bass, Keys, Pluck, Lead, Pad, Brass, and the rest), each
   folder with its count, and the device header's preset arrows step through them.
@@ -178,7 +188,7 @@ next to the target on the same window size.
   library of a couple of hundred multi-sampled sounds (keys, strings, brass, guitars, vocals, textures), with
   its own preset folder in the browser and its sound library as optional downloadable content (G15). All
   samples must be original or properly licensed for redistribution.
-- [ ] **G28. Device-chain rows in Settings › Shortcuts.** The Shortcuts page lists every timeline and editor
+- [x] **G28. Device-chain rows in Settings › Shortcuts.** (#147; with effect selection in the chain.) The Shortcuts page lists every timeline and editor
   key, but not the device-chain ones (move, delete, duplicate, fold, toggle a device). Add them, bindable like
   the others.
 - [ ] **G29. Windows: interface labels render as empty boxes** (issue #115). The last report is that preferring

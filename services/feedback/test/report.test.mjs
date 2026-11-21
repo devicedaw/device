@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { RateLimiter, body, defang, title, validate } from "../lib/report.mjs";
+import { RateLimiter, body, defang, labels, title, validate } from "../lib/report.mjs";
 
 const bug = { kind: "bug", message: "Crash when I drag a clip\nSteps: drag it", email: "a@b.co", version: "0.2.0" };
 
@@ -45,4 +45,22 @@ test("rate limiter allows a burst of five per window", () => {
   for (let i = 0; i < 5; i++) assert.ok(l.allow("ip", 0));
   assert.equal(l.allow("ip", 10), false);
   assert.ok(l.allow("ip", 1000));
+});
+
+test("crash reports from the app are accepted, titled and labelled as crashes", () => {
+  const v = validate({
+    kind: "crash",
+    message: "Device crashed: index out of bounds",
+    email: "",
+    version: "0.2.0",
+    system: "Device 0.2.0\nmacOS 15.1 (aarch64)",
+    log: "src/main.rs:1:1\n\n0: device_studio::main",
+  });
+  assert.equal(v.ok, true);
+  assert.equal(title(v.report), "[Crash] Device crashed: index out of bounds");
+  assert.deepEqual(labels(v.report), ["crash", "from-app"]);
+  assert.ok(body(v.report).includes("**Type:** Crash"));
+  assert.ok(body(v.report).includes("_Sent by the app after a crash._"));
+  assert.deepEqual(labels(validate(bug).report), ["bug", "from-app"]);
+  assert.deepEqual(labels({ kind: "feedback" }), ["feedback", "from-app"]);
 });

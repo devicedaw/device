@@ -152,6 +152,17 @@ impl Document {
         }
     }
 
+    /// The project folder moved from `from` to `to` (renamed from the title bar): media inside
+    /// it follows. Not an undo step and not a change to save: the saved relative paths are
+    /// unchanged; only the absolute paths the open project uses move with the folder.
+    pub fn relocate_media(&mut self, from: &std::path::Path, to: &std::path::Path) {
+        for a in &mut self.project.assets {
+            if let Ok(rest) = std::path::Path::new(&a.absolute_path).strip_prefix(from) {
+                a.absolute_path = to.join(rest).to_string_lossy().into_owned();
+            }
+        }
+    }
+
     /// Record the modulation bases of plugin devices before saving (no undo
     /// step, like [Self::sync_device_states]); devices not listed get none.
     pub fn sync_mod_bases(&mut self, bases: &[(crate::device::DeviceId, Vec<(u32, f32)>)]) {

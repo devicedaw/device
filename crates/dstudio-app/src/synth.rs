@@ -2454,14 +2454,15 @@ impl Controller {
             }
             act::PRESETS => {
                 let cur = self.project().device(device).and_then(|d| d.preset.clone());
-                let mut rows = vec![heading("Factory sounds")];
-                rows.extend(
-                    SYNTH_V2
-                        .factory
-                        .iter()
-                        .enumerate()
-                        .map(|(k, f)| (f.name.to_string(), check(cur.as_deref() == Some(f.name)), Some(MenuAction::Preset(k)))),
-                );
+                // The 100 factory sounds under their categories (sv::CATEGORIES).
+                let mut rows = Vec::new();
+                for (cat, names) in sv::CATEGORIES {
+                    rows.push(heading(*cat));
+                    rows.extend(names.iter().filter_map(|name| {
+                        let k = SYNTH_V2.factory.iter().position(|f| f.name == *name)?;
+                        Some((name.to_string(), check(cur.as_deref() == Some(*name)), Some(MenuAction::Preset(k))))
+                    }));
+                }
                 (MenuTarget::Presets, rows)
             }
             act::TARGETS => {
@@ -2911,7 +2912,7 @@ impl Controller {
         let Some(d) = self.project().device(device) else { return };
         let (enabled, preset) = (self.device_on_now(d), d.preset.clone());
         let accent = self.project().find_device(device).map_or(rgb(0x439b94), |(ti, _)| card_color(self.project().tracks[ti].color));
-        let bpm = self.project().transport.bpm as f32;
+        let bpm = self.bpm_now() as f32;
         // The dials' rings follow the live modulation, so it is part of what the page is built from.
         let built_from: Vec<f32> = v
             .iter()

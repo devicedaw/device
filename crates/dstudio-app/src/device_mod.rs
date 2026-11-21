@@ -147,6 +147,7 @@ impl Controller {
         let Some(t) = self.track_of(d.id) else { return };
         let at = t.devices.iter().position(|x| x.id == d.id);
         card.folded = d.folded;
+        card.selected = self.devices.fx_sel.contains(&d.id) && at.is_some();
         card.member = at.and_then(|i| modu::head_of(&t.devices, i)).is_some();
         // Instrument cards swap through the instrument selector.
         card.swappable = at.is_none() || modu::outputs(d) == 0;
@@ -701,7 +702,7 @@ impl Controller {
             |it| match it {
                 Item::Builtin(def) => cur.format == PluginFormat::Builtin && cur.id == def.id,
                 Item::Plugin(p) => cur.format == p.format && cur.id == p.id,
-                Item::BuiltinSynth | Item::Chain(_) => false,
+                Item::BuiltinSynth(_) | Item::Chain(_) => false,
             },
         );
         rows.push(("Modulation".to_string(), String::new(), None, true));
@@ -714,7 +715,7 @@ impl Controller {
         let mut with = match item {
             Item::Builtin(def) => def.instantiate(),
             Item::Plugin(p) => Device::new(p),
-            Item::BuiltinSynth | Item::Chain(_) => return,
+            Item::BuiltinSynth(_) | Item::Chain(_) => return,
         };
         let Some(d) = self.project().device(id) else {
             return;
@@ -1214,7 +1215,7 @@ impl Controller {
         let mut device = match item {
             Item::Builtin(def) => def.instantiate(),
             Item::Plugin(p) => Device::new(p),
-            Item::BuiltinSynth | Item::Chain(_) => return,
+            Item::BuiltinSynth(_) | Item::Chain(_) => return,
         };
         device.chain = Some(head);
         self.execute(Command::AddDevice { track, index: Some(index), device });

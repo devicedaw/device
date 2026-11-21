@@ -45,12 +45,62 @@ component Header inherits Rectangle {
     // Root-relative coordinates (header panel sits at 5,5).
     Panel { x: 5px; y: 5px; width: root.width - 10px; height: 68px; }
 
-    // Title (centred). AX: 695,11,50,18
-    Text {
+    // Title (centred). AX: 695,11,50,18. Click it to rename the project: Return renames,
+    // Escape cancels (src/controller.rs `rename_project`).
+    title := Text {
         x: 0; y: 11px; width: root.width; height: 18px;
         text: Studio.project-name; color: Tokens.text-title; font-size: 10px; font-weight: 600;
         horizontal-alignment: center; vertical-alignment: center;
-        accessible-role: text;
+        visible: !Studio.title-editing;
+        accessible-role: button; accessible-label: "Project name"; accessible-value: Studio.project-name;
+        accessible-action-default => { Studio.title-editing = true; }
+    }
+    title-ta := TouchArea {
+        x: (root.width - min(root.width - 480px, max(60px, title-w.preferred-width + 16px))) / 2; y: 9px;
+        width: min(root.width - 480px, max(60px, title-w.preferred-width + 16px)); height: 22px;
+        clicked => { Studio.title-editing = true; }
+    }
+    title-w := Text { visible: false; text: Studio.project-name; font-size: 10px; font-weight: 500; }
+    // The field: a narrow box with an accent rim, the name left-aligned and selected.
+    if Studio.title-editing: Rectangle {
+        x: (root.width - self.width) / 2; y: 10.2px; width: max(91px, title-w.preferred-width + 13.6px); height: 17px; border-radius: 4.25px;
+        background: #2a2b2e; border-width: 0.85px; border-color: #628bf7;
+        TextInput {
+            accessible-label: "Project name";
+            x: 5.1px; width: parent.width - 10.2px; height: parent.height;
+            text: Studio.project-name; color: #e5e5e8; font-size: 10px; font-weight: 500;
+            vertical-alignment: center; single-line: true;
+            selection-background-color: #263a7d; selection-foreground-color: #e5e5e8;
+            init => { self.focus(); self.select-all(); Studio.title-focused = true; }
+            accepted => { Studio.title-editing = false; Studio.title-focused = false; Studio.project-rename(self.text); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) { Studio.title-editing = false; Studio.title-focused = false; return accept; }
+                reject
+            }
+            changed has-focus => {
+                if (!self.has-focus && Studio.title-editing) { Studio.title-editing = false; Studio.title-focused = false; Studio.project-rename(self.text); }
+            }
+        }
+    }
+    // "Update available" with the new version, left of Report a bug, when a newer release exists
+    // (src/updates.rs); a click opens Check for Updates with it.
+    if Studio.update-version != "": Raised {
+        x: root.width - 220px - 7px - self.width; y: 9.45px; height: 22.1px;
+        width: update-row.preferred-width + 22px;
+        border-radius: self.height / 2;
+        fill: update-ta.has-hover ? Tokens.raised-rim-accent : Tokens.accent;
+        rim: Tokens.raised-rim-accent;
+        accessible-role: button;
+        accessible-label: "Update available";
+        accessible-description: "Device \{Studio.update-version} is available";
+        accessible-action-default => { Studio.update-pill-clicked(); }
+        update-row := HorizontalLayout {
+            x: 11px; width: self.preferred-width;
+            spacing: 5px;
+            Text { text: "Update available"; color: Tokens.on-accent; font-size: 10.2px; font-weight: 600; letter-spacing: -0.41px; vertical-alignment: center; }
+            Text { text: "v\{Studio.update-version}"; color: Tokens.on-accent; opacity: 0.72; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: center; }
+        }
+        update-ta := TouchArea { mouse-cursor: pointer; clicked => { Studio.update-pill-clicked(); } }
     }
     Pill { x: root.width - 220px; y: 9.45px; width: 82px; height: 22.1px; text: "Report a bug"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.report-bug(); } }
     Pill { x: root.width - 131px; y: 9.45px; width: 118px; height: 22.1px; text: "Share your feedback"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.feedback(); } }
@@ -62,12 +112,12 @@ component Header inherits Rectangle {
         border-radius: 4px; border-width: 0.75px; border-color: #6a6b6f;
         Text { text: "Beta"; color: #ffffff; font-size: 6.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     }
-    // Sounds toggle (shows/hides the browser panel). AX 67,39,62,25
+    // Browser toggle (shows/hides the browser panel). AX 67,39,62,25
     Rectangle {
         x: 67px; y: 39px; width: 62px; height: 25px;
-        accessible-role: checkbox; accessible-label: "Sounds"; accessible-checked: Studio.sounds-visible;
+        accessible-role: checkbox; accessible-label: "Browser"; accessible-checked: Studio.sounds-visible;
         Icon { x: 6px; width: 14px; height: 14px; d: Icons.library; ink: Studio.sounds-visible ? #c9c9cc : Tokens.icon; }
-        Text { x: 22px; y: 1.5px; height: parent.height; text: "Sounds"; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
+        Text { x: 22px; y: 1.5px; height: parent.height; text: "Browser"; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
         TouchArea { clicked => { Studio.sounds-visible = !Studio.sounds-visible; } }
     }
 
@@ -302,22 +352,22 @@ component FilesPane inherits Rectangle {
 
 
 // ------------------------------------------------------------------ browser
-// Sections Projects, Devices and Files are real (src/files.rs, src/devices.rs); Search and Library
-// have no content (PLACEHOLDER: no sample catalog). The preview bar plays the file last clicked in Files
+// Sections Projects, Devices and Files (src/files.rs, src/devices.rs). The preview bar plays the file last clicked in Files
 // (Link: PLACEHOLDER, it ties catalog loops to the arrangement).
 // Devices › Chains lists saved and factory chains (src/chain_presets.rs). Back / Forward step through visited sections and tabs.
 component Browser inherits Panel {
     // Section tabs: 12 px weight 700, -0.04 em, 8 px apart from 12 px in; rest #63656d, active white.
     HorizontalLayout {
         x: 10.2px; y: 0; width: self.preferred-width; height: 27.2px; spacing: 6.8px;
-        for t[i] in ["Search", "Library", "Projects", "Devices", "Files"]: Rectangle {
+        // Top-tab indices 0 and 1 (Search, Library) are not shown; the tabs here are 2, 3 and 4.
+        for t[i] in ["Projects", "Devices", "Files"]: Rectangle {
             width: section-label.preferred-width;
-            accessible-role: tab; accessible-label: t; accessible-checked: Studio.browser-top == i;
+            accessible-role: tab; accessible-label: t; accessible-checked: Studio.browser-top == i + 2;
             section-label := Text {
-                x: 0; height: parent.height; text: t; color: Studio.browser-top == i ? #ffffff : #63656d;
+                x: 0; height: parent.height; text: t; color: Studio.browser-top == i + 2 ? #ffffff : #63656d;
                 font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center;
             }
-            TouchArea { clicked => { Studio.browser-top-select(i); } }
+            TouchArea { clicked => { Studio.browser-top-select(i + 2); } }
         }
     }
     // Back / Forward: white when there is somewhere to go, else #63656d.
@@ -385,7 +435,7 @@ component Browser inherits Panel {
             }
             Icon {
                 x: 24px + parent.indent; width: 14.5px; height: 14.5px;
-                d: row.icon == 1 ? Icons.keys : row.icon == 2 ? Icons.effect : Icons.folder; ink: #d0d0d3; stroke-width: 1.3px;
+                d: row.icon == 1 ? Icons.keys : row.icon == 2 ? Icons.effect : row.icon == 3 ? Icons.presets : Icons.folder; ink: #d0d0d3; stroke-width: 1.3px; filled: row.icon == 3;
             }
             Text { x: 42.5px + parent.indent; width: parent.width - 42.5px - parent.indent - 44px; text: row.label; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; vertical-alignment: center; overflow: elide; }
             Text { x: parent.width - 60px; width: 52px; text: row.count; color: #8a8b8e; font-size: 9px; horizontal-alignment: right; vertical-alignment: center; }
@@ -603,10 +653,15 @@ component Timeline inherits Panel {
     rgroup := HorizontalLayout {
         x: root.width - self.width - 10.2px; y: 0; width: self.preferred-width; height: 27.2px;
         spacing: 3.4px;
-        // Smart Fill: PLACEHOLDER
+        // Smart Fill (src/smart_fill.rs): lit while the mode is on.
         Rectangle {
             width: 63.75px + 6.8px;
-            Pill { x: 0; y: 5px; width: 63.75px; height: 18px; text: "Smart Fill"; icon: Icons.marquee; font-size: 8.25px; text-color: #a0a1a5; }
+            Pill {
+                x: 0; y: 5px; width: 63.75px; height: 18px; text: "Smart Fill"; icon: Icons.marquee; font-size: 8.25px;
+                active: Studio.smart-on; text-color: Studio.smart-on ? Tokens.on-accent : #a0a1a5;
+                accessible-role: checkbox; accessible-label: "Smart Fill"; accessible-checked: Studio.smart-on;
+                clicked => { Studio.smart-toggle(); }
+            }
         }
         // Show/Hide automation lanes and Draw mode (B) (src/automation.rs).
         Rectangle {
@@ -676,6 +731,14 @@ component Timeline inherits Panel {
         for l in Studio.ruler-labels: Text {
             x: l.x + 4.5px; y: 0px; height: 11px; text: l.text; color: #bdbdbd; font-size: 7.75px; font-weight: 600; vertical-alignment: center;
         }
+        // Tempo changes (spec 015): a mark standing on the bar-number band's rule, and the BPM.
+        for m in Studio.tempo-marks: Rectangle {
+            Rectangle { x: m.x - 1px; y: 9px; width: 2px; height: 7.5px; border-radius: 1px; background: Studio.tempo-mark-color; }
+            Text {
+                x: m.text-x; y: 0px; height: 11px; text: m.text; color: Studio.tempo-mark-color;
+                font-size: 7.75px; font-weight: 600; vertical-alignment: center;
+            }
+        }
         Icon { x: Studio.section-add-x - 5.5px; y: 26.5px; width: 11px; height: 11px; d: Icons.plus; ink: Tokens.text-tertiary; }
         // Section names: 10 px weight 600, -0.04 em, in a dark shade of the block's hue.
         for l in Studio.section-labels: Text {
@@ -694,7 +757,10 @@ component Timeline inherits Panel {
         // Marquee tool range and the Scissors cut line (src/tools.rs).
         if Studio.range-on: Rectangle {
             x: Studio.range-x; y: Studio.range-y; width: Studio.range-w; height: Studio.range-h;
-            background: #ffffff85;
+            // Smart Fill marks its range with an outline (src/smart_fill.rs).
+            background: Studio.smart-on ? #ffffff0a : #ffffff85;
+            border-width: Studio.smart-on ? 1px : 0;
+            border-color: #ffffff59;
         }
         if Studio.cut-on: Rectangle {
             x: Studio.cut-x - 0.5px; y: Studio.cut-y; width: 1px; height: Studio.cut-h;
@@ -814,6 +880,7 @@ component Timeline inherits Panel {
         x: 0; y: root.height - Studio.master-h; width: Tokens.lane-x - 0.5px; height: Studio.master-h;
         automation: Studio.auto-shown; volume-pos: Studio.master-pos; vol-auto: Studio.master-vol-auto;
         level: Studio.master-level; auto-state: Studio.master-auto-state; muted: Studio.master-mute;
+        auto-cat: Studio.master-auto-cat; auto-param: Studio.master-auto-param; auto-accent: Studio.master-auto-accent;
     }
 }
 
@@ -1098,8 +1165,34 @@ component BottomPanel inherits Panel {
             x: card.x - 255px; y: 34px - 27px; width: card.width; height: 265px;
             if !card.builtin: PluginCard { x: 0; y: 0; card: card; }
             if card.builtin: BuiltinCard { x: 0; y: 0; card: card; }
+            if card.selected: Rectangle { border-radius: 8px; border-width: 1.5px; border-color: Tokens.accent; }
         }
         AddDeviceCard { x: Studio.add-device-x - 255px; y: 34.5px - 27px; }
+        // Between the cards: the output meter of the device on the left (lower part of the gap)
+        // and, before an effect, the "+" that opens the insert menu for that slot.
+        for g[i] in Studio.chain-gaps: Rectangle {
+            x: g.x - 255px - 8px; y: 34px - 27px; width: 16px; height: 265px;
+            if g.meter: Rectangle {
+                x: 5.5px; y: 158px; width: 5px; height: 106px;
+                for lvl[k] in [g.l, g.r]: Rectangle {
+                    x: k * 3px; width: 2px; border-radius: 1px; background: #141417;
+                    Rectangle {
+                        y: parent.height * (1 - lvl); height: parent.height * lvl; border-radius: 1px;
+                        background: @linear-gradient(0deg, Tokens.meter-green 0%, Tokens.meter-green 70%, #e3c53a 88%, #e5484d 100%);
+                        visible: lvl > 0.001;
+                    }
+                }
+            }
+            if g.plus: Rectangle {
+                y: (265px - 16px) / 2; height: 16px;
+                accessible-role: button; accessible-label: "Insert device";
+                Icon { x: 2.5px; y: 2.5px; width: 11px; height: 11px; d: Icons.plus; ink: plus-ta.has-hover ? #ffffff : #c5c5c8; stroke-width: 1.2px; }
+                plus-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { Studio.chain-insert-menu(i, self.absolute-position.x + 8px, (self.absolute-position.y - Studio.menu-dy) + 8px); }
+                }
+            }
+        }
         if Studio.chain-marker-visible: Rectangle { x: Studio.chain-marker-x - 255px - 1px; y: 34px - 27px; width: 2px; height: 265px; border-radius: 1px; background: Tokens.accent; }
     }
 }
@@ -1147,6 +1240,125 @@ export struct LayoutAnchors {
     chat-x: length, chat-y: length, chat-w: length, chat-h: length,
     bottom-x: length, bottom-y: length, bottom-w: length,
     settings-x: length, settings-y: length, settings-w: length,
+}
+
+// Smart Fill box (src/smart_fill.rs): the track, Create / Record tabs, and the tab's row.
+component SmartTab inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    callback clicked;
+    width: label.preferred-width + 17px; height: 15.3px; border-radius: self.height / 2;
+    background: root.on ? Tokens.accent : transparent;
+    label := Text {
+        text: root.text; font-size: 9.35px; font-weight: 600; vertical-alignment: center; horizontal-alignment: center;
+        color: root.on ? Tokens.on-accent : root.enabled ? (ta.has-hover ? #e5e5e8 : #a0a1a5) : #55565a;
+    }
+    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+}
+
+component SmartPick inherits Rectangle {
+    in property <string> text;
+    in property <bool> open;
+    in property <bool> lit;
+    callback clicked;
+    width: label.preferred-width + 13px; height: 15px;
+    label := Text {
+        x: 0; text: root.text; font-size: 8.9px; font-weight: 500; vertical-alignment: center;
+        color: root.open || ta.has-hover || root.lit ? #d3d3d6 : #8e8f93;
+    }
+    Icon { x: label.preferred-width + 3.5px; y: 4.5px; width: 7px; height: 7px; d: Icons.chevron-down; ink: label.color; stroke-width: 1.4px; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+component SmartSwitch inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <string> icon: "";
+    callback toggled;
+    width: row.preferred-width; height: 15px;
+    row := HorizontalLayout {
+        spacing: 5px;
+        if root.icon != "": Rectangle { width: 10px; Icon { y: 2.5px; width: 10px; height: 10px; d: root.icon; ink: #a0a1a5; } }
+        Text { text: root.text; font-size: 9.35px; font-weight: 500; vertical-alignment: center; color: root.on ? #e5e5e8 : #a0a1a5; }
+        Rectangle { width: 20px; Switch { y: 2px; on: root.on; toggled => { root.toggled(); } } }
+    }
+}
+
+component SmartFillBox inherits Rectangle {
+    width: 329px; height: Studio.smart-tab == 0 ? 79px : 57px;
+    border-radius: 8.5px;
+    background: Tokens.bg-raised;
+    border-width: 0.5px;
+    border-color: @linear-gradient(180deg, Tokens.popup-border-top 0%, Tokens.popup-border 8%);
+    drop-shadow-blur: 12px; drop-shadow-color: #00000080; drop-shadow-offset-y: 3px;
+    TouchArea { }
+    // The track chip.
+    Rectangle {
+        x: 8.5px; y: 7.6px; width: chip.preferred-width + 30px; height: 18.7px; border-radius: self.height / 2;
+        border-width: 0.75px; border-color: #3b6f5c; background: #1f2a26;
+        Icon { x: 6px; y: 4.35px; width: 10px; height: 10px; d: Studio.smart-audio ? Icons.track-audio : Icons.keys; ink: #6fd3ad; }
+        chip := Text { x: 20px; text: Studio.smart-track; font-size: 8.9px; font-weight: 600; color: #e5e5e8; vertical-alignment: center; }
+    }
+    // Create | Record, and ×.
+    Rectangle {
+        x: parent.width - 132px; y: 7.6px; width: 102px; height: 18.7px; border-radius: self.height / 2; background: #2a2b30;
+        HorizontalLayout {
+            padding: 1.7px; spacing: 0;
+            SmartTab { text: "Create"; on: Studio.smart-tab == 0; enabled: !Studio.smart-audio; clicked => { Studio.smart-pick-tab(0); } }
+            SmartTab { text: "Record"; on: Studio.smart-tab == 1; clicked => { Studio.smart-pick-tab(1); } }
+        }
+    }
+    Icon {
+        x: parent.width - 20px; y: 11.5px; width: 11px; height: 11px; d: Icons.close; ink: close-ta.has-hover ? #e5e5e8 : #8e8f93;
+        accessible-role: button; accessible-label: "Close Smart Fill";
+        close-ta := TouchArea { x: -4px; y: -4px; width: 19px; height: 19px; clicked => { Studio.smart-close(); } }
+    }
+    if Studio.smart-tab == 0: Rectangle {
+        x: 0; y: 33px; width: parent.width; height: 46px;
+        // Describe a musical part… and Create.
+        Rectangle {
+            x: 8.5px; y: 0; width: parent.width - 70px; height: 20.4px; border-radius: self.height / 2; background: #2a2b30;
+            Icon { x: 8px; y: 5.2px; width: 10px; height: 10px; d: Icons.search; ink: #8e8f93; stroke-width: 1.5px; }
+            if field.text == "": Text { x: 24px; height: parent.height; text: "Describe a musical part…"; font-size: 8.9px; color: #8e8f93; vertical-alignment: center; }
+            field := TextInput {
+                x: 24px; width: parent.width - 30px; height: parent.height; text: Studio.smart-text; font-size: 8.9px;
+                color: Tokens.text-primary; vertical-alignment: center; single-line: true; accessible-label: "Describe a musical part";
+                init => { self.focus(); }
+                edited => { Studio.smart-edited(self.text); }
+                accepted => { Studio.smart-create(); }
+            }
+        }
+        Text {
+            x: parent.width - 52px; y: 0; width: 44px; height: 20.4px; text: "Create"; font-size: 9.35px; font-weight: 600;
+            horizontal-alignment: center; vertical-alignment: center;
+            color: create-ta.has-hover ? #ffffff : Studio.smart-text != "" ? #e5e5e8 : #8e8f93;
+            accessible-role: button; accessible-label: "Create";
+            create-ta := TouchArea { clicked => { Studio.smart-create(); } }
+        }
+        HorizontalLayout {
+            x: 14px; y: 24.5px; height: 15px; spacing: 11px; alignment: start;
+            SmartPick { text: Studio.smart-type == "Any" ? "Type" : Studio.smart-type; lit: Studio.smart-type != "Any"; open: Studio.smart-menu == 1; clicked => { Studio.smart-open-menu(1); } }
+            SmartPick { text: Studio.smart-genre; lit: Studio.smart-genre != "Genre"; open: Studio.smart-menu == 2; clicked => { Studio.smart-open-menu(2); } }
+        }
+    }
+    if Studio.smart-tab == 1: HorizontalLayout {
+        x: 14px; y: 33px; width: parent.width - 22px; height: 17px; spacing: 17px;
+        SmartSwitch { text: "Typing"; icon: Icons.keys; on: Studio.smart-typing; toggled => { Studio.smart-switch(0); } }
+        SmartSwitch { text: "Count-in"; on: Studio.smart-count-in; toggled => { Studio.smart-switch(1); } }
+        SmartSwitch { text: "Loop"; on: Studio.smart-loop; toggled => { Studio.smart-switch(2); } }
+        Rectangle { horizontal-stretch: 1; }
+        Rectangle {
+            width: 61px; height: 17px; border-radius: self.height / 2; background: rec-ta.has-hover ? Tokens.record-red.mix(#ffffff, 0.85) : Tokens.record-red;
+            accessible-role: button; accessible-label: "Record";
+            HorizontalLayout {
+                alignment: center; spacing: 4px;
+                Rectangle { width: 6px; Rectangle { y: 5.5px; width: 6px; height: 6px; border-radius: 3px; background: #ffffff; } }
+                Text { text: "Record"; font-size: 9.35px; font-weight: 600; color: #ffffff; vertical-alignment: center; }
+            }
+            rec-ta := TouchArea { clicked => { Studio.smart-record(); } }
+        }
+    }
 }
 
 // The timeline's edit tool menu: three rows with the tool's icon and a check on the active one.
@@ -1277,6 +1489,11 @@ export component AppWindow inherits Window {
     property <length> top-y: 78.2px;
     property <length> chat-x: root.width - 5px - root.chat-w;
     property <length> bottom-y: root.height - 5px - root.bottom-h;
+    // Full-height assistant: it runs down to the window's bottom edge and the bottom panel
+    // (or the mixer) ends where it begins.
+    property <bool> chat-full: Studio.assistant-open && Studio.assistant-full;
+    property <length> bottom-w: root.width - 10px - (root.chat-full ? root.chat-w + 5px : 0px);
+    property <length> chat-h: root.chat-full ? root.height - 5px - root.top-y : root.top-h;
     property <length> settings-x: max(0px, min(216.75px, root.width - 816px));
     property <length> settings-y: 5.5px;
     property <length> settings-w: min(816px, root.width);
@@ -1296,7 +1513,7 @@ export component AppWindow inherits Window {
         tracks-x: timeline.x, tracks-y: timeline.y + timeline.tracks-y,
         browser-x: 5px, browser-y: root.top-y,
         chat-x: root.chat-x, chat-y: root.top-y, chat-w: root.chat-w, chat-h: root.top-h,
-        bottom-x: 5px, bottom-y: root.bottom-y, bottom-w: root.width - 10px,
+        bottom-x: 5px, bottom-y: root.bottom-y, bottom-w: root.bottom-w,
         settings-x: root.settings-x, settings-y: root.settings-y, settings-w: root.settings-w,
     };
 
@@ -1323,6 +1540,9 @@ export component AppWindow inherits Window {
     property <bool> settings-open: Studio.settings-open;
     changed settings-open => { if (!self.settings-open) { fs.focus(); } }
     fs := FocusScope {
+        // The Smart Fill box took the keyboard for its field: give it back when the box closes.
+        property <bool> smart-shown: Studio.smart-open;
+        changed smart-shown => { if (!self.smart-shown) { self.focus(); } }
         init => { self.focus(); }
         key-pressed(e) => {
             if (e.text == Key.Escape) { self.focus(); }
@@ -1347,13 +1567,13 @@ export component AppWindow inherits Window {
         }
         // Assistant panel: right-docked beside the timeline (nothing overlaps).
         if Studio.assistant-open: AssistantPanel {
-            x: root.chat-x; y: root.top-y; width: root.chat-w; height: root.top-h;
+            x: root.chat-x; y: root.top-y; width: root.chat-w; height: root.chat-h;
             focus-main => { fs.focus(); }
         }
         // Width splitter between timeline and assistant: 13 px hit strip over the 6 px gap,
         // col-resize cursor, double-click restores the default width.
         if Studio.assistant-open: TouchArea {
-            x: root.width - 5px - root.chat-w - 7.55px; y: 78.2px; width: 11.05px; height: root.top-h;
+            x: root.width - 5px - root.chat-w - 7.55px; y: 78.2px; width: 11.05px; height: root.chat-h;
             mouse-cursor: col-resize;
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.chat-resize(0, self.absolute-position.x + self.mouse-x); }
@@ -1363,12 +1583,12 @@ export component AppWindow inherits Window {
             double-clicked => { Studio.chat-resize-reset(); }
         }
         // Bottom panel: inspector + devices, or the mixer (taller; the row above shrinks).
-        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; focus-main => { fs.focus(); } }
-        if Studio.mixer-open: MixerPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; }
+        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.bottom-y; width: root.bottom-w; height: root.bottom-h; focus-main => { fs.focus(); } }
+        if Studio.mixer-open: MixerPanel { x: 5px; y: root.bottom-y; width: root.bottom-w; height: root.bottom-h; }
         // Timeline / bottom-panel splitter: an invisible 14 px strip across the gap, 8 px of it
         // above the panel's top edge (the resize handle).
         TouchArea {
-            x: 5px; y: root.height - 5px - root.bottom-h - 6.8px; width: root.width - 10px; height: 11.9px;
+            x: 5px; y: root.height - 5px - root.bottom-h - 6.8px; width: root.bottom-w; height: 11.9px;
             mouse-cursor: row-resize;
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.bottom-resize(0, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
@@ -1420,7 +1640,12 @@ export component AppWindow inherits Window {
         if Studio.menu-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.menu-dismiss(); } } }
-            ContextMenu { x: Studio.menu-x; y: Studio.menu-y; height: Studio.menu-h; items: Studio.menu-items; activated(i) => { Studio.menu-activate(i); } }
+            ContextMenu {
+                x: Studio.menu-x; y: Studio.menu-y; width: Studio.menu-w; height: Studio.menu-h; items: Studio.menu-items;
+                swatches: Studio.menu-swatches; swatch-y: Studio.menu-swatch-y;
+                activated(i) => { Studio.menu-activate(i); }
+                swatch-picked(i) => { Studio.menu-swatch-pick(i); }
+            }
             if Studio.sub-open: ContextMenu {
                 x: Studio.menu-x + 209px - 4px; y: Studio.menu-y + Studio.sub-y; height: Studio.sub-h;
                 items: Studio.sub-items; activated(i) => { Studio.sub-activate(i); }
@@ -1437,6 +1662,44 @@ export component AppWindow inherits Window {
                 content-h: Studio.synth-menu-h;
                 items: Studio.synth-menu-items;
                 picked(i) => { Studio.synth-menu-pick(i); }
+            }
+        }
+        // Smart Fill box under the marked range (src/smart_fill.rs); a click outside closes it.
+        if Studio.smart-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.smart-close(); } } }
+            sbox := SmartFillBox {
+                x: max(5px, min(root.width - self.width - 5px, root.anchors.lanes-x + Studio.smart-x - self.width / 2));
+                y: min(root.height - self.height - 5px, root.anchors.lanes-y + Studio.smart-y + 8px);
+            }
+            if Studio.smart-menu == 2: Rectangle {
+                x: sbox.x + 62px; y: sbox.y + sbox.height + 3px; width: 160px; height: min(Studio.smart-menu-h, 200px) + 27px;
+                border-radius: 6px; background: Tokens.bg-raised; border-width: 0.5px; border-color: Tokens.popup-border;
+                drop-shadow-blur: 10px; drop-shadow-color: #00000070; drop-shadow-offset-y: 2px;
+                TouchArea { }
+                Rectangle {
+                    x: 5px; y: 4px; width: parent.width - 10px; height: 18px; border-radius: 9px; background: #2a2b30;
+                    Icon { x: 6px; y: 4px; width: 10px; height: 10px; d: Icons.search; ink: #8e8f93; stroke-width: 1.5px; }
+                    if query.text == "": Text { x: 21px; height: parent.height; text: "Search genre"; font-size: 8.9px; color: #8e8f93; vertical-alignment: center; }
+                    query := TextInput {
+                        x: 21px; width: parent.width - 26px; height: parent.height; font-size: 8.9px; color: Tokens.text-primary;
+                        vertical-alignment: center; single-line: true; accessible-label: "Search genre";
+                        init => { self.focus(); }
+                        edited => { Studio.smart-query(self.text); }
+                        accepted => { Studio.smart-pick(0); }
+                    }
+                }
+                ChoiceList {
+                    x: 0; y: 25px; width: parent.width; height: min(Studio.smart-menu-h, 200px);
+                    content-height: Studio.smart-menu-h > 200px ? Studio.smart-menu-h : 0px;
+                    items: Studio.smart-items; background: transparent; border-width: 0; drop-shadow-blur: 0;
+                    picked(i) => { Studio.smart-pick(i); }
+                }
+            }
+            if Studio.smart-menu == 1: ChoiceList {
+                x: sbox.x + 14px; y: sbox.y + sbox.height + 3px; width: 110px; height: Studio.smart-menu-h;
+                items: Studio.smart-items;
+                picked(i) => { Studio.smart-pick(i); }
             }
         }
         // Edit tool menu (src/tools.rs): Selector, Marquee tool, Scissors, the active one ticked.
@@ -1627,7 +1890,7 @@ export component AppWindow inherits Window {
         if Studio.settings-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { clicked => { Studio.close-settings(); fs.focus(); } }
-            SettingsPanel { x: root.settings-x; y: root.settings-y; width: root.settings-w; height: root.height - 5.5px + 12px; }
+            SettingsPanel { x: root.settings-x; y: root.settings-y; width: root.settings-w; height: root.height - 5.5px + 12px; focus-main => { fs.focus(); } }
         }
         // Export dialog (centred) and the unsaved-changes prompt (over the timeline);
         // both are modal: clicks outside them are swallowed.

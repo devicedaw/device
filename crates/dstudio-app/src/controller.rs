@@ -151,10 +151,27 @@ pub(crate) fn fmt_pan(p: f32) -> String {
 /// (saturation ×1.64 about Rec. 709 luma, then 10 % toward white) in display-P3 values
 ///. Rotated so that index 0 and 1 are the
 /// blue and purple of older projects; the order is the colour cycle.
-const TRACK_PALETTE: [u32; 13] =
-    [0x72b5d7, 0x8092eb, 0x9b88f6, 0xc770f7, 0xec5c9f, 0xde7e36, 0x56b5ab, 0xec6e45, 0xe3aa4b, 0xc3cc47, 0xa9de4d, 0x78ea8e, 0x67c9c0];
+/// Track colours by saved index. 0..=12 are the first 13 colours, unchanged so saved projects
+/// keep their look; 13.. were added with the inline colour grid (roadmap G5).
+const TRACK_PALETTE: [u32; 43] = [
+    0x72b5d7, 0x8092eb, 0x9b88f6, 0xc770f7, 0xec5c9f, 0xde7e36, 0x56b5ab, 0xec6e45, 0xe3aa4b, 0xc3cc47, 0xa9de4d, 0x78ea8e, 0x67c9c0,
+    0xead863, 0xf5f18f, 0xede3b9, 0xd7cdb9, 0xcab7ac, 0xdbab40, 0x8ef168, 0xc2f8a6, 0xddddc7, 0xbfc99e, 0x54a73e, 0x5cc146, 0x67d760,
+    0x98fcbe, 0xc0f6e1, 0xd1ecec, 0xc4d6cc, 0x97c3a4, 0x4b9e94, 0xc2a5f2, 0xd0bdde, 0xaeb8ce, 0x9653f6, 0xdf9df2, 0xe9c3e3, 0xd1b5d5,
+    0xef8f82, 0xf8d49f, 0xeedbd0, 0xd9bdc8,
+];
 
-/// Number of track colours (the Color submenu's entries).
+/// The colour grid at the bottom of the track menu, in reading order (14 a row): palette indexes.
+pub const TRACK_COLOR_GRID: [u8; 43] = [
+    7, 8, 13, 14, 15, 16, 17, 5, 18, 9, 10, 19, 20, 21, //
+    22, 23, 24, 25, 11, 26, 27, 28, 29, 30, 31, 6, 12, 0, //
+    1, 2, 32, 33, 34, 35, 3, 36, 37, 38, 4, 39, 40, 41, //
+    42,
+];
+
+/// Colours new tracks cycle through: the first 13, as before the grid.
+const TRACK_CYCLE: usize = 13;
+
+/// Number of track colours.
 pub fn track_palette_len() -> usize {
     TRACK_PALETTE.len()
 }
@@ -164,9 +181,9 @@ pub fn track_color(c: ColorIndex) -> [f32; 3] {
 }
 
 /// Colour for a new track: the first palette entry after the last track's colour that no track
-/// uses yet, else the least-used one. The first track is pink.
+/// uses yet, else the least-used one. The first track is teal.
 pub fn next_track_color(p: &Project) -> ColorIndex {
-    let n = TRACK_PALETTE.len();
+    let n = TRACK_CYCLE;
     let Some(last) = p.tracks.last() else { return ColorIndex::FIRST };
     let start = last.color.0 as usize % n;
     let used = |c: usize| p.tracks.iter().filter(|t| t.color.0 as usize % n == c).count();
@@ -223,6 +240,10 @@ pub enum JobResult {
     Assistant { started: Instant, mode: dstudio_core::assistant::Mode, result: Result<String, String> },
     /// A bug report or feedback was posted (feedback.rs).
     Feedback(Result<(), String>),
+    /// The latest release was looked up (updates.rs).
+    UpdateChecked(Result<Option<crate::updates::Release>, String>),
+    /// A crash report from an earlier run was posted (crash.rs).
+    CrashReport(Result<(), String>),
     /// Takes of one finished recording pass, loaded into the engine.
     Recorded {
         doc_epoch: u64,
@@ -366,15 +387,34 @@ pub enum MenuAction {
     TrackRename,
     TrackDuplicate,
     TrackDuplicateClips,
-    TrackColor,
     /// Put the track in a new group (src/groups.rs).
     TrackGroup,
     /// A group track's menu: remove the group, keeping its tracks.
     TrackUngroup,
     TrackDelete,
+    /// Track header menu: Bounce track in place (src/clip_render.rs).
+    TrackBounce,
+    /// Track header menu: show or hide the automation lanes ("Hide automation" while shown).
+    TrackAutomation,
+    /// Track header menu: copy the track's effects; Paste effects (shown once something is
+    /// copied) adds copies of them to the end of another track's chain.
+    TrackCopyEffects,
+    TrackPasteEffects,
+    /// Add-track rows (the track header menu, the empty-lane menu and the Add track menu):
+    /// below the clicked track, or at the end from the Add track button (src/track_menu.rs).
+    AddAudioTrack,
+    AddInstrumentTrack,
+    AddSamplerTrack,
+    AddDrumTrack,
+    AddReturnTrack,
+    /// Empty-lane menu on an instrument track: open its instrument in the Devices view.
+    LaneOpenInstrument,
     /// An expanded automation row's menu (src/automation.rs).
     AutoLaneDelete,
     AutoLaneClose,
+    /// A tempo point's menu (src/tempo_lane.rs): ramp to the next point, or hold until it.
+    TempoRamp,
+    TempoHold,
     /// Record button menu (src/count_in.rs): count-in off, one bar, two bars.
     CountInOff,
     CountIn1,
@@ -391,10 +431,14 @@ pub struct MenuState {
     pub lane: Option<(TrackId, Ticks)>,
     /// Track header menu: the track it was opened on.
     pub track: Option<TrackId>,
+    /// The Add track menu (the timeline's and mixer's Add track buttons) is open.
+    pub add_track: bool,
     /// The record button's count-in menu is open.
     pub count_in: bool,
     /// An expanded automation row's menu: the track and row index.
     pub auto_lane: Option<(TrackId, usize)>,
+    /// A tempo point's menu: the point's index in the tempo map.
+    pub tempo_point: Option<usize>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
     /// The entry whose submenu `sub_open` shows (Transpose or Bounce).
@@ -458,6 +502,8 @@ pub struct Controller {
     pub(crate) pending_import: Option<crate::live_import::PendingImport>,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
+    /// The update check and what it found (updates.rs).
+    pub updates: crate::updates::Updates,
     /// "Change project key?": the key change waiting on Transpose MIDI / Don't transpose / Cancel.
     pub key_change: Option<crate::transport_fields::KeyChange>,
     /// Settings › General › Playhead on stop: where the last playback started, whether the
@@ -488,6 +534,7 @@ pub struct Controller {
     pub(crate) tracks_model: Rc<VecModel<TrackRow>>,
     ruler_model: Rc<VecModel<RulerLabel>>,
     section_label_model: Rc<VecModel<crate::SectionLabel>>,
+    tempo_mark_model: Rc<VecModel<crate::TempoMark>>,
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64, i64),
     pub(crate) mm: crate::minimap::State,
@@ -495,6 +542,8 @@ pub struct Controller {
     pub(crate) snap: crate::snap::State,
     /// Timeline edit tools and the Marquee range (src/tools.rs).
     pub(crate) tools: crate::tools::State,
+    /// Smart Fill mode and box (src/smart_fill.rs).
+    pub(crate) smart: crate::smart_fill::SmartFill,
     /// Transport bar tempo, signature and key fields (src/transport_fields.rs).
     pub(crate) tf: crate::transport_fields::State,
     /// Devices minimap (src/devminimap.rs) and the pointer hide / warp requests of minimap drags (src/pointer.rs).
@@ -521,6 +570,8 @@ pub struct Controller {
     /// Marker copied with Cut / Copy (src/sections.rs), pasted with Paste.
     /// The copied marker and what was in it (pasted with it when sections move clips).
     pub section_clipboard: Option<(dstudio_core::Section, dstudio_core::section_follow::SectionContent)>,
+    /// Track menu › Copy effects: the copied track's insert devices, in chain order.
+    pub effects_clipboard: Vec<dstudio_core::Device>,
     /// Counts presses on the lanes and the clip editors; the UI moves the keyboard focus back to
     /// the shortcuts on each, so an open name field commits (Studio.press-epoch).
     pub press_epoch: i32,
@@ -590,6 +641,7 @@ pub struct Controller {
     pub(crate) input_menu_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) export_tracks_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) export_range_model: Rc<VecModel<ChoiceItem>>,
+    pub(crate) export_fx_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) settings_menu_model: Rc<VecModel<ChoiceItem>>,
     // ---- MIDI input (src/midi_in.rs) ----
     pub midi_in: crate::midi_in::MidiInState,
@@ -604,6 +656,7 @@ pub struct Controller {
     pub(crate) files_model: Rc<VecModel<crate::FileRow>>,
     pub(crate) files_guides_model: Rc<VecModel<crate::FileGuide>>,
     pub(crate) cards_model: Rc<VecModel<DeviceCard>>,
+    pub(crate) chain_gaps_model: Rc<VecModel<crate::ChainGap>>,
     pub(crate) window_cards_model: Rc<VecModel<DeviceCard>>,
     pub(crate) add_results_model: Rc<VecModel<MenuItem>>,
     pub(crate) devmenu_model: Rc<VecModel<MenuItem>>,
@@ -657,6 +710,7 @@ impl Controller {
             unsaved_open: false,
             pending_import: None,
             updates_open: false,
+            updates: Default::default(),
             key_change: None,
             play_start: None,
             paused: false,
@@ -680,10 +734,12 @@ impl Controller {
             mm: crate::minimap::State::new(),
             snap: crate::snap::State::new(),
             tools: Default::default(),
+            smart: Default::default(),
             tf: crate::transport_fields::State::new(),
             dm: crate::devminimap::State::new(),
             ptr: crate::pointer::Queue::default(),
             section_label_model: Rc::new(VecModel::default()),
+            tempo_mark_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
             ruler_key: (i64::MIN, 0, 0, 0),
             clip_vis: Vec::new(),
@@ -700,6 +756,7 @@ impl Controller {
             rename: None,
             rename_section: None,
             section_clipboard: None,
+            effects_clipboard: Vec::new(),
             press_epoch: 0,
             lane_last_down: None,
             lane_playhead_before: None,
@@ -748,6 +805,7 @@ impl Controller {
             input_menu_model: Rc::new(VecModel::default()),
             export_tracks_model: Rc::new(VecModel::default()),
             export_range_model: Rc::new(VecModel::default()),
+            export_fx_model: Rc::new(VecModel::default()),
             settings_menu_model: Rc::new(VecModel::default()),
             midi_in: Default::default(),
             midi_inputs_model: Rc::new(VecModel::default()),
@@ -758,6 +816,7 @@ impl Controller {
             files_model: Rc::new(VecModel::default()),
             files_guides_model: Rc::new(VecModel::default()),
             cards_model: Rc::new(VecModel::default()),
+            chain_gaps_model: Rc::new(VecModel::default()),
             window_cards_model: Rc::new(VecModel::default()),
             add_results_model: Rc::new(VecModel::default()),
             devmenu_model: Rc::new(VecModel::default()),
@@ -784,6 +843,8 @@ impl Controller {
         s.set_snap_menu_items(ModelRc::from(self.snap.model.clone()));
         s.set_sig_menu_items(ModelRc::from(self.tf.sig_model.clone()));
         s.set_section_labels(ModelRc::from(self.section_label_model.clone()));
+        s.set_tempo_marks(ModelRc::from(self.tempo_mark_model.clone()));
+        s.set_tempo_mark_color(crate::automation::Hue::key("Song", "Tempo").slint_bright());
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
         s.set_strip_meters(ModelRc::from(self.strip_meters_model.clone()));
@@ -814,6 +875,7 @@ impl Controller {
         s.set_sel_sends(ModelRc::from(self.routing.sel_sends_model.clone()));
         s.set_export_tracks_items(ModelRc::from(self.export_tracks_model.clone()));
         s.set_export_range_items(ModelRc::from(self.export_range_model.clone()));
+        s.set_export_fx_items(ModelRc::from(self.export_fx_model.clone()));
         s.set_undo_history_rows(ModelRc::from(self.undo_history_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_midi_inputs(ModelRc::from(self.midi_inputs_model.clone()));
@@ -821,6 +883,7 @@ impl Controller {
         s.set_files(ModelRc::from(self.files_model.clone()));
         s.set_files_guides(ModelRc::from(self.files_guides_model.clone()));
         s.set_device_cards(ModelRc::from(self.cards_model.clone()));
+        s.set_chain_gaps(ModelRc::from(self.chain_gaps_model.clone()));
         s.set_device_window_cards(ModelRc::from(self.window_cards_model.clone()));
         s.set_add_results(ModelRc::from(self.add_results_model.clone()));
         s.set_devmenu_items(ModelRc::from(self.devmenu_model.clone()));
@@ -872,10 +935,7 @@ impl Controller {
                 self.undo_history_open = true;
                 self.ui_dirty = true;
             }
-            "options.check_updates" => {
-                self.updates_open = true;
-                self.ui_dirty = true;
-            }
+            "options.check_updates" => self.updates_check(true),
             "file.export_ableton" => {
                 self.export_open();
                 self.export_pick_recipe(2);
@@ -954,6 +1014,7 @@ impl Controller {
     /// Publish a new engine snapshot if the document changed.
     pub fn after_change(&mut self) {
         self.remember_device_names();
+        self.refresh_tempo_lane();
         let p = self.doc.project();
         if let Some(t) = self.selected_track
             && p.track(t).is_none()
@@ -988,6 +1049,18 @@ impl Controller {
     /// The session the engine should play right now: the document plus any
     /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
+        // A tempo lane drag: the song plays on the map being drawn (every position moves with it).
+        if let Some((None, lane)) = &self.auto.pending
+            && lane.target == dstudio_core::AutomationTarget::Tempo
+        {
+            let mut p = self.doc.project().clone();
+            let points = crate::automation::tempo_points(lane, p.transport.bpm, p.transport.tempo.is_empty());
+            if dstudio_core::tempo::validate(&points).is_ok() {
+                p.transport.bpm = points.first().map_or(p.transport.bpm, |q| q.bpm);
+                p.transport.tempo = points;
+            }
+            return snapshot::build_full(&p, self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset()).0;
+        }
         let (mut snap, _skipped) =
             snapshot::build_full(self.doc.project(), self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset());
         // Automation drag / write preview: the pending lane replaces the model lane.
@@ -1176,6 +1249,8 @@ impl Controller {
     // ---------------------------------------------------------------- track edits
 
     pub fn select_track(&mut self, id: TrackId) {
+        // A track (header, strip, a new track) takes the selection from the chain's effects.
+        self.devices.fx_sel.clear();
         if self.selected_track != Some(id) {
             self.selected_section = None;
             self.selected_track = Some(id);
@@ -1491,6 +1566,8 @@ impl Controller {
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
                 JobResult::Feedback(result) => self.finish_feedback(result),
+                JobResult::UpdateChecked(result) => self.finish_update_check(result),
+                JobResult::CrashReport(result) => self.finish_crash_report(result),
                 JobResult::Recorded { doc_epoch, takes, midi, punch, rec_loop } => {
                     self.finish_recorded(doc_epoch, takes, midi, punch, rec_loop)
                 }
@@ -1604,6 +1681,7 @@ impl Controller {
     pub fn replace_project(&mut self, project: Project) {
         self.close_all_editors();
         self.route_menu_close(); // its items name tracks of the old project
+        self.menu_close(); // so do the track, lane and Add track menus
         self.onsets.clear();
         self.tempos.clear();
         self.doc_epoch += 1;
@@ -1641,6 +1719,57 @@ impl Controller {
         }
     }
 
+    /// The title bar's rename field: `name` for the project. A saved project's folder is renamed
+    /// on disk (`<name>.dsproj` next to it) and its media, Open Recent and the window follow; an
+    /// unsaved one keeps the name for its first save. Not an undo step (it is a file operation).
+    /// A name that can't be used, or a rename that fails, says why and changes nothing.
+    pub fn rename_project(&mut self, name: &str) -> bool {
+        let name = name.trim();
+        if let Err(why) = check_project_name(name) {
+            self.set_status(format!("Can't rename the project: {why}"), 5);
+            return false;
+        }
+        let Some(old) = self.project_dir.clone() else {
+            self.doc.set_project_name(name);
+            self.ui_dirty = true;
+            return true;
+        };
+        if project_name_of(&old).as_deref() == Some(name) {
+            return true;
+        }
+        let new = old.with_file_name(format!("{name}.{}", persist::EXTENSION));
+        // A case-only change on a case-insensitive disk names the same folder: still a rename.
+        let same_folder = std::fs::canonicalize(&new).ok().zip(std::fs::canonicalize(&old).ok()).is_some_and(|(a, b)| a == b);
+        if new.exists() && !same_folder {
+            self.set_status(format!("Can't rename the project: \"{name}\" already exists in that folder"), 5);
+            return false;
+        }
+        if let Err(e) = std::fs::rename(&old, &new) {
+            self.set_status(format!("Can't rename the project: {e}"), 5);
+            return false;
+        }
+        let (old_abs, new_abs) =
+            (std::fs::canonicalize(&new).map(|n| n.with_file_name(old.file_name().unwrap_or_default())), std::fs::canonicalize(&new));
+        self.doc.relocate_media(&old, &new);
+        if let (Ok(o), Ok(n)) = (old_abs, new_abs) {
+            self.doc.relocate_media(&o, &n);
+        }
+        self.doc.set_project_name(name);
+        self.project_dir = Some(new.clone());
+        let old_s = old.to_string_lossy().into_owned();
+        if let Some(i) = self.settings.prefs.recent_projects.iter().position(|p| *p == old_s) {
+            self.settings.prefs.recent_projects.remove(i);
+            if i < self.settings.prefs.recent_resolved.len() {
+                self.settings.prefs.recent_resolved.remove(i);
+            }
+        }
+        self.remember_recent(&new);
+        self.files_refresh();
+        self.set_status(format!("Renamed the project to {name}"), 3);
+        self.ui_dirty = true;
+        true
+    }
+
     /// Open the project in `dir`; false (with a status message) when it can't be read.
     pub fn open(&mut self, dir: &Path) -> bool {
         let loaded = match persist::load(dir) {
@@ -1653,6 +1782,7 @@ impl Controller {
         self.stop_return();
         self.close_all_editors();
         self.route_menu_close(); // its items name tracks of the old project
+        self.menu_close(); // so do the track, lane and Add track menus
         for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
             let _ = self.engine.release_asset(ea);
         }
@@ -1773,7 +1903,7 @@ impl Controller {
             if !w.markers.is_empty() {
                 return None;
             }
-            w.original_bpm = (self.project().transport.bpm / w.varispeed()).clamp(MIN_ORIGINAL_BPM, MAX_ORIGINAL_BPM);
+            w.original_bpm = (self.project().bpm_at(c.start) / w.varispeed()).clamp(MIN_ORIGINAL_BPM, MAX_ORIGINAL_BPM);
             w.speed = 1.0;
             w.enabled = true;
         }
@@ -1813,6 +1943,9 @@ impl Controller {
                 let hit = timeline::hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y);
                 match hit {
                     Hit::Ruler => {
+                        if self.tempo_mark_click(x, y) {
+                            return;
+                        }
                         self.seek_beats(beat);
                         self.drag = Some(Drag::Scrub);
                     }
@@ -2233,6 +2366,7 @@ impl Controller {
         self.extra_clips.clear();
         if id.is_some() {
             self.selected_section = None;
+            self.devices.fx_sel.clear();
         }
         if id.is_some_and(|c| self.project().find_midi_clip(c).is_some()) {
             self.bottom_tab = BottomTab::Clip;
@@ -2337,6 +2471,9 @@ impl Controller {
         }
         let mut metering = ml > 1e-5 || mr > 1e-5;
 
+        // Meters between the device chain's cards (src/chain_gaps.rs).
+        metering |= self.chain_meters_tick();
+
         // Track-header meters (always shown) and the mixer meters share one ballistics state.
         metering |= self.ballistics.update(&self.meters);
         let p = self.doc.project();
@@ -2411,6 +2548,7 @@ impl Controller {
         self.update_devmm(app);
         self.push_snap(&s);
         self.push_tools(&s);
+        self.push_smart_fill(&s);
         self.push_transport_fields(&s);
         s.set_press_epoch(self.press_epoch);
         s.set_doc_epoch(self.doc_epoch as i32);
@@ -2573,6 +2711,16 @@ impl Controller {
         s.set_chat_key_saved(self.assistant.key_saved);
         s.set_chat_busy(self.assistant.busy.is_some());
         s.set_chat_notice(self.assistant.notice_visible);
+        // Ask focuses the composer once the panel exists (an update after it opened).
+        if self.assistant.focus_pending && self.assistant.shown && self.assistant_open {
+            self.assistant.focus_pending = false;
+            self.assistant.focus_epoch += 1;
+        } else if self.assistant.focus_pending {
+            self.ui_dirty = true;
+        }
+        self.assistant.shown = self.assistant_open;
+        s.set_chat_focus_epoch(self.assistant.focus_epoch);
+        s.set_assistant_full(self.settings.prefs.assistant_full);
         s.set_teach_mode(self.assistant.mode == dstudio_core::assistant::Mode::Teach);
         if self.chat_rev != Some(self.assistant.rev) {
             self.chat_rev = Some(self.assistant.rev);
@@ -2596,6 +2744,7 @@ impl Controller {
         self.push_settings(&s);
         self.push_dialogs(&s);
         self.push_feedback(&s);
+        self.push_updates(&s);
         self.push_clip_render(&s);
         self.push_devices(&s);
         self.push_files(&s);
@@ -2633,6 +2782,9 @@ impl Controller {
             })
             .collect();
         crate::controller::sync_model(&self.section_label_model, section_labels);
+        let marks: Vec<crate::TempoMark> =
+            self.tempo_marks().into_iter().map(|m| crate::TempoMark { x: m.x, text_x: m.text_x, text: m.text.into() }).collect();
+        crate::controller::sync_model(&self.tempo_mark_model, marks);
         let key = (
             (v.start_beats * 4096.0) as i64,
             (v.px_per_beat * 4096.0) as i64,
@@ -2699,6 +2851,24 @@ pub(crate) fn mini_notes(notes: &[(dstudio_core::Note, bool)], shift: Ticks, len
 /// unless the playhead was moved since it stopped; Stop in place resumes where it stopped.
 /// Where Play starts: a position the user chose since the last pause, else the last playback's
 /// start after a pause (Return to start), else wherever the transport is (None).
+/// Why `name` can't name a project folder, if it can't: empty, too long, a path separator or a
+/// character the file systems refuse, or a leading dot (a hidden folder).
+pub(crate) fn check_project_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("the name is empty");
+    }
+    if name.chars().count() > 128 {
+        return Err("the name is longer than 128 characters");
+    }
+    if name.starts_with('.') {
+        return Err("the name can't start with a dot");
+    }
+    if name.chars().any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control()) {
+        return Err("the name can't contain / \\ : * ? \" < > |");
+    }
+    Ok(())
+}
+
 /// The project's name for its folder `dir` (`Song.dsproj` is "Song").
 fn project_name_of(dir: &Path) -> Option<String> {
     dir.file_stem().and_then(|s| s.to_str()).map(str::trim).filter(|s| !s.is_empty()).map(String::from)
@@ -2756,6 +2926,16 @@ fn stretched_len(want: Ticks, orig: Ticks) -> Ticks {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn project_names_that_cannot_name_a_folder_are_refused() {
+        use super::check_project_name as check;
+        assert!(check("My Song 2").is_ok());
+        assert!(check("Café — take 3").is_ok());
+        for bad in ["", ".hidden", "a/b", "a:b", "a\\b", "what?", &"x".repeat(129)] {
+            assert!(check(bad).is_err(), "{bad:?}");
+        }
+    }
+
     use super::*;
 
     #[test]

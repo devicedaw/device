@@ -98,6 +98,12 @@ static_assert(sizeof(se_clip_fade_desc) == 24 && alignof(se_clip_fade_desc) == 8
 static_assert(sizeof(se_session_desc_v11) == 120 && offsetof(se_session_desc_v11, fades) == 104 &&
                   offsetof(se_session_desc_v11, fade_count) == 112,
               "se_session_desc_v11 layout");
+static_assert(sizeof(se_tempo_segment) == 32 && alignof(se_tempo_segment) == 8 &&
+                  offsetof(se_tempo_segment, start_quarter) == 8 && offsetof(se_tempo_segment, end_bpm) == 24,
+              "se_tempo_segment layout");
+static_assert(sizeof(se_session_desc_v12) == 144 && offsetof(se_session_desc_v12, tempo) == 120 &&
+                  offsetof(se_session_desc_v12, tempo_count) == 128 && offsetof(se_session_desc_v12, click_quarters) == 136,
+              "se_session_desc_v12 layout");
 #endif
 static_assert(sizeof(se_warp_point) == 16 && alignof(se_warp_point) == 8 && offsetof(se_warp_point, source) == 8);
 static_assert(sizeof(se_warp_slice) == 16 && offsetof(se_warp_slice, percussive) == 8);
@@ -510,6 +516,14 @@ int32_t se_session_publish_v11(se_engine* engine, const se_session_desc_v11* ses
         return check(engine->impl->publish(*session, err), err);
     });
 }
+int32_t se_session_publish_v12(se_engine* engine, const se_session_desc_v12* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
 
 int32_t se_warp_renders_pending(const se_engine* engine, size_t* out_count) {
     SE_REQUIRE_ENGINE(engine);
@@ -820,6 +834,23 @@ int32_t se_builtin_levels(se_engine* engine, uint64_t device_id, float* out) {
     });
 }
 
+int32_t se_device_set_output_metering(se_engine* engine, uint64_t device_id, uint8_t on) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        const int32_t rc = engine->impl->device_set_output_metering(device_id, on != 0);
+        return rc == SE_OK ? rc : fail(rc, "no live device with this id");
+    });
+}
+
+int32_t se_device_output_peaks(se_engine* engine, const uint64_t* device_ids, size_t count, float* out) {
+    SE_REQUIRE_ENGINE(engine);
+    if (count > 0 && (device_ids == nullptr || out == nullptr)) return fail(SE_ERR_INVALID_ARG, "device_ids or out is NULL");
+    return guarded([&]() -> int32_t {
+        engine->impl->device_output_peaks(device_ids, count, out);
+        return SE_OK;
+    });
+}
+
 int32_t se_builtin_correlation(se_engine* engine, uint64_t device_id, float* out) {
     SE_REQUIRE_ENGINE(engine);
     if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
@@ -994,6 +1025,22 @@ int32_t se_preview_get(se_engine* engine, se_preview_info* out) {
 int32_t se_input_set_muted(se_engine* engine, uint8_t muted) {
     SE_REQUIRE_ENGINE(engine);
     engine->impl->set_input_muted(muted != 0);
+    return SE_OK;
+}
+
+int32_t se_record_set_offset(se_engine* engine, int32_t frames) {
+    SE_REQUIRE_ENGINE(engine);
+    const double limit = engine->impl->sample_rate();
+    if (static_cast<double>(frames) > limit || static_cast<double>(frames) < -limit)
+        return fail(SE_ERR_INVALID_ARG, "recording offset beyond one second");
+    engine->impl->set_record_offset(frames);
+    return SE_OK;
+}
+
+int32_t se_record_get_offset(se_engine* engine, int32_t* out_frames) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out_frames == nullptr) return fail(SE_ERR_INVALID_ARG, "out_frames is NULL");
+    *out_frames = static_cast<int32_t>(engine->impl->record_offset());
     return SE_OK;
 }
 

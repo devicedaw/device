@@ -35,8 +35,6 @@ pub enum RouteItem {
     SendRemove(TrackId),
     /// Route the menu's track to the master (None) or a return.
     Out(Option<TrackId>),
-    /// Add a track of this kind.
-    AddTrack(TrackKind),
 }
 
 #[derive(Debug, Clone)]
@@ -309,15 +307,14 @@ impl Controller {
     }
 
     /// Add track (timeline and mixer): Audio, Instrument or Return track.
+    /// The timeline's and the mixer's Add track buttons: Audio, Instrument, Sampler, Drum and Return
+    /// track, with their keys; the new track goes at the end. Groups are made from selected tracks
+    /// (⌘G, the track menu), not from here.
     pub fn open_add_track_menu(&mut self, x: f32, y: f32) {
-        let items = vec![
-            ("Audio track".to_string(), RouteItem::AddTrack(TrackKind::Audio), false),
-            ("Instrument track".to_string(), RouteItem::AddTrack(TrackKind::Instrument), false),
-            ("Return track".to_string(), RouteItem::AddTrack(TrackKind::Return), false),
-            ("Group track".to_string(), RouteItem::AddTrack(TrackKind::Group), false),
-        ];
-        self.routing.menu = Some(RouteMenu { track: None, items, x, y });
-        self.ui_dirty = true;
+        self.route_menu_close();
+        let win = self.devices.win;
+        self.open_menu(Self::add_track_items().to_vec(), x, y, win);
+        self.menu.add_track = true;
     }
 
     pub fn route_menu_close(&mut self) {
@@ -349,18 +346,6 @@ impl Controller {
                 } else {
                     self.set_track_output(track, out);
                 }
-            }
-            (RouteItem::AddTrack(TrackKind::Audio), _) => {
-                self.add_audio_track();
-            }
-            (RouteItem::AddTrack(TrackKind::Instrument), _) => {
-                self.add_instrument_track();
-            }
-            (RouteItem::AddTrack(TrackKind::Return), _) => {
-                self.add_return_track(true);
-            }
-            (RouteItem::AddTrack(TrackKind::Group), _) => {
-                self.add_group_track();
             }
             _ => {}
         }

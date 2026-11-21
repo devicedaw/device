@@ -138,3 +138,21 @@ fn the_state_lists_only_changed_device_parameters() {
     assert!(s.len() < 8_000, "{} bytes", s.len());
     assert!(!s.contains("builtin_devices"));
 }
+
+#[test]
+fn a_real_reply_that_colours_and_points_at_a_new_track_is_accepted() {
+    // A real reply (Nov 2026) gave a new track "color":"#3a7bd5" and highlighted that track's
+    // lane; both rejected the whole turn.
+    let d = doc();
+    let next = d.project().next_id;
+    let raw = format!(
+        r##"{{"actions":[{{"type":"edit","command":{{"op":"add_track","index":null,"track":{{"id":{next},"kind":"instrument","name":"Bass","color":"#3a7bd5","gain":1.0,"pan":0.0,"mute":false,"solo":false,"clips":[]}}}}}},
+            {{"type":"highlight","target":"track:{next}:lane","note":"Your new bassline"}}]}}"##
+    );
+    let p = plan(&d, Mode::Assist, &parse_turn(&raw).unwrap()).unwrap();
+    assert_eq!(p.summary, vec!["Added an instrument track, Bass."]);
+    assert_eq!(p.highlights.len(), 1);
+    // Numeric colours are untouched, including a section's 0xRRGGBB.
+    let t = parse_turn(r#"{"actions":[{"type":"edit","command":{"op":"set_section_color","section":1,"color":16711680}}]}"#).unwrap();
+    assert!(matches!(&t.actions[0], AssistantAction::Edit { command: Command::SetSectionColor { color: 16711680, .. } }));
+}

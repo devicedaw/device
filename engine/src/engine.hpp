@@ -65,6 +65,9 @@ public:
     int32_t device_configure(const AudioDevice::Config& setup, std::string& err);
     void device_status(se_device_status* out);
     void set_input_muted(bool muted) noexcept { input_muted_.store(muted, std::memory_order_relaxed); }
+    // Manual recording offset (se_record_set_offset), engine frames; positive = takes earlier.
+    void set_record_offset(int64_t frames) noexcept { record_offset_.store(frames, std::memory_order_relaxed); }
+    int64_t record_offset() const noexcept { return record_offset_.load(std::memory_order_relaxed); }
     // Test hook: replaces the platform device (takes effect when no device
     // object exists yet, i.e. before the first start/configure).
     void set_device_factory(DeviceFactory f);
@@ -106,6 +109,7 @@ public:
     int32_t publish(const se_session_desc_v9& desc, std::string& err);
     int32_t publish(const se_session_desc_v10& desc, std::string& err);
     int32_t publish(const se_session_desc_v11& desc, std::string& err);
+    int32_t publish(const se_session_desc_v12& desc, std::string& err);
 
     // ---- plugins (see dstudio_engine.h; main thread where documented)
     bool plugin_is_live(uint64_t device_id);
@@ -146,6 +150,8 @@ public:
     int32_t builtin_analysis(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count, uint64_t& seq);
     int32_t builtin_set_metering(uint64_t device_id, bool on);
     int32_t builtin_levels(uint64_t device_id, float* out);
+    int32_t device_set_output_metering(uint64_t device_id, bool on);
+    void device_output_peaks(const uint64_t* ids, std::size_t count, float* out);
     int32_t builtin_correlation(uint64_t device_id, float* out);
     int32_t builtin_set_spectrum(uint64_t device_id, int mode);
     int32_t builtin_spectrum(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count, uint64_t& seq);
@@ -252,7 +258,10 @@ private:
     void publish_transport() noexcept;
     uint32_t advance_peek_window(uint32_t frames, const RenderGraph* graph) noexcept;
     // r == nullptr: mono (l only).
-    void mix_metronome(float* l, float* r, int64_t position, uint32_t frames) noexcept;
+    void mix_metronome(float* l, float* r, int64_t position, uint32_t frames, const RenderGraph* graph) noexcept;
+    // The tempo devices and plugins see for a block at `position`: the graph's
+    // tempo map when it has one, else se_transport_set_tempo.
+    void set_block_tempo(RtTransport& t, const TempoMap& map, int64_t position) const noexcept;
     void start_click(const float* buf, uint32_t offset, float* l, float* r, uint32_t frames) noexcept;
     // Adds the preview voices to l/r (silencing them first when soloed);
     // returns true when anything was added.
@@ -291,6 +300,7 @@ private:
     std::atomic<int64_t> device_out_latency_{0}; // engine frames, output side (audible position)
     std::atomic<bool> device_input_open_{false};
     std::atomic<bool> input_muted_{false};
+    std::atomic<int64_t> record_offset_{0}; // engine frames, added to the recording compensation
     std::atomic<int> rt_owner_{kOwnerNone};
 
     // -- transport: commands in, state out

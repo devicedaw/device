@@ -681,6 +681,12 @@ the default row), both as view changes, not undo steps. Double-click resets eith
 same double-click. `ZoomSlider` moved to `ui/widgets.slint` for both headers; mapping in `src/fit.rs`. Self-test
 section `zoom_slider_steps`.
 ### 2026-11-20: note audition
+### 2026-11-20: full-height assistant
+
+The assistant header's layout button (a placeholder until now) toggles the docked panel between the timeline row and
+the full window height; at full height the bottom panel and the mixer end where the assistant begins, so nothing
+overlaps. Saved with the preferences (`assistant_full`). Layout in `ui/app.slint` (`chat-full`, `chat-h`,
+`bottom-w`, which the layout anchors report). Review state `review-assistant-full`; self-test `assistant_full_steps`.
 
 The piano roll already previewed a pressed key, a note being drawn and a note dragged to another pitch, but only
 while the mouse was down, and a plain click on a note was silent. Now a click on a note plays it too, and a released
@@ -719,6 +725,213 @@ project's audio files, and can `add_builtin_device` (effects into the chain, ins
 `load_sample` besides any edit command (device parameters, sends, automation, audio clips). The built-in device
 catalogue (44 devices, about 2000 parameters) goes into the system prompt as a cached block instead of every turn's
 state. Still to do: one run against the live API.
+### 2026-11-20: Bounce Track in Place
+
+Clip menu › Bounce › Bounce track in place prints the clip's whole track (spec 017): every enabled clip rendered
+through its devices, before the channel strip, to one audio clip from the first clip's start; the track becomes an
+audio track holding it, keeping its name, colour, mix, sends, output and lanes, with its effects and instrument kept
+but switched off. One undo step through a new `Command::ReplaceTrack`, which swaps a track for a new version of
+itself at the same place and id (removing and re-adding would drop references to it). The render reuses the clip
+render path (`ClipOp::BounceInPlace`). Core tests `tests/bounce_in_place.rs`; self-test `bounce_in_place_steps`.
+
+### 2026-11-20: tempo changes in the core and engine
+
+A song can change tempo (spec 015, first of three pull requests). `Transport::tempo` holds sorted points (tick, BPM,
+hold or ramp to the next point, linear in BPM over beats); `dstudio_core::tempo::TempoMap` integrates them exactly and
+every conversion between ticks, seconds and frames goes through it, so notes, automation, the loop, fades and clip
+starts stay on their beats. Warped clips get warp-map points at each tempo change and every sixteenth inside a ramp
+(within 1 ms per beat in every mode, reversed clips mirrored in beats); unwarped clips keep their frames and their tick
+length follows the map. Commands: `SetTempoMap` ("Edit Tempo Automation", "Delete Tempo Automation") and `SetTempo`
+with an optional position (the point in effect there, "Tempo Change"). Projects with changes are saved as schema 2,
+without as schema 1. The engine gets the map as segments in `se_session_publish_v12` and evaluates the same formula
+for the metronome and for the tempo and song position built-in devices and plugins see. A song without changes
+converts and renders exactly as before. Tests: `crates/dstudio-core/tests/tempo_map.rs`, `engine/tests/test_tempo.cpp`,
+`rt_tempo_map_does_not_allocate`, `crates/dstudio-engine/tests/tempo.rs`; benchmarks: a "Tempo map" table in
+`dstudio_engine_bench`, `cargo bench -p dstudio-core --bench tempo`.
+
+### 2026-11-20: the tempo lane
+
+Tempo changes get their editor (spec 015, second of three pull requests). The master row's lane picker lists
+Song › Tempo above Master › Volume; the lane draws the tempo map in BPM on a scale fitted to its points (at least
+40 BPM wide) and uses the lane gestures: click the line to add a point (the first one keeps the old tempo from bar 1
+up to it), drag points in whole BPM (⌥ for hundredths and free time), Delete, Draw mode. A point's right-click menu
+switches between "Ramp to Next Point" and "Hold Until Next Point". Each gesture is one `SetTempoMap` ("Edit Tempo
+Automation"). The ruler shows a mark and the BPM at every point (an arrow on a ramp) whenever the song has changes;
+clicking one shows the lane. The transport field shows the tempo at the playhead, follows it in playback and edits the
+point in effect there ("Tempo Change"). Device readouts, "warp on", Smart Quantize and the recording's live clip use the
+tempo at the playhead or the clip's start. App side: `src/tempo_lane.rs` and the Tempo target in `src/automation.rs`;
+review state `review-tempo-lane`; self-test section `tempo_steps`.
+
+### 2026-11-20: tempo changes in exports
+
+The last of three pull requests for spec 015. Mixdown, Stems and render in place already rendered on the tempo map
+(they render the published snapshot); a test now renders a project with a step offline and finds the click on the
+frame the map gives its beat, in an export as long as the map says. Clip menu › Export MIDI writes a tempo event at
+the clip's start and at each change inside it, a ramp as a step every sixteenth note holding that step's average tempo
+(`smf::tempo_events`), so every step ends when it does in Device. The Live set export writes the tempo envelope with
+an event per point (a step as two events at one beat, ramps as straight segments with an event every sixteenth) and
+gives the rendered audio clips warp markers at every tempo change and ramp sixteenth they cross, so the set plays them
+unstretched; `live_set::validate` checks the envelope's order and range. No set saved by the other application is in
+the repository to confirm how it interpolates between envelope events, so the extra events keep every beat within
+1 ms of Device's timing for a linear or a stepped reading (checked in `tempo_changes_become_an_envelope_and_render_markers`).
+### 2026-11-20: Ask from a clip
+
+The clip menu's Ask row (disabled until now) and ⌘K with a clip selected open the assistant with the clip as the
+composer's context chip and the cursor in the composer (`Controller::ask_about_clip`). The panel may not exist yet when
+Ask opens it, so the focus request waits for the next interface update (`AssistantState::focus_pending`) before it
+bumps `chat-focus-epoch`, which the panel's composer follows. Self-test section `ask_clip_steps`.
+### 2026-11-21: rename the project from the title bar
+### 2026-11-21: main-window details
+
+Audio track headers show I (input monitoring) like instrument headers: every recordable track has M S R I. A new
+project's tracks are teal (audio) and orange (instrument), `ColorIndex::FIRST` / `SECOND`; later tracks keep taking
+the next unused colour (coral, amber, ...). The piano roll's loop bar is the track colour at full strength, like the
+clip header on the timeline. The clip sidebar's Shape tab is selectable on an empty MIDI clip, which still opens on
+Patterns. Self-test: `header_monitor_steps` and a Shape check in the MIDI steps; the core test pins the colours.
+
+Clicking the project name in the title bar opens a field (Return renames, Escape cancels, leaving the field renames).
+A saved project's `Name.dsproj` folder is renamed on disk; media inside it, Open Recent and the window follow
+(`Controller::rename_project`, `Document::relocate_media`, which moves only the absolute paths the open project uses).
+An unsaved project keeps the name, and the first Save offers it. A name that is taken, empty, hidden or has a
+character file systems refuse is refused with a reason (`check_project_name`); no undo step, as it is a file
+operation. Review state `review-title-rename`; self-test `rename_project_steps`.
+### 2026-11-21: track, lane and Add track menus
+
+The track header menu is complete: Rename…, Duplicate track (⌘D), Duplicate with clips (⇧⌘D), Bounce track in
+place, Show / Hide automation, Group track (⌘G), Delete track, then Audio, Instrument, Sampler, Drum and Return track,
+which insert the new track right below (`track_menu_items`, `add_track_action`), then the colour grid: 43 colours,
+14 a row, the track's own outlined (`TRACK_COLOR_GRID`); the first 13 palette indexes keep their colours, so saved
+projects look the same. Copy effects (and Paste effects once something is copied) sit between Group track and Delete
+track; group tracks show Group track and Ungroup (⌘⇧G) and no Bounce or effects rows. The empty-lane menu starts with Open <instrument> (the Devices view) and Insert empty MIDI clip on instrument
+tracks, Paste when the copy fits, then the track menu. The Add track menu (timeline and mixer) is the general context
+menu now, with the five add-track rows and their keys; the Group track row is gone (groups come from a selection).
+Sampler and Drum tracks are instrument tracks playing the Sampler or the Drum Rack. A new project closes these menus.
+Review states `review-add-track-menu` and `review-lane-menu`.
+
+
+### 2026-11-21: help on every setting
+
+Roadmap G12. Every working setting on Settings › General, Audio, MIDI and Plugins has an (i) after its name; hovering
+it shows one sentence saying what the setting does, under the (i), in the step sequencer's tooltip style (long
+sentences wrap). Greyed rows (the assistant and voice ones) say "Not available in Device." The sentences live in
+`src/settings_search.rs` next to the search keywords, so search and help share one table; a test checks that every
+row on those pages has one, in one short sentence, and that the table and `ui/settings.slint` name the same rows.
+Review state `review-settings-help`; self-test section `settings_help_steps`.
+### 2026-11-21: update check
+
+Roadmap G16, spec 022. Options › Check for Updates… asks GitHub for the latest published release
+(`/repos/devicedaw/device/releases/latest`) and compares versions by Semantic Versioning; pre-releases and drafts are
+never offered. A launch check runs once in the background (Settings › General › Check for updates at launch, on by
+default), shows nothing when off-line or rate limited, and reuses the last answer for 12 hours (`update-check.json`
+next to the preferences). A newer release shows a blue "Update available" pill with its version left of Report a bug;
+the pill and the menu open the dialog with the version, the first three items of the release notes and Download, which
+opens the release page. The request carries only `User-Agent: Device/<version>` and GitHub's API headers. The in-app
+install from the draft (download, checksum, swap and restart) is left for a follow-up that runs it against a real
+release on each platform. App side: `src/updates.rs`; review states `review-update-available`,
+`review-update-dialog`; self-test section `updates_steps`.
+### 2026-11-21: Synth factory library
+
+The Synth has 100 factory sounds (12 before): 88 new ones written for Device take the place of the numbered
+placeholders 13 to 100 in the preset choice list, so every saved index keeps its meaning (`synth_v2::PRESETS`,
+`FACTORY`). `synth_v2::CATEGORIES` sorts them into ten categories, which the Synth's preset list and the device
+header's preset menu show as headings; the header arrows step through all 100. The engine test
+`every_factory_preset_renders_a_sane_c4` now lists every sound that is silent, clips or goes non-finite, instead of
+stopping at the first. Review state `review-synth-presets`.
+
+
+### 2026-11-21: The Synth's sounds in the Instruments browser
+
+Devices › Instruments › Built-in shows the Synth as a folder with its sound count. It opens into the ten
+categories (each with its count) and then the sounds (`Item::BuiltinSynth(Option<u16>)`, the factory index).
+Dropping or double-clicking a sound adds the Synth with that sound (`devices::synth_with`). On a track that
+already plays the Synth, the sound loads into it as one `SetDeviceParams` step. Dragging the Synth folder still
+adds the plain Synth. A search lists the sounds whose name matches, inside their category. Review state
+`review-instrument-sounds`; unit test `synth_folder_opens_into_categories_and_sounds`; self-test step "synth: a
+browser sound loads into the track's Synth". Clicking a sound to preview it is G40.
+
+### 2026-11-21: Preview the Synth's sounds from the browser
+
+Clicking a sound in Devices › Instruments › Synth plays a C4 note with it in the browser's preview bar
+(`sound_preview.rs`). A worker renders the note on a private offline engine from a one-track project, writes a
+WAV to the temp folder (named by a hash of the sound's settings, so a second click plays at once) and loads it
+like a clicked audio file. Nothing is added to the project. Review state `review-sound-preview`; unit tests in
+`sound_preview`; self-test step "synth: a clicked sound plays in the preview bar, rendered to a file".
+### 2026-11-21: Settings › Privacy and crash reports
+
+Roadmap G14 (spec 018). Settings › Privacy has "Send crash reports" (on by default, saved in the preferences) and
+"Usage tracking" (off and greyed: Device collects no usage data, and the row says so), each with its (i). A panic
+anywhere in the app writes `crash-report.json` next to the preferences (message, location, backtrace); on macOS and
+Linux a fatal signal writes one naming the signal from an async-signal-safe handler that then hands the crash on to
+the previous handler. The next launch sends it once through the feedback service as kind `crash`, with home paths and
+the user name removed, and deletes it; with the switch off it is only deleted. Self-test, `--state` and screenshot
+runs never record or send. `DSTUDIO_CRASH_TEST=panic|segv` crashes on purpose to check it by hand. Settings ›
+Account and Usage and the sample licensing switch are gone (roadmap Q3), leaving seven pages. Review state
+`review-settings-privacy`; self-test section `privacy_steps`.
+### 2026-11-21: Selected effects and their shortcuts
+
+A press on an effect card's header selects the effect; Shift or Cmd adds it to the selection or takes it out
+(`effect_select.rs`, `DevicesUi::fx_sel`). Selected cards get an accent outline. With effects selected, and no
+clip, section or range, the FX slot keys act on them: ⌘D Duplicate selected effects (copies right after them,
+"Duplicate Effects"), ⌘G Create chain from selected effects (a new chain where the first was, "Create Chain"),
+⌘⇧G Unpack selected chain ("Unpack Chain"). Each is one undo step built in `dstudio_core::effect_edit`, which
+the chain card's Unpack chain now uses too. Selecting a clip, a section, a range or a track, or pressing
+Escape, clears the selection. Settings › Shortcuts lists the three under Editing, bindable like the others.
+Review state `review-effect-selection`; unit tests in `effect_edit`; self-test `effect_select_steps`.
+### 2026-11-21: Live sets keep effects as Live devices
+
+Export › Project's Effects pill now offers Convert to Live devices (spec 019). A track whose effects are all
+Compressor, Utility or Channel EQ (on, not in a chain, not modulated, no automation, neutral trim, width and
+mono) is rendered before its effects; the set puts Live's Compressor, Utility and EQ Eight on that track with
+the settings mapped to Live's units, and Live's mixer gets the track's volume and pan. Other tracks render
+after their effects as before. The notes list both, with the reason, and any setting clamped to Live's range.
+`live_devices.rs` holds the mappings; `live_set.rs` writes them; `dialogs.rs::live_chain` decides per track
+and `make_dry` renders before the effects. Tests: `live_devices` unit tests, a structure check test, and the
+self-test section `live_convert_steps`.
+
+### 2026-11-21: Settings › Downloads
+
+Roadmap G15. Settings › Downloads replaces "Not available yet" with two plain sentences: there is nothing to download
+yet, and optional content such as a sound library for the sampler will be listed there with its version and size. It
+shows nothing else until there is content (the multi-sample instrument's library, roadmap G27, would be the first);
+the page's comment in `ui/settings.slint` says where the list goes. Search settings finds it ("sound library",
+"download"). Review state `review-settings-downloads`; self-test section `downloads_steps`.
+
+### 2026-11-21: The assistant against the real API
+
+`assistant_provider::live_api` (ignored; needs `DSTUDIO_TEST_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`) sends five
+real prompts through provider → `plan` → `commit` on a fresh project each and checks the result: a Bass track with
+a bassline, a reverb at 45 % mix, a compressor at 6:1, tempo and volume, and a Point mode question that must not
+edit. Its first run found two ways a good reply was thrown away: a CSS colour (`"#3a7bd5"`) where a palette index
+belongs, and a highlight of a track created in the same turn. `parse_turn` now turns a non-numeric `color` into 0,
+the schema lists the palette and the state shows each track's colour, and `plan` checks highlights after the dry
+run (core test `a_real_reply_that_colours_and_points_at_a_new_track_is_accepted`). The provider's HTTPS client
+trusts the system's certificates (ureq `platform-verifier`). The second run passed: 28.5 s for the five prompts,
+about 21 s of it the bassline.
+### 2026-11-21: Smart Fill
+
+The timeline header's Smart Fill pill switches a mode (spec 021): dragging over empty space on a track marks a
+range and opens a box under it with the track, Create and Record. Create with an empty description fills the
+range at once with a MIDI clip from Device's pattern library for the Type and Genre, in the project key, as one
+"Smart Fill" undo step; the clip's Patterns tab swaps it. With a description, the assistant writes the part.
+Record arms the track, optionally loops the range and records into it, with the Typing and Count-in switches.
+`smart_fill.rs`; review states `review-smart-fill`, `review-smart-fill-type`, `review-smart-fill-record`;
+self-test section `smart_fill_steps`.
+
+### 2026-11-21: Faster CI feedback
+
+- Native benchmark timing runs on eligible main pushes and on demand. The Callgrind PR gate stays required.
+- The full Windows WARP test runs nightly or on demand. Main pushes still build and screenshot the Windows app.
+### 2026-11-21: recording offset per audio device
+
+Spec 020 (roadmap G11). Settings › Audio has a Recording offset row: milliseconds for the selected input device,
+−100..+100 in 0.1 ms steps (− and + move it by 0.5 ms, or type a value), positive moving takes earlier. It is kept per
+input device id in the preferences (`AudioPrefs::recording_offsets`), restored at launch and when the input device
+changes, and greyed with no input device. The engine adds it to the recording compensation
+(`se_record_set_offset`, engine frames, ±1 s): `start_frame = position − (in + out) − L − offset`, for audio takes only
+(MIDI capture does not use the input latency). Engine tests check a take moves by exactly the offset (216, −4800 and
+0 frames, the samples unchanged), that a change while recording starts a new take, and that it adds to a fake
+device's reported latency; a Rust test does the same through the wrapper. Review state
+`review-settings-recording-offset`; self-test section `recording_offset_steps`. Searchable in Settings.
 
 ### 2026-11-21: 85 factory chains
 

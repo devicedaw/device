@@ -55,6 +55,9 @@ export struct AutoExtra { track-id: int, index: int, y: length, cat: string, par
 
 export struct RulerLabel { x: length, text: string }
 
+// A tempo point on the ruler (src/tempo_lane.rs): the mark at x, its BPM text from text-x.
+export struct TempoMark { x: length, text-x: length, text: string }
+
 // Section name in the ruler's section lane (src/sections.rs): x and room in lane points, ink per block.
 export struct SectionLabel { x: length, w: length, text: string, ink: color }
 
@@ -108,6 +111,10 @@ export struct ModCard {
 }
 // A chain head's frame around its member cards (bottom-panel relative x).
 export struct ChainFrame { x: length, w: length, armed: bool, color: color, empty-x: length, empty: bool, head: int }
+// Gap between two cards of the device chain (x: its centre, bottom-panel relative, scrolled):
+// the output meter of the device on its left (l / r: 0 silent .. 1 at 0 dB) and the "+" that
+// inserts an effect at that slot.
+export struct ChainGap { x: length, meter: bool, plus: bool, l: float, r: float }
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill (param -1: sidechain, else a
 // choice menu), 3 value box, 4 flexible gap, 5 latch (On/Off parameter; label shows the state,
 // selected 0 / 1), 6 action button, 7 view switch / tabs (choices = view names, selected = shown view; UI state). dim: a menu pill shown at 60% until hovered
@@ -261,6 +268,7 @@ export struct WinView {
 
 export struct DeviceCard {
     id: int,
+    selected: bool,        // a selected effect (src/effect_select.rs): outlined
     x: length,
     name: string,
     vendor: string,
@@ -408,6 +416,12 @@ export struct ShortcutKey { parts: [string] }
 export struct ShortcutRow { header: bool, label: string, context: string, chords: [ShortcutKey], recording: bool, y: float, h: float, gesture: string }
 
 // swatch: a colour chip before the label (track colour menu); transparent for none.
+// One colour of the track menu's grid.
+export struct MenuSwatch {
+    color: color,
+    selected: bool,
+}
+
 export struct MenuItem { label: string, shortcut: string, enabled: bool, separator: bool, submenu: bool, y: length, swatch: color }
 
 export global Studio {
@@ -463,6 +477,8 @@ export global Studio {
     in property <length> scroll-y;
     in property <image> timeline-image;
     in property <[RulerLabel]> ruler-labels;
+    in property <[TempoMark]> tempo-marks;
+    in property <color> tempo-mark-color: #65c9b8;
     in property <[SectionLabel]> section-labels;
     in property <length> section-add-x: 8.5px;     // centre of the section lane's "+"
     in property <[ClipLabel]> clip-labels;
@@ -514,7 +530,7 @@ export global Studio {
     callback tree-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
     callback tree-scroll-by(float);
     // ---- browser sections, Back / Forward and the Files section (src/files.rs) ----
-    in property <int> browser-section: 2;      // 2 Devices, 3 Files (Search and Library have no content)
+    in property <int> browser-section: 2;      // 2 Devices, 3 Files
     in property <bool> browser-can-back;
     in property <bool> browser-can-forward;
     in property <int> files-tab;               // 0 Projects, 1 Folders
@@ -687,6 +703,13 @@ export global Studio {
     in property <bool> chat-key-saved;           // the assistant's API key came from the keychain
     callback chat-save-key(string);
     callback chat-remove-key();
+    // Bumped to put the cursor in the composer (Ask, ⌘K).
+    in property <int> chat-focus-epoch;
+    in property <bool> assistant-full;          // the assistant spans the window height (its header button)
+    callback chat-toggle-full();
+    in-out property <bool> title-editing;       // the title bar shows its project name field
+    in-out property <bool> title-focused;       // the title bar's project name field has the keyboard
+    callback project-rename(string);
     in property <[HighlightRect]> highlights;
     callback chat-send(string);
     callback chat-new();
@@ -829,6 +852,11 @@ export global Studio {
     in property <length> menu-y;
     in property <length> menu-h;
     in property <[MenuItem]> menu-items;
+    // Track menus: the colour grid under the rows (src/track_menu.rs), its top and the menu width.
+    in property <[MenuSwatch]> menu-swatches;
+    in property <length> menu-swatch-y;
+    in property <length> menu-w: 209px;
+    callback menu-swatch-pick(int);
     in property <bool> sub-open;
     in property <length> sub-y;
     in property <length> sub-h;
@@ -1009,10 +1037,44 @@ export global Studio {
     in property <bool> export-range-menu-open;
     in property <length> export-range-menu-h;
     in property <[ChoiceItem]> export-range-items;
+    in property <string> export-fx-label: "Render";
+    in property <bool> export-fx-menu-open;
+    in property <length> export-fx-menu-h;
+    in property <[ChoiceItem]> export-fx-items;
+    // Smart Fill (src/smart_fill.rs): the mode, and the box under the marked range (lane coordinates:
+    // the range's centre x and its track's bottom y).
+    in property <bool> smart-on;
+    in property <bool> smart-open;
+    in property <length> smart-x;
+    in property <length> smart-y;
+    in property <string> smart-track;
+    in property <bool> smart-audio;
+    in property <int> smart-tab;                 // 0 Create, 1 Record
+    in property <string> smart-text;
+    in property <string> smart-type: "Type";
+    in property <string> smart-genre: "Genre";
+    in property <int> smart-menu;                // 0 none, 1 Type, 2 Genre
+    in property <length> smart-menu-h;
+    in property <[ChoiceItem]> smart-items;
+    in property <bool> smart-typing;
+    in property <bool> smart-count-in;
+    in property <bool> smart-loop;
+    callback smart-toggle();
+    callback smart-close();
+    callback smart-pick-tab(int);
+    callback smart-edited(string);
+    callback smart-open-menu(int);               // 1 Type, 2 Genre
+    callback smart-pick(int);                    // a row of the open menu
+    callback smart-query(string);                // the Genre menu's search
+    callback smart-switch(int);                  // 0 Typing, 1 Count-in, 2 Loop
+    callback smart-create();
+    callback smart-record();
     callback export-pick-recipe(int);
     callback export-toggle-tracks();
     callback export-pick-tracks(int);
     callback export-toggle-range();
+    callback export-toggle-fx();
+    callback export-pick-fx(int);                // 0 render, 1 convert to Live devices (Project)
     callback export-pick-range(int);             // 0 full project, 1 loop region
     callback export-close();
     callback export-run();
@@ -1024,8 +1086,9 @@ export global Studio {
     callback export-name-edited(string);
     in property <bool> unsaved-open;
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show
-    // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top.
-    in property <[bool]> general-on: [false, true, false, true, false];
+    // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top,
+    // Sections move clips, Check for updates at launch.
+    in property <[bool]> general-on: [false, true, false, true, false, true];
     // Settings › General › Projects folder, shown with ~ for the home folder; Choose… picks another.
     in property <string> general-projects-folder: "~/Documents/Device Studio";
     callback general-choose-projects-folder();
@@ -1034,6 +1097,16 @@ export global Studio {
     callback general-stop-mode(bool);                       // true = Stop in place
     in property <bool> updates-open;                        // Options › Check for Updates…
     in property <string> app-version;
+    // Its message, release-note lines, "and N more changes", and whether an update is shown
+    // (Later / Download instead of OK). src/updates.rs.
+    in property <string> updates-text;
+    in property <[string]> updates-notes;
+    in property <string> updates-more;
+    in property <bool> updates-download;
+    callback updates-download-clicked();
+    // Title bar "Update available" pill: the new version ("" hides it); a click opens the dialog.
+    in property <string> update-version;
+    callback update-pill-clicked();
     in property <bool> undo-history-open;                   // Edit › Undo History…
     in property <[UndoHistoryRow]> undo-history-rows;
     in property <int> undo-history-current;                 // row index of the current state
@@ -1058,6 +1131,11 @@ export global Studio {
     in property <string> settings-note;
     in property <bool> set-pdc-on: true;
     in property <string> set-latency-text;
+    // Settings › Audio › Recording offset (spec 020): the selected input device's offset as
+    // shown ("+4.5 ms"), whether there is an input device to set it for, and the line under it.
+    in property <string> set-rec-offset-text: "0.0 ms";
+    in property <bool> set-rec-offset-enabled;
+    in property <string> set-rec-offset-hint;
     in property <[MidiInputRow]> midi-inputs;
     // Settings › MIDI › Default instrument: the choice's name, and whether it is a plugin the
     // last scan didn't find.
@@ -1092,11 +1170,23 @@ export global Studio {
     in-out property <int> settings-search-focus;
     callback settings-search-edited(string);
     pure callback settings-row-hit(string, string) -> bool;
+    // Settings help (roadmap G12): the sentence for a setting's (i), from src/settings_search.rs,
+    // and the one showing (the (i) under the pointer; "" = none) with the (i)'s bottom-left
+    // corner in window coordinates.
+    pure callback settings-help(string) -> string;
+    in-out property <string> settings-tip;
+    in-out property <length> settings-tip-x;
+    in-out property <length> settings-tip-y;
+    // Settings › Privacy (spec 018): Send crash reports is on.
+    in property <bool> privacy-crash-reports: true;
+    callback privacy-toggle-crash-reports();
     callback settings-dropdown(int);
     callback settings-menu-pick(int);
     callback settings-menu-dismiss();
     callback settings-toggle-mute();
     callback settings-toggle-pdc();
+    callback settings-rec-offset-nudge(int);    // -1 / +1: 0.5 ms later / earlier
+    callback settings-rec-offset-typed(string); // the field's text on Enter or when it loses focus
     callback settings-test();
 
     // ---- device chain (Devices tab; src/devices.rs, ui/devices.slint) ----
@@ -1113,6 +1203,7 @@ export global Studio {
     callback device-edit(int);                  // open / close the plugin window
     callback device-remove(int);                // RemoveDevice (closes its window first)
     callback device-use-synth();                // SetInstrumentPlugin(None)
+    callback device-select(int, bool);         // card id, extend (Shift or Cmd): header press
     callback device-drag(int, int, length);     // card id, phase 0/1/2, window x (MoveDevice on release)
     callback chain-scroll-by(float);
     // Devices minimap (src/devminimap.rs): shown while the chain is wider than the panel. Tiles are strip-local;
@@ -1170,6 +1261,8 @@ export global Studio {
     callback macro-select(int, int);                         // chain head: open / toggle a macro's side panel
     callback macro-rename(int, int, string);
     callback chain-add-effect(int, length, length);          // empty chain "Add effect"
+    in property <[ChainGap]> chain-gaps;
+    callback chain-insert-menu(int, length, length);         // "+" between cards: gap index, window x, y for the menu
     callback card-add-menu(int, length, length);             // plugin card "+ Add": parameter list (knobs use panel-*)
     callback card-page(int, int);                            // pager -1 / +1
     // Sampler-family panels (src/sampler_panel.rs).
@@ -1221,6 +1314,10 @@ export global Studio {
     in property <length> tracks-height: 149px;  // content height of all track rows
     in property <length> master-h: 30px;        // master row (64.5 pt while lanes are shown)
     in property <int> master-auto-state;
+    // The master row's lane pill: "Master › Volume" or "Song › Tempo" (spec 015).
+    in property <string> master-auto-cat: "Master";
+    in property <string> master-auto-param: "Volume";
+    in property <color> master-auto-accent: #ebc542;
     in property <bool> master-vol-auto;
     in property <bool> sel-vol-auto;
     in property <bool> sel-pan-auto;

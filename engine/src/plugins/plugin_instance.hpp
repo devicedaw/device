@@ -13,6 +13,7 @@
 
 #include "../spsc_queue.hpp"
 #include "../synth.hpp" // NoteEvent
+#include "../tempo_map.hpp"
 #include "param_bus.hpp"
 
 #include <atomic>
@@ -63,9 +64,15 @@ struct RtTransport {
     int64_t position = 0;     // timeline frame of the segment's first sample
     bool playing = false;
     double sample_rate = 48000.0;
-    double tempo_bpm = 120.0; // quarter notes per minute (se_transport_set_tempo), else 120
-    // Quarter notes since frame 0 at `position` (constant tempo from 0).
-    double beats() const noexcept { return static_cast<double>(position) / sample_rate * tempo_bpm / 60.0; }
+    double tempo_bpm = 120.0; // quarter notes per minute at the block start (tempo map, se_transport_set_tempo, else 120)
+    // The song's tempo map (se_session_publish_v12), or null for one tempo.
+    const TempoMap* map = nullptr;
+    // Quarter notes from bar 1 at `position`: on the tempo map, else at a
+    // constant tempo from frame 0.
+    double beats() const noexcept {
+        if (map != nullptr) [[unlikely]] return map->quarter_at(static_cast<double>(position));
+        return static_cast<double>(position) / sample_rate * tempo_bpm / 60.0;
+    }
 };
 
 // Converts a track's note list (timeline frames) into sample-accurate MIDI
@@ -269,6 +276,32 @@ public:
         return live_.push(e);
     }
     virtual bool plays_notes() const noexcept { return spec_.instrument; }
+
+    // ---- chain output meter (the level meter after the device's card).
+    // Off by default; while on, the audio thread keeps the peak of the
+    // device's output (or of the audio passing it while bypassed).
+    void set_output_metering(bool on) noexcept {
+        out_metering_.store(on, std::memory_order_relaxed);
+        if (!on) {
+            out_peak_[0].store(0.0f, std::memory_order_relaxed);
+            out_peak_[1].store(0.0f, std::memory_order_relaxed);
+        }
+    }
+    bool output_metering() const noexcept { return out_metering_.load(std::memory_order_relaxed); }
+    // RT: raise the held peaks (linear) to at least l / r.
+    void store_output_peaks(float l, float r) noexcept {
+        for (int c = 0; c < 2; ++c) {
+            const float v = c == 0 ? l : r;
+            float cur = out_peak_[c].load(std::memory_order_relaxed);
+            while (v > cur && !out_peak_[c].compare_exchange_weak(cur, v, std::memory_order_relaxed)) {
+            }
+        }
+    }
+    // Main thread: the held peaks since the previous call (reading resets them).
+    void take_output_peaks(float* out) noexcept {
+        out[0] = out_peak_[0].exchange(0.0f, std::memory_order_relaxed);
+        out[1] = out_peak_[1].exchange(0.0f, std::memory_order_relaxed);
+    }
     // RT: moves queued live notes to `out` (at most `cap`); returns the count.
     uint32_t take_live(MidiEvent* out, uint32_t cap) noexcept {
         uint32_t n = 0;
@@ -313,6 +346,8 @@ private:
     std::atomic<bool> in_process_{false};
     std::atomic<bool> suspended_{false};
     std::atomic<bool> restart_requested_{false};
+    std::atomic<bool> out_metering_{false};
+    std::atomic<float> out_peak_[2]{0.0f, 0.0f};
     uint32_t cached_latency_ = 0;
     std::mutex param_mutex_; // serialises producers (SPSC producer side)
     SpscQueue<ParamChange, 256> params_;

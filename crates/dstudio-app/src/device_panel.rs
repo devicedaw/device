@@ -1097,7 +1097,7 @@ impl Controller {
         let get = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
         let input = device_fields::Input {
             get: &get,
-            bpm: self.project().transport.bpm as f32,
+            bpm: self.bpm_now() as f32,
             n: (pw.round() as usize).max(64),
             cycles: self.devices.panel.lfo.get(&d.id).map(|l| l.1),
             win: false,
@@ -1741,8 +1741,23 @@ impl Controller {
             }
             -2 => {
                 let mut rows = vec![("Factory presets".to_string(), String::new(), None, false)];
-                for (i, f) in def.factory.iter().enumerate() {
-                    rows.push((f.name.to_string(), check(d.preset.as_deref() == Some(f.name)), Some(MenuPick::Preset(device, i)), false));
+                let row = |i: usize, f: &dstudio_core::builtin::FactoryPreset| {
+                    (f.name.to_string(), check(d.preset.as_deref() == Some(f.name)), Some(MenuPick::Preset(device, i)), false)
+                };
+                if def.id == dstudio_core::builtin::synth_v2::SYNTH_V2.id {
+                    // The Synth's 100 sounds, under their categories.
+                    for (cat, names) in dstudio_core::builtin::synth_v2::CATEGORIES {
+                        rows.push((cat.to_string(), String::new(), None, false));
+                        for name in *names {
+                            if let Some((i, f)) = def.factory.iter().enumerate().find(|(_, f)| f.name == *name) {
+                                rows.push(row(i, f));
+                            }
+                        }
+                    }
+                } else {
+                    for (i, f) in def.factory.iter().enumerate() {
+                        rows.push(row(i, f));
+                    }
                 }
                 rows
             }

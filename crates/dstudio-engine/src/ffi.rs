@@ -632,6 +632,33 @@ pub struct se_session_desc_v11 {
     pub _pad: u32,
 }
 
+// ---- tempo changes (se_session_publish_v12, spec 015)
+
+pub const SE_MAX_TEMPO_SEGMENTS: u32 = 65536;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_tempo_segment {
+    /// Exact (unrounded) timeline frame where the segment starts.
+    pub start_frame: f64,
+    /// Quarter notes from bar 1 at `start_frame`.
+    pub start_quarter: f64,
+    pub start_bpm: f64,
+    /// Equal to `start_bpm`: hold; else the tempo at the next segment's start.
+    pub end_bpm: f64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_session_desc_v12 {
+    pub v11: se_session_desc_v11,
+    pub tempo: *const se_tempo_segment,
+    pub tempo_count: u32,
+    pub _pad: u32,
+    /// Quarter notes per metronome beat.
+    pub click_quarters: f64,
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct se_onset {
@@ -902,6 +929,8 @@ unsafe extern "C" {
     pub fn se_record_start(engine: *mut se_engine, utf8_dir: *const c_char) -> i32;
     pub fn se_record_stop(engine: *mut se_engine, out_take_count: *mut usize) -> i32;
     pub fn se_record_get_take(engine: *mut se_engine, index: usize, out: *mut se_recorded_take) -> i32;
+    pub fn se_record_set_offset(engine: *mut se_engine, frames: i32) -> i32;
+    pub fn se_record_get_offset(engine: *mut se_engine, out_frames: *mut i32) -> i32;
     pub fn se_record_state(
         engine: *mut se_engine,
         out_active: *mut u8,
@@ -968,6 +997,7 @@ unsafe extern "C" {
     pub fn se_session_publish_v9(engine: *mut se_engine, session: *const se_session_desc_v9) -> i32;
     pub fn se_session_publish_v10(engine: *mut se_engine, session: *const se_session_desc_v10) -> i32;
     pub fn se_session_publish_v11(engine: *mut se_engine, session: *const se_session_desc_v11) -> i32;
+    pub fn se_session_publish_v12(engine: *mut se_engine, session: *const se_session_desc_v12) -> i32;
     pub fn se_warp_renders_pending(engine: *const se_engine, out_count: *mut usize) -> i32;
     pub fn se_asset_detect_onsets(engine: *mut se_engine, asset_id: u64, out: *mut se_onset, capacity: usize, out_count: *mut usize)
     -> i32;
@@ -1002,6 +1032,8 @@ unsafe extern "C" {
     pub fn se_builtin_set_metering(engine: *mut se_engine, device_id: u64, on: u8) -> i32;
     pub fn se_builtin_levels(engine: *mut se_engine, device_id: u64, out: *mut f32) -> i32;
     pub fn se_builtin_correlation(engine: *mut se_engine, device_id: u64, out: *mut f32) -> i32;
+    pub fn se_device_set_output_metering(engine: *mut se_engine, device_id: u64, on: u8) -> i32;
+    pub fn se_device_output_peaks(engine: *mut se_engine, device_ids: *const u64, count: usize, out: *mut f32) -> i32;
     pub fn se_builtin_set_spectrum(engine: *mut se_engine, device_id: u64, mode: u8) -> i32;
     pub fn se_builtin_spectrum(
         engine: *mut se_engine,
@@ -1440,6 +1472,17 @@ mod abi_layout {
         assert_eq!((size_of::<se_clip_fade_desc>(), align_of::<se_clip_fade_desc>()), (24, 8));
         assert_eq!((size_of::<se_session_desc_v11>(), align_of::<se_session_desc_v11>()), (120, 8));
         assert_eq!([offset_of!(se_session_desc_v11, fades), offset_of!(se_session_desc_v11, fade_count)], [104, 112]);
+        assert_eq!((size_of::<se_tempo_segment>(), align_of::<se_tempo_segment>()), (32, 8));
+        assert_eq!([offset_of!(se_tempo_segment, start_quarter), offset_of!(se_tempo_segment, end_bpm)], [8, 24]);
+        assert_eq!((size_of::<se_session_desc_v12>(), align_of::<se_session_desc_v12>()), (144, 8));
+        assert_eq!(
+            [
+                offset_of!(se_session_desc_v12, tempo),
+                offset_of!(se_session_desc_v12, tempo_count),
+                offset_of!(se_session_desc_v12, click_quarters)
+            ],
+            [120, 128, 136]
+        );
         assert_eq!([offset_of!(se_onset, strength), offset_of!(se_onset, percussive)], [8, 12]);
         assert_eq!((size_of::<se_plugin_param_info>(), align_of::<se_plugin_param_info>()), (272, 4));
         assert_eq!(

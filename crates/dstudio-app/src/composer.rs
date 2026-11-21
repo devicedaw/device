@@ -91,7 +91,9 @@ impl Controller {
         } else {
             format!("Create new {}", comp.part.plural())
         };
-        let shape_ok = !drums && !c.notes.is_empty() && c.pattern.is_none();
+        // Shape is there for every MIDI clip, an empty one too (its rack has nothing to shape yet);
+        // an empty clip opens on Patterns.
+        let shape_ok = !drums && c.pattern.is_none();
         let (base, source, shape) = self.shape_state(&c);
         Some(SidebarView {
             drums,
@@ -101,7 +103,7 @@ impl Controller {
             rows,
             create_label,
             shape_ok,
-            shape_tab: shape_ok && self.composer_shape_tab.unwrap_or(comp.playing.is_none()),
+            shape_tab: shape_ok && self.composer_shape_tab.unwrap_or(comp.playing.is_none() && !c.notes.is_empty()),
             shape_rows: if shape_ok { self.shape_rows(&base, source, &shape) } else { Vec::new() },
         })
     }

@@ -694,7 +694,8 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     for (y, hh) in [(27.0, 0.5), (40.5, 1.0), (54.0, 0.5)] {
         o.push(px.rect(gx, y, w - gx, hh, rgba(rgb(0x292b2e), 1.0)));
     }
-    let bar = mix(sc.color, rgb(0x86a6ff), 0.5);
+    // The track colour at full strength, as the clip header on the timeline.
+    let bar = sc.color;
     let (bar, (bx0, bx1)) = match sc.clip_loop {
         Some((s, e, on)) => (if on { bar } else { rgb(0x4a4b50) }, (v.x_of(s), v.x_of(e))),
         None => (bar, (cx0, cx1)),
@@ -1661,7 +1662,7 @@ impl Controller {
             "reverse" => ("Reverse Notes", Self::replace_notes(&clip, &midi::reverse(&target))),
             "legato" => ("Legato", Self::replace_notes(&clip, &midi::legato(&target, clip.length))),
             "smart_quantize" => {
-                let done = dstudio_core::smart_quantize::smart_quantize(&target, self.project().transport.bpm);
+                let done = dstudio_core::smart_quantize::smart_quantize(&target, self.project().bpm_at(clip.start));
                 let mut notes: Vec<Note> = clip.notes.iter().filter(|n| !target.iter().any(|t| t.id == n.id)).copied().collect();
                 notes.extend(done.notes);
                 if !self.commit_notes(clip.id, notes, Some("Smart Quantize")) {

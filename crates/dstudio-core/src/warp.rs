@@ -356,6 +356,11 @@ impl Project {
         let rate = self.asset(clip.asset).map_or(48_000.0, |a| a.sample_rate);
         let w = &clip.warp;
         if !w.enabled {
+            if self.has_tempo_changes() {
+                let m = self.tempo_map();
+                let start = clip.start as f64;
+                return clip.source_offset as f64 + (m.seconds_at(start + ticks) - m.seconds_at(start)) * rate * w.varispeed();
+            }
             return clip.source_offset as f64 + ticks / PPQ as f64 * 60.0 / self.transport.bpm * rate * w.varispeed();
         }
         w.source_at(w.beat_at(clip.source_offset as f64, rate) + ticks / PPQ as f64 * w.speed, rate)
@@ -366,6 +371,12 @@ impl Project {
         let rate = self.asset(clip.asset).map_or(48_000.0, |a| a.sample_rate);
         let w = &clip.warp;
         if !w.enabled {
+            if self.has_tempo_changes() {
+                let m = self.tempo_map();
+                let start = clip.start as f64;
+                let seconds = (source - clip.source_offset as f64) / rate / w.varispeed();
+                return m.ticks_at(m.seconds_at(start) + seconds) - start;
+            }
             return (source - clip.source_offset as f64) / rate / w.varispeed() * self.transport.bpm / 60.0 * PPQ as f64;
         }
         (w.beat_at(source, rate) - w.beat_at(clip.source_offset as f64, rate)) / w.speed * PPQ as f64
@@ -383,6 +394,17 @@ impl Project {
     /// The warp map of a warped clip as (timeline frame, source frame) at
     /// `engine_rate`: the clip's ends plus every marker inside it.
     pub fn warp_map(&self, clip: &Clip, engine_rate: f64) -> Vec<(i64, f64)> {
+        self.warp_map_in(&self.tempo_map(), clip, engine_rate)
+    }
+
+    /// [Project::warp_map] with a tempo map built once by the caller. With tempo changes the
+    /// map also gets a point at each tempo change inside the clip and at every sixteenth note
+    /// inside a ramp, so the engine's straight lines between points put every beat on the frame
+    /// the tempo map gives it (and stay far within 1 ms in between).
+    pub fn warp_map_in(&self, map: &crate::tempo::TempoMap, clip: &Clip, engine_rate: f64) -> Vec<(i64, f64)> {
+        if !map.is_constant() {
+            return self.warp_map_changing(map, clip, engine_rate, None);
+        }
         let rate = self.asset(clip.asset).map_or(48_000.0, |a| a.sample_rate);
         let w = &clip.warp;
         let ratio = engine_rate / rate;
@@ -396,6 +418,69 @@ impl Project {
         let mut out: Vec<(i64, f64)> = Vec::with_capacity(sources.len());
         for s in sources {
             let p = (frame_of(w.beat_at(s, rate)), s * ratio);
+            if out.last().is_none_or(|q| p.0 > q.0 && p.1 > q.1) {
+                out.push(p);
+            }
+        }
+        if out.len() < 2 {
+            let (f, s) = out[0];
+            out.push((f + 1, s + 1.0));
+        }
+        out
+    }
+}
+
+impl Project {
+    /// The warp map a reversed warped clip plays on the engine's reversed copy of its asset
+    /// (`copy_frames` long, engine rate) when the song has tempo changes. Mirroring the forward
+    /// map in frames (as without changes) would move the tempo changes, so the clip is mirrored
+    /// in beats instead: timeline beat x of the clip plays original beat L - x, back to front.
+    pub fn reversed_warp_map_in(&self, map: &crate::tempo::TempoMap, clip: &Clip, engine_rate: f64, copy_frames: f64) -> Vec<(i64, f64)> {
+        self.warp_map_changing(map, clip, engine_rate, Some(copy_frames))
+    }
+
+    fn warp_map_changing(&self, map: &crate::tempo::TempoMap, clip: &Clip, engine_rate: f64, reversed: Option<f64>) -> Vec<(i64, f64)> {
+        let rate = self.asset(clip.asset).map_or(48_000.0, |a| a.sample_rate);
+        let w = &clip.warp;
+        let ratio = engine_rate / rate;
+        let first = w.beat_at(clip.source_offset as f64, rate);
+        let start = clip.start as f64;
+        // Forward: the clip tick a source frame plays at, and back.
+        let tick_of = |source: f64| start + (w.beat_at(source, rate) - first) / w.speed * PPQ as f64;
+        let source_of = |tick: f64| w.source_at(first + (tick - start) / PPQ as f64 * w.speed, rate);
+        let end_source = (clip.source_offset + clip.source_length) as f64;
+        let end = tick_of(end_source);
+        // Timeline tick <-> forward tick (the same for a forward clip), and engine source frames.
+        let flip = |t: f64| if reversed.is_some() { start + end - t } else { t };
+        let engine_source = |s: f64| match reversed {
+            Some(copy) => copy - s * ratio,
+            None => s * ratio,
+        };
+        // (timeline tick, engine source frame): the ends and the markers, then the tempo changes
+        // and every sixteenth inside a ramp, which are where the timeline bends.
+        let mut sources = vec![clip.source_offset as f64];
+        sources.extend(w.markers.iter().map(|m| m.source as f64).filter(|&s| s > clip.source_offset as f64 && s < end_source));
+        sources.push(end_source);
+        let mut pts: Vec<(f64, f64)> = sources.into_iter().map(|s| (flip(tick_of(s)), engine_source(s))).collect();
+        const STEP: i64 = PPQ / 4;
+        for g in map.segments() {
+            let (a, b) = (g.tick as f64, (g.end_tick as f64).min(end));
+            if a > start && a < end {
+                pts.push((a, engine_source(source_of(flip(a)))));
+            }
+            if g.ramps() && b > start {
+                let mut k = (a.max(start) / STEP as f64).floor() as i64 + 1;
+                while ((k * STEP) as f64) < b {
+                    let t = (k * STEP) as f64;
+                    pts.push((t, engine_source(source_of(flip(t)))));
+                    k += 1;
+                }
+            }
+        }
+        pts.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let mut out: Vec<(i64, f64)> = Vec::with_capacity(pts.len());
+        for (t, s) in pts {
+            let p = (map.frame_at(t, engine_rate).round() as i64, s);
             if out.last().is_none_or(|q| p.0 > q.0 && p.1 > q.1) {
                 out.push(p);
             }
