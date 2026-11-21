@@ -9,8 +9,8 @@ use crate::controller::Controller;
 use crate::settings::PAGES;
 
 /// A searchable setting: its page (index into [PAGES]), its label as shown, other words someone
-/// might type for it, and the one sentence its (i) shows on hover (roadmap G12; empty = the row
-/// has no (i), as on Shortcuts).
+/// might type for it, and the one sentence its (i) shows on hover (roadmap G12; empty on the
+/// pages without an (i): Shortcuts and Downloads).
 pub struct Entry {
     pub page: usize,
     pub label: &'static str,
@@ -133,7 +133,23 @@ pub const ENTRIES: &[Entry] = &[
     // Shortcuts
     e(4, "Preset", &["keys", "keyboard", "key commands", "keymap", "other app"], ""),
     e(4, "Reset to defaults", &["keys", "keyboard", "shortcuts", "restore"], ""),
+    // Privacy
+    e(
+        PRIVACY_PAGE,
+        "Send crash reports",
+        &["crash", "bug", "report", "diagnostics", "error"],
+        "After a crash, the next launch sends the app version, your OS and what failed, with nothing personal.",
+    ),
+    e(
+        PRIVACY_PAGE,
+        "Usage tracking",
+        &["analytics", "telemetry", "statistics", "data collection"],
+        "Device collects no usage data at all, so this stays off.",
+    ),
 ];
+
+/// Settings › Privacy (spec 018).
+pub const PRIVACY_PAGE: usize = 6;
 
 /// The (i) sentence for the setting labelled `label` ("" when it has none).
 pub fn help(label: &str) -> &'static str {
@@ -210,8 +226,8 @@ impl Controller {
 mod tests {
     use super::*;
 
-    const PAGE_COMPONENTS: [(&str, usize); 5] =
-        [("GeneralPage", 0), ("AudioPage", 1), ("MidiPage", 2), ("PluginsPage", 3), ("ShortcutsPage", 4)];
+    const PAGE_COMPONENTS: [(&str, usize); 6] =
+        [("GeneralPage", 0), ("AudioPage", 1), ("MidiPage", 2), ("PluginsPage", 3), ("ShortcutsPage", 4), ("PrivacyPage", PRIVACY_PAGE)];
 
     /// The source of `component <name>` in settings.slint.
     fn page_body(name: &str) -> &'static str {
@@ -231,6 +247,11 @@ mod tests {
         })
     }
 
+    /// Pages whose rows have an (i) with help (roadmap G12): General, Audio, MIDI, Plugins, Privacy.
+    fn page_has_help(page: usize) -> bool {
+        page <= 3 || page == PRIVACY_PAGE
+    }
+
     fn hits(q: &str) -> Vec<&'static str> {
         ENTRIES.iter().filter(|e| row_hit(q, e.label)).map(|e| e.label).collect()
     }
@@ -244,9 +265,12 @@ mod tests {
         assert!(hits("zzz").is_empty() && hits("").is_empty() && hits("   ").is_empty());
         assert!(page_matches(1, " AUDIO "), "the page name matches");
         assert_eq!(page_slots(""), (0..PAGES.len() as i32).collect::<Vec<_>>());
-        assert_eq!(page_slots("instr"), [-1, -1, 0, -1, -1, -1, -1, -1, -1]);
-        assert_eq!(page_slots("latency"), [-1, 0, -1, -1, -1, -1, -1, -1, -1]);
-        assert_eq!(page_slots("privacy").iter().filter(|&&s| s >= 0).count(), 1, "unavailable pages match by name");
+        assert_eq!(page_slots("instr"), [-1, -1, 0, -1, -1, -1, -1]);
+        assert_eq!(page_slots("latency"), [-1, 0, -1, -1, -1, -1, -1]);
+        assert_eq!(page_slots("downloads"), [-1, -1, -1, -1, -1, 0, -1], "unavailable pages match by name");
+        assert_eq!(page_slots("telemetry"), [-1, -1, -1, -1, -1, -1, 0]);
+        assert_eq!(PAGES[PRIVACY_PAGE], "Privacy");
+        assert!(!PAGES.contains(&"Account") && !PAGES.contains(&"Usage"), "hidden (roadmap Q3)");
         assert!(page_slots("zzz").iter().all(|&s| s < 0));
     }
 
@@ -270,13 +294,13 @@ mod tests {
         assert_eq!(found, want);
     }
 
-    /// Help on every setting (roadmap G12): every working setting on General, Audio, MIDI and
-    /// Plugins has one sentence, and every RowLabel there that isn't greyed shows one from the
+    /// Help on every setting (roadmap G12): every working setting on General, Audio, MIDI,
+    /// Plugins and Privacy has one sentence, and every RowLabel there that isn't greyed shows one from the
     /// table (`setting:` names it when the text shown has a count after it).
     #[test]
     fn every_working_row_has_one_sentence_of_help() {
         for e in ENTRIES {
-            if e.page <= 3 {
+            if page_has_help(e.page) {
                 let h = e.help;
                 assert!(
                     h.ends_with('.') && h.starts_with(char::is_uppercase) && !h[..h.len() - 1].contains(". ") && h.len() <= 120,
@@ -288,7 +312,7 @@ mod tests {
             }
         }
         let mut found: Vec<(usize, String)> = Vec::new();
-        for (name, page) in &PAGE_COMPONENTS[..4] {
+        for (name, page) in PAGE_COMPONENTS.iter().filter(|(_, p)| page_has_help(*p)) {
             let body = page_body(name);
             for part in body.split("RowLabel {").skip(1) {
                 let fields = &part[..part.find('}').unwrap()];
@@ -301,11 +325,13 @@ mod tests {
             }
             found.extend(general_switch_rows(body).map(|l| (*page, l.to_string())));
         }
-        let mut want: Vec<(usize, String)> = ENTRIES.iter().filter(|e| e.page <= 3).map(|e| (e.page, e.label.to_string())).collect();
+        let mut want: Vec<(usize, String)> =
+            ENTRIES.iter().filter(|e| page_has_help(e.page)).map(|e| (e.page, e.label.to_string())).collect();
         found.sort();
         want.sort();
         assert_eq!(found, want);
         assert_eq!(help("Buffer size"), ENTRIES.iter().find(|e| e.label == "Buffer size").unwrap().help);
         assert_eq!(help("No such setting"), "");
+        assert!(!include_str!("../ui/settings.slint").contains("License samples"), "hidden (roadmap Q3)");
     }
 }

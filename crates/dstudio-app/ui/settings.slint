@@ -1,7 +1,7 @@
 // Settings window as an in-app modal panel (see src/settings.rs for why), drawn at the
 // settings window rect: x 255, y 6.5, 960 pt wide (216.75 / 5.5 / 816 in 85 % units), running
-// off the bottom of the main window. Sidebar 187; the Audio, MIDI, Plugins and Shortcuts
-// pages are real, General is laid out with PLACEHOLDER controls, the rest say "Not available yet".
+// off the bottom of the main window. Sidebar 187; the General, Audio, MIDI, Plugins, Shortcuts
+// and Privacy pages are real, Downloads says "Not available yet".
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
 import { Studio, ChoiceItem, MidiInputRow, PluginRow, ShortcutKey, ShortcutRow } from "studio.slint";
@@ -162,24 +162,24 @@ component SearchHit inherits Rectangle {
 }
 
 // General page. Startup, Projects folder, Playhead on stop, Sections move clips and the three
-// plugin window switches work (prefs.general). Sample licensing and the Assistant section are
-// shown off and disabled: DStudio has no licensing, audio-listening assistant or voice input.
+// plugin window switches work (prefs.general). The Assistant section is shown off and disabled:
+// DStudio has no audio-listening assistant or voice input. (No sample licensing row: Device has
+// no online service, roadmap Q3.)
 component GeneralPage inherits Rectangle {
     property <length> sw-x: root.width - 20.5px - 22.5px;
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "General"; font-size: 17.25px; font-weight: 700; }
     for s in [
-        { t: "Startup", y: 71.3px }, { t: "Projects", y: 145.4px }, { t: "Transport", y: 205.4px }, { t: "Sample licensing", y: 265.4px },
-        { t: "Timeline annotations", y: 319.8px }, { t: "Plugin windows", y: 374.3px }, { t: "Assistant", y: 469.2px },
+        { t: "Startup", y: 71.3px }, { t: "Projects", y: 145.4px }, { t: "Transport", y: 205.4px },
+        { t: "Timeline annotations", y: 265.3px }, { t: "Plugin windows", y: 319.8px }, { t: "Assistant", y: 414.7px },
     ]: FieldLabel { x: 20.5px; y: s.y; text: s.t; }
-    for y in [135.3px, 195.2px, 255.2px, 309.7px, 364.2px, 458.4px]: Rectangle { x: 20.5px; y: y; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
+    for y in [135.3px, 195.2px, 255.2px, 309.7px, 403.9px]: Rectangle { x: 20.5px; y: y; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
     // k: index into Studio.general-on, -1 = not available in DStudio (off, disabled).
     for r in [
         { t: "Always load last session", y: 88.4px, k: 0 }, { t: "Check for updates at launch", y: 108px, k: 5 },
-        { t: "License samples when you use them", y: 282.5px, k: -1 },
-        { t: "Sections move clips", y: 337px, k: 4 }, { t: "Auto-show third-party effect windows", y: 391.4px, k: 1 },
-        { t: "Auto-show built-in effect windows", y: 411px, k: 2 }, { t: "Keep plugin windows on top", y: 431.2px, k: 3 },
-        { t: "Let the assistant listen to audio", y: 486.3px, k: -1 }, { t: "Hold talk key to record", y: 554.2px, k: -1 },
-        { t: "Auto-send", y: 574.4px, k: -1 },
+        { t: "Sections move clips", y: 282.5px, k: 4 }, { t: "Auto-show third-party effect windows", y: 336.9px, k: 1 },
+        { t: "Auto-show built-in effect windows", y: 356.5px, k: 2 }, { t: "Keep plugin windows on top", y: 376.7px, k: 3 },
+        { t: "Let the assistant listen to audio", y: 431.8px, k: -1 }, { t: "Hold talk key to record", y: 499.7px, k: -1 },
+        { t: "Auto-send", y: 519.9px, k: -1 },
     ]: Rectangle {
         x: 0; y: r.y; width: root.width; height: 14px;
         SearchHit { y: -5px; width: parent.width - 24px; height: 24px; label: r.t; enabled: r.k >= 0; }
@@ -216,17 +216,17 @@ component GeneralPage inherits Rectangle {
             TouchArea { clicked => { Studio.general-stop-mode(i == 1); } }
         }
     }
-    Icon { x: 20.5px + 1px; y: 510px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
-    FieldLabel { x: 20.5px + 17px; y: 509px; text: "Voice"; }
-    RowLabel { x: 20.5px; y: 531.6px; text: "Talk key"; dim: true; }
+    Icon { x: 20.5px + 1px; y: 455.5px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
+    FieldLabel { x: 20.5px + 17px; y: 454.5px; text: "Voice"; }
+    RowLabel { x: 20.5px; y: 477.1px; text: "Talk key"; dim: true; }
     for k[i] in ["⌃", "⌥"]: Rectangle {
-        x: root.width - 20.5px - 42.75px + i * 21.75px; y: 530.1px; width: 21px; height: 17px; border-radius: 6px; background: #292a2f; opacity: 0.4;
+        x: root.width - 20.5px - 42.75px + i * 21.75px; y: 475.6px; width: 21px; height: 17px; border-radius: 6px; background: #292a2f; opacity: 0.4;
         Text { text: k; color: #e5e5e8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
     }
-    RowLabel { x: 20.5px; y: 597px; text: "Input"; dim: true; }
-    SmallSelect { x: root.width - 20.5px - 117.5px; y: 595.5px; text: "Input 1"; opacity: 0.4; }
-    RowLabel { x: 20.5px; y: 622.7px; text: "Language"; dim: true; }
-    SmallSelect { x: root.width - 20.5px - 117.5px; y: 621.2px; text: "English"; opacity: 0.4; }
+    RowLabel { x: 20.5px; y: 542.5px; text: "Input"; dim: true; }
+    SmallSelect { x: root.width - 20.5px - 117.5px; y: 541px; text: "Input 1"; opacity: 0.4; }
+    RowLabel { x: 20.5px; y: 568.2px; text: "Language"; dim: true; }
+    SmallSelect { x: root.width - 20.5px - 117.5px; y: 566.7px; text: "English"; opacity: 0.4; }
 }
 
 // ---------------------------------------------------------------- Shortcuts page
@@ -593,6 +593,28 @@ component PluginsPage inherits Rectangle {
     }
 }
 
+// Settings › Privacy (spec 018, roadmap G14). Send crash reports works (src/crash.rs, saved in
+// the preferences); Usage tracking stays off and disabled, because Device collects nothing.
+component PrivacyPage inherits Rectangle {
+    property <length> sw-x: root.width - 20.5px - 22.5px;
+    FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Privacy"; font-size: 17.25px; font-weight: 700; }
+    SearchHit { y: 66px; width: root.width - 24px; height: 24px; label: "Send crash reports"; }
+    RowLabel { x: 20.5px; y: 71px; text: "Send crash reports"; }
+    Switch {
+        x: root.sw-x; y: 73px; on: Studio.privacy-crash-reports; label: "Send crash reports";
+        toggled => { Studio.privacy-toggle-crash-reports(); }
+    }
+    Rectangle { x: 20.5px; y: 100px; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
+    SearchHit { y: 110px; width: root.width - 24px; height: 42px; label: "Usage tracking"; }
+    RowLabel { x: 20.5px; y: 115px; text: "Usage tracking"; }
+    Switch { x: root.sw-x; y: 117px; on: false; enabled: false; label: "Usage tracking"; }
+    Text {
+        x: 20.5px; y: 132px; width: root.width - 41px - 40px; height: 14px;
+        text: "Device doesn't collect any usage data, so there is nothing to turn on."; color: Tokens.text-tertiary;
+        font-size: 9.5px; vertical-alignment: center; overflow: elide;
+    }
+}
+
 export component SettingsPanel inherits Rectangle {
     border-radius: 10px;
     background: Tokens.bg-panel;
@@ -649,7 +671,7 @@ export component SettingsPanel inherits Rectangle {
         Icon {
             x: 7px; y: (parent.height - 13px) / 2; width: 13px; height: 13px; ink: Studio.settings-page == i ? #e5e5e8 : #bdbec0; stroke-width: 1.15px;
             d: i == 0 ? Icons.gear : i == 1 ? Icons.speaker : i == 2 ? Icons.midi-port : i == 3 ? Icons.plugin : i == 4 ? Icons.keyboard
-                : i == 5 ? Icons.download : i == 6 ? Icons.person : i == 7 ? Icons.gauge : Icons.shield;
+                : i == 5 ? Icons.download : Icons.shield;
         }
         Text { x: 29px; text: name; color: Studio.settings-page == i ? #e5e5e8 : #bdbec0; font-size: 10px; font-weight: 500; vertical-alignment: center; }
         row-ta := TouchArea { clicked => { Studio.settings-page-select(i); } }
@@ -660,7 +682,8 @@ export component SettingsPanel inherits Rectangle {
     if Studio.settings-page == 0: GeneralPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 2: MidiPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 4: ShortcutsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
-    if Studio.settings-page > 4: Rectangle {
+    if Studio.settings-page == 6: PrivacyPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
+    if Studio.settings-page == 5: Rectangle {
         x: 187px; y: 0; width: root.width - 187px; height: root.height;
         Text { x: 20.5px; y: 33px; height: 24px; text: Studio.settings-pages[Studio.settings-page]; color: #ececee; font-size: 17.25px; font-weight: 700; vertical-alignment: center; }
         // PLACEHOLDER pages
