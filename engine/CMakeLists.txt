@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(dstudio_engine VERSION 0.2.0 LANGUAGES C CXX)
+project(dstudio_engine VERSION 0.3.0 LANGUAGES C CXX)
 
 # With a compiler launcher (CI sets CMAKE_<LANG>_COMPILER_LAUNCHER=ccache),
 # MSVC debug info goes into each object (/Z7) rather than a shared .pdb
