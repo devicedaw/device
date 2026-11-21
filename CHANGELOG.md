@@ -11,6 +11,14 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-21
+
+### Fixed
+
+- AI apps connected to Device work more reliably. Asking for the built-in effects and instruments returns a short list
+  first and the full settings only for the ones the app asks about, instead of one very large answer, and notes the
+  app adds without a number are no longer refused as duplicates.
+
 ## [0.3.0] - 2026-11-21
 
 ### Added
