@@ -51,6 +51,9 @@ Details in engine/README.md, "Input, monitoring and recording".
 - **Latency:** `start_frame = position − (input + output latency)`, each side = device latency +
   safety offset + stream latency (no IO-buffer term: an acoustic loopback test on a MacBook Air showed the buffer term over-compensated by ~18.5 ms; without it recordings land +2.7..6.2 ms late, consistent with speaker→mic travel and onset detection; see crates/dstudio-engine/tests/real_loopback.rs); 0 for injected input. `DeviceStatus` reports the two
   sides separately.
+- **Recording offset (spec 020, 2026-11-21):** a manual correction for interfaces that report their latency wrongly,
+  `se_record_set_offset` (engine frames, positive = earlier), subtracted from `start_frame` with the latency and L.
+  Kept in the app preferences per input device id (ms, −100..+100), not in projects. Audio takes only.
 - **Additive Rust API:** `Engine::recording_stats()` (overruns, dropped frames, write errors, takes),
   `Engine::input_error()`, `DeviceConfig::DEFAULT_INPUT`.
 - **Not verified on hardware:** the real-input path (prompt) — `DSTUDIO_TEST_REAL_INPUT=1 record_check`.

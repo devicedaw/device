@@ -90,7 +90,8 @@ wgpu.
   WAV. Renders run in the background while you keep working, and each is one undo step. Export MIDI saves a MIDI clip as
   a standard MIDI file, and Send to Sampler puts an audio clip on a new track, played by a Sampler.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
-  compensation is measured with an acoustic loopback test, not guessed. Right-click the record button for a one- or
+  compensation is measured with an acoustic loopback test, not guessed, and an interface that reports its latency
+  wrongly gets a recording offset of its own in Settings › Audio. Right-click the record button for a one- or
   two-bar count-in: the click plays from that far back and the take starts where you pressed record. Record with the
   loop on and every pass becomes a take of one clip: pick one from the clip menu's Takes, or split the clip and pick
   a take for each part to comp.
@@ -241,7 +242,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Built-in instruments | ✅ | |
 | Built-in effects | ✅ | More devices are planned |
 | Plugin hosting | ✅ | Linux editor windows use X11 (XWayland on Wayland desktops) |
-| Recording | 🚧 | Per-device manual recording offset |
+| Recording | ✅ | |
 | Mixer | ✅ | |
 | Automation | ✅ | |
 | Delay compensation | ✅ | |

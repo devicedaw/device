@@ -1028,6 +1028,22 @@ int32_t se_input_set_muted(se_engine* engine, uint8_t muted) {
     return SE_OK;
 }
 
+int32_t se_record_set_offset(se_engine* engine, int32_t frames) {
+    SE_REQUIRE_ENGINE(engine);
+    const double limit = engine->impl->sample_rate();
+    if (static_cast<double>(frames) > limit || static_cast<double>(frames) < -limit)
+        return fail(SE_ERR_INVALID_ARG, "recording offset beyond one second");
+    engine->impl->set_record_offset(frames);
+    return SE_OK;
+}
+
+int32_t se_record_get_offset(se_engine* engine, int32_t* out_frames) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out_frames == nullptr) return fail(SE_ERR_INVALID_ARG, "out_frames is NULL");
+    *out_frames = static_cast<int32_t>(engine->impl->record_offset());
+    return SE_OK;
+}
+
 int32_t se_record_start(se_engine* engine, const char* utf8_dir) {
     SE_REQUIRE_ENGINE(engine);
     if (utf8_dir == nullptr || utf8_dir[0] == '\0') return fail(SE_ERR_INVALID_ARG, "directory is NULL or empty");

@@ -1035,7 +1035,13 @@ input (`se_render_offline_with_input`) has device compensation 0. With
 plugin delay compensation the performer hears everything `L` later, so
 takes are additionally placed `L` earlier: `start_frame = position − (in +
 out) − L`; a change of `L` while recording ends the takes like a seek (see
-[Plugin delay compensation](#plugin-delay-compensation)).
+[Plugin delay compensation](#plugin-delay-compensation)). For an interface
+that reports its latency wrongly, `se_record_set_offset` adds a manual
+offset in engine frames (spec 020; the app's Settings › Audio › Recording
+offset, kept per input device): `start_frame = position − (in + out) − L −
+offset`, positive placing takes earlier. It applies to injected input too,
+not to MIDI capture, and a change while recording ends the takes like a
+change of `L`.
 
 **Live view.** `se_record_state` lists every take (track, start, frames as
 written by the writer, so ≤ ~5 ms behind); `se_record_peaks` gives min/max

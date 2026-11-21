@@ -1890,7 +1890,7 @@ export component AppWindow inherits Window {
         if Studio.settings-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { clicked => { Studio.close-settings(); fs.focus(); } }
-            SettingsPanel { x: root.settings-x; y: root.settings-y; width: root.settings-w; height: root.height - 5.5px + 12px; }
+            SettingsPanel { x: root.settings-x; y: root.settings-y; width: root.settings-w; height: root.height - 5.5px + 12px; focus-main => { fs.focus(); } }
         }
         // Export dialog (centred) and the unsaved-changes prompt (over the timeline);
         // both are modal: clicks outside them are swallowed.

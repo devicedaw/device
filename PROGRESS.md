@@ -921,3 +921,14 @@ self-test section `smart_fill_steps`.
 
 - Native benchmark timing runs on eligible main pushes and on demand. The Callgrind PR gate stays required.
 - The full Windows WARP test runs nightly or on demand. Main pushes still build and screenshot the Windows app.
+### 2026-11-21: recording offset per audio device
+
+Spec 020 (roadmap G11). Settings › Audio has a Recording offset row: milliseconds for the selected input device,
+−100..+100 in 0.1 ms steps (− and + move it by 0.5 ms, or type a value), positive moving takes earlier. It is kept per
+input device id in the preferences (`AudioPrefs::recording_offsets`), restored at launch and when the input device
+changes, and greyed with no input device. The engine adds it to the recording compensation
+(`se_record_set_offset`, engine frames, ±1 s): `start_frame = position − (in + out) − L − offset`, for audio takes only
+(MIDI capture does not use the input latency). Engine tests check a take moves by exactly the offset (216, −4800 and
+0 frames, the samples unchanged), that a change while recording starts a new take, and that it adds to a fake
+device's reported latency; a Rust test does the same through the wrapper. Review state
+`review-settings-recording-offset`; self-test section `recording_offset_steps`. Searchable in Settings.

@@ -81,7 +81,7 @@ target behaviour.
   into a text field (Return saves, Escape cancels). For a saved project it renames the project file and its
   folder on disk; for an unsaved one it sets the name used by the first save. Undo is not needed (it is a file
   operation), but a failed rename must say why and leave the name as it was.
-- [ ] **G11. Recording offset per audio device.** Settings › Audio needs a manual recording offset (ms, per input
+- [x] **G11. Recording offset per audio device.** (#151, spec 020). Settings › Audio needs a manual recording offset (ms, per input
   device, saved with the device's preferences) for interfaces that report latency wrongly. The README lists it
   as missing.
 

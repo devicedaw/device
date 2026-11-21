@@ -65,6 +65,9 @@ public:
     int32_t device_configure(const AudioDevice::Config& setup, std::string& err);
     void device_status(se_device_status* out);
     void set_input_muted(bool muted) noexcept { input_muted_.store(muted, std::memory_order_relaxed); }
+    // Manual recording offset (se_record_set_offset), engine frames; positive = takes earlier.
+    void set_record_offset(int64_t frames) noexcept { record_offset_.store(frames, std::memory_order_relaxed); }
+    int64_t record_offset() const noexcept { return record_offset_.load(std::memory_order_relaxed); }
     // Test hook: replaces the platform device (takes effect when no device
     // object exists yet, i.e. before the first start/configure).
     void set_device_factory(DeviceFactory f);
@@ -297,6 +300,7 @@ private:
     std::atomic<int64_t> device_out_latency_{0}; // engine frames, output side (audible position)
     std::atomic<bool> device_input_open_{false};
     std::atomic<bool> input_muted_{false};
+    std::atomic<int64_t> record_offset_{0}; // engine frames, added to the recording compensation
     std::atomic<int> rt_owner_{kOwnerNone};
 
     // -- transport: commands in, state out
