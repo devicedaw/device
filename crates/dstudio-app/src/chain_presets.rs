@@ -120,7 +120,11 @@ fn read_dir(dir: &std::path::Path) -> Vec<ChainPreset> {
 }
 
 /// Menu rows of the chains in `folder`; each row runs `pick`.
-fn chain_rows(lib: &ChainLib, folder: &str, pick: impl Fn(ChainRef) -> MenuPick) -> Vec<(String, String, Option<MenuPick>, bool)> {
+pub(crate) fn chain_rows(
+    lib: &ChainLib,
+    folder: &str,
+    pick: impl Fn(ChainRef) -> MenuPick,
+) -> Vec<(String, String, Option<MenuPick>, bool)> {
     lib.in_folder(folder).into_iter().map(|r| (r.name.clone(), String::new(), Some(pick(r)), false)).collect()
 }
 

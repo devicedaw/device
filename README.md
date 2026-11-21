@@ -102,6 +102,8 @@ wgpu.
   Settings › MIDI › Default instrument picks what a new instrument track (⇧⌘T) plays: any of them, or an
   instrument plugin.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
+- **Device chain.** A level meter after every device shows what it puts out, and the + between two devices
+  inserts another one right there, from your recent effects or any category.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
   macros. Save a chain to reuse it in any project, or start from one of 27 ready-made chains for vocals, drums, bass,
   guitar, keys, pads, FX and mix bus.

@@ -1159,6 +1159,31 @@ component BottomPanel inherits Panel {
             if card.builtin: BuiltinCard { x: 0; y: 0; card: card; }
         }
         AddDeviceCard { x: Studio.add-device-x - 255px; y: 34.5px - 27px; }
+        // Between the cards: the output meter of the device on the left (lower part of the gap)
+        // and, before an effect, the "+" that opens the insert menu for that slot.
+        for g[i] in Studio.chain-gaps: Rectangle {
+            x: g.x - 255px - 8px; y: 34px - 27px; width: 16px; height: 265px;
+            if g.meter: Rectangle {
+                x: 5.5px; y: 158px; width: 5px; height: 106px;
+                for lvl[k] in [g.l, g.r]: Rectangle {
+                    x: k * 3px; width: 2px; border-radius: 1px; background: #141417;
+                    Rectangle {
+                        y: parent.height * (1 - lvl); height: parent.height * lvl; border-radius: 1px;
+                        background: @linear-gradient(0deg, Tokens.meter-green 0%, Tokens.meter-green 70%, #e3c53a 88%, #e5484d 100%);
+                        visible: lvl > 0.001;
+                    }
+                }
+            }
+            if g.plus: Rectangle {
+                y: (265px - 16px) / 2; height: 16px;
+                accessible-role: button; accessible-label: "Insert device";
+                Icon { x: 2.5px; y: 2.5px; width: 11px; height: 11px; d: Icons.plus; ink: plus-ta.has-hover ? #ffffff : #c5c5c8; stroke-width: 1.2px; }
+                plus-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { Studio.chain-insert-menu(i, self.absolute-position.x + 8px, (self.absolute-position.y - Studio.menu-dy) + 8px); }
+                }
+            }
+        }
         if Studio.chain-marker-visible: Rectangle { x: Studio.chain-marker-x - 255px - 1px; y: 34px - 27px; width: 2px; height: 265px; border-radius: 1px; background: Tokens.accent; }
     }
 }

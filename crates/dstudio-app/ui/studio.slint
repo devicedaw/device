@@ -111,6 +111,10 @@ export struct ModCard {
 }
 // A chain head's frame around its member cards (bottom-panel relative x).
 export struct ChainFrame { x: length, w: length, armed: bool, color: color, empty-x: length, empty: bool, head: int }
+// Gap between two cards of the device chain (x: its centre, bottom-panel relative, scrolled):
+// the output meter of the device on its left (l / r: 0 silent .. 1 at 0 dB) and the "+" that
+// inserts an effect at that slot.
+export struct ChainGap { x: length, meter: bool, plus: bool, l: float, r: float }
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill (param -1: sidechain, else a
 // choice menu), 3 value box, 4 flexible gap, 5 latch (On/Off parameter; label shows the state,
 // selected 0 / 1), 6 action button, 7 view switch / tabs (choices = view names, selected = shown view; UI state). dim: a menu pill shown at 60% until hovered
@@ -1200,6 +1204,8 @@ export global Studio {
     callback macro-select(int, int);                         // chain head: open / toggle a macro's side panel
     callback macro-rename(int, int, string);
     callback chain-add-effect(int, length, length);          // empty chain "Add effect"
+    in property <[ChainGap]> chain-gaps;
+    callback chain-insert-menu(int, length, length);         // "+" between cards: gap index, window x, y for the menu
     callback card-add-menu(int, length, length);             // plugin card "+ Add": parameter list (knobs use panel-*)
     callback card-page(int, int);                            // pager -1 / +1
     // Sampler-family panels (src/sampler_panel.rs).
