@@ -18541,6 +18541,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(header_monitor_steps());
     all.extend(api_key_steps());
     all.extend(live_convert_steps());
+    all.extend(smart_fill_steps());
     all.extend(ask_clip_steps());
     all.extend(assistant_full_steps());
     all.extend(rename_project_steps());
@@ -19003,5 +19004,120 @@ fn live_convert_steps() -> Vec<Step> {
                 }
             }),
         ),
+    ]
+}
+
+/// Smart Fill (spec 021): the mode on, a range dragged on the instrument track, the box, a Create
+/// from the library as one undo step, undo, Escape.
+fn smart_fill_steps() -> Vec<Step> {
+    use Step::*;
+    thread_local! {
+        static START: Cell<usize> = const { Cell::new(0) };
+        static CLIPS: Cell<usize> = const { Cell::new(0) };
+    }
+    fn inst(c: &Controller) -> Option<usize> {
+        c.project().tracks.iter().position(|t| t.kind == TrackKind::Instrument)
+    }
+    // Drag over bars 21 to 23 (empty in every earlier section) on the instrument track, in lane coordinates.
+    fn drag(c: &mut Controller) {
+        let Some(i) = inst(c) else { return };
+        let bar = c.project().ticks_per_bar() as f64 / dstudio_core::PPQ as f64;
+        let y = c.view.track_top(i) + c.view.pitch(i) / 2.0;
+        let (x0, x1) = (c.view.x_of(20.0 * bar), c.view.x_of(22.0 * bar));
+        c.smart_pointer(0, x0, y);
+        c.smart_pointer(1, (x0 + x1) / 2.0, y);
+        c.smart_pointer(2, x1, y);
+    }
+    vec![
+        DoC(
+            "smart fill: click the pill, drag over bars 21 to 23 on the instrument track",
+            Box::new(|a, ctl| {
+                key(a, Key::Escape, false, false);
+                let mut c = ctl.borrow_mut();
+                START.set(c.doc.history_labels().len());
+                if let Some(i) = inst(&c) {
+                    CLIPS.set(c.project().tracks[i].midi_clips.len());
+                }
+                c.smart_fill_toggle();
+                drag(&mut c);
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "smart fill: the pill is lit and the box is open on Create with the track's name; nothing changed",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let name = inst(c).map(|i| c.project().tracks[i].name.clone()).unwrap_or_default();
+                (s.get_smart_on()
+                    && s.get_smart_open()
+                    && s.get_smart_tab() == 0
+                    && s.get_smart_track() == name.as_str()
+                    && c.doc.history_labels().len() == START.get())
+                .then_some(())
+                .ok_or(format!(
+                    "on {} open {} tab {} track {}",
+                    s.get_smart_on(),
+                    s.get_smart_open(),
+                    s.get_smart_tab(),
+                    s.get_smart_track()
+                ))
+            }),
+        ),
+        DoC(
+            "smart fill: Type Bass, then Create with an empty field",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.smart_pick_type(2);
+                c.smart_create();
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "smart fill: one 'Smart Fill' undo step adds a Bass clip spanning bars 21 to 23 exactly; the box closed",
+            Box::new(|c, a| {
+                let i = inst(c).ok_or("no instrument track")?;
+                let t = &c.project().tracks[i];
+                let tpb = c.project().ticks_per_bar();
+                let added = t.midi_clips.len() == CLIPS.get() + 1;
+                let clip =
+                    t.midi_clips.iter().find(|m| m.start == 20 * tpb).ok_or(format!("no clip at bar 21; {} clips", t.midi_clips.len()))?;
+                (added
+                    && clip.length == 2 * tpb
+                    && !clip.notes.is_empty()
+                    && clip.composer.as_ref().is_some_and(|k| k.part == dstudio_core::library::PartType::Bass)
+                    && c.doc.undo_label() == Some("Smart Fill")
+                    && c.doc.history_labels().len() == START.get() + 1
+                    && !a.global::<Studio>().get_smart_open())
+                .then_some(())
+                .ok_or(format!("len {} notes {} last {:?}", clip.length, clip.notes.len(), c.doc.undo_label()))
+            }),
+        ),
+        Do("smart fill: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check(
+            "smart fill: undo removes the clip",
+            Box::new(|c, _| {
+                let n = inst(c).map_or(0, |i| c.project().tracks[i].midi_clips.len());
+                (n == CLIPS.get()).then_some(()).ok_or(format!("{n} clips"))
+            }),
+        ),
+        DoC(
+            "smart fill: drag again, then Escape",
+            Box::new(|a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    drag(&mut c);
+                    c.update_ui(a);
+                }
+                key(a, Key::Escape, false, false);
+            }),
+        ),
+        Check(
+            "smart fill: Escape closes the box and keeps the mode on",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                (!s.get_smart_open() && c.smart.on).then_some(()).ok_or(format!("open {}", s.get_smart_open()))
+            }),
+        ),
+        DoC("smart fill: the pill again turns the mode off", Box::new(|_, ctl| ctl.borrow_mut().smart_fill_toggle())),
     ]
 }
