@@ -836,3 +836,15 @@ already plays the Synth, the sound loads into it as one `SetDeviceParams` step. 
 adds the plain Synth. A search lists the sounds whose name matches, inside their category. Review state
 `review-instrument-sounds`; unit test `synth_folder_opens_into_categories_and_sounds`; self-test step "synth: a
 browser sound loads into the track's Synth". Clicking a sound to preview it is G40.
+
+### 2026-11-21: The assistant against the real API
+
+`assistant_provider::live_api` (ignored; needs `DSTUDIO_TEST_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`) sends five
+real prompts through provider → `plan` → `commit` on a fresh project each and checks the result: a Bass track with
+a bassline, a reverb at 45 % mix, a compressor at 6:1, tempo and volume, and a Point mode question that must not
+edit. Its first run found two ways a good reply was thrown away: a CSS colour (`"#3a7bd5"`) where a palette index
+belongs, and a highlight of a track created in the same turn. `parse_turn` now turns a non-numeric `color` into 0,
+the schema lists the palette and the state shows each track's colour, and `plan` checks highlights after the dry
+run (core test `a_real_reply_that_colours_and_points_at_a_new_track_is_accepted`). The provider's HTTPS client
+trusts the system's certificates (ureq `platform-verifier`). The second run passed: 28.5 s for the five prompts,
+about 21 s of it the bassline.
