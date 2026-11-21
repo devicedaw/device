@@ -817,3 +817,12 @@ opens the release page. The request carries only `User-Agent: Device/<version>` 
 install from the draft (download, checksum, swap and restart) is left for a follow-up that runs it against a real
 release on each platform. App side: `src/updates.rs`; review states `review-update-available`,
 `review-update-dialog`; self-test section `updates_steps`.
+### 2026-11-21: Synth factory library
+
+The Synth has 100 factory sounds (12 before): 88 new ones written for Device take the place of the numbered
+placeholders 13 to 100 in the preset choice list, so every saved index keeps its meaning (`synth_v2::PRESETS`,
+`FACTORY`). `synth_v2::CATEGORIES` sorts them into ten categories, which the Synth's preset list and the device
+header's preset menu show as headings; the header arrows step through all 100. The engine test
+`every_factory_preset_renders_a_sane_c4` now lists every sound that is silent, clips or goes non-finite, instead of
+stopping at the first. Review state `review-synth-presets`.
+

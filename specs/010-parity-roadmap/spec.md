@@ -170,7 +170,7 @@ next to the target on the same window size.
 
 ## P2: content and polish
 
-- [ ] **G25. Synth factory library** [devices]. The Synth has 12 named sounds and numbered placeholders
+- [x] **G25. Synth factory library** [devices] (#140; the browser's category folders come with G35). The Synth has 12 named sounds and numbered placeholders
   (`dstudio-core/src/builtin/synth_v2/mod.rs`, `PRESETS`). The browser's Devices › Instruments › Synth folder
   must hold about 100 original sounds in categories (Bass, Keys, Pluck, Lead, Pad, Brass, and the rest), each
   folder with its count, and the device header's preset arrows step through them.

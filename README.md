@@ -159,7 +159,8 @@ De-Noiser, whose window draws the card's graph at full size over a dB ladder, Pi
 interval against an A4 reference with the formant strip, Grains, whose window draws the buffer with its pitch and time
 axes over two cards of controls, Pitch Corrector, whose window draws the correction trace over labelled cent rules, and Shaper, whose window draws
 its lane tabs and curve editor across the display, and LFO, whose window draws two cycles of its wave across the
-window. Every effect has its window; the instruments and the Rack keep everything in their card.
+window. Every effect has its window; the instruments and the Rack keep everything in their card. The Synth comes with
+100 factory sounds in ten categories (bass, keys, plucks, leads, pads, brass, strings, bells, arps and textures).
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |
