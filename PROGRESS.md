@@ -933,6 +933,20 @@ changes, and greyed with no input device. The engine adds it to the recording co
 device's reported latency; a Rust test does the same through the wrapper. Review state
 `review-settings-recording-offset`; self-test section `recording_offset_steps`. Searchable in Settings.
 
+### 2026-11-21: AI apps can control Device (MCP)
+
+Spec 023. Settings › General › Let AI apps control Device (off by default) starts a listener on 127.0.0.1 and writes
+its port and a fresh secret to `mcp.json` next to the preferences file (0600; `DSTUDIO_MCP_FILE` overrides it). Copy
+setup copies a config snippet that makes the AI app start `device-studio mcp`, a windowless relay that speaks MCP
+over stdio and forwards tool calls to the app. Tools: `get_project`, `get_builtin_devices`, `apply_actions` (the
+assistant's action schema, checked by `assistant::plan` and committed as one **AI App Edit** undo step), `undo`,
+`redo` and `transport`. Calls run on the UI thread from `poll_jobs`; the first call from each app opens an
+"Allow <app>?" prompt and Allow is kept in preferences. Edits are refused while recording. Code: `mcp.rs`; unit tests
+cover the relay, the secret check and the discovery file. A scripted MCP client against the app under Xvfb added a
+track with an 8-note bassline, volume, tempo and a Reverb, had a bad batch and a malformed action refused with nothing
+changed, and undid and redid the edit as one step. It found that `poll_jobs` only ran while a background job was
+pending, so AI app calls waited forever; the poll timer now also runs while the server is on.
+
 ### 2026-11-21: 85 factory chains
 
 The factory chains grow from 27 to 85, ten or eleven in each of the eight folders, all built from Device's own

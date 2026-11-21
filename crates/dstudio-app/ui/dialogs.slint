@@ -361,6 +361,25 @@ component FormField inherits Rectangle {
     }
 }
 
+// "Allow <app> to change your projects?" the first time an AI app calls Device over MCP
+// (spec 023, src/mcp.rs). The same alert modal as Change project key; Allow is primary.
+export component McpAskModal inherits Rectangle {
+    width: 340px; height: 132.6px;
+    border-radius: 20.4px; background: DialogTokens.surface;
+    border-width: 0.45px; border-color: #ffffff22;
+    drop-shadow-blur: 21px; drop-shadow-offset-y: 6.8px; drop-shadow-color: #00000080;
+    accessible-role: groupbox; accessible-label: "Allow " + Studio.mcp-ask-app + "?";
+    TouchArea { }
+    Text { x: 17px; y: 17px; width: root.width - 34px; height: 13.6px; text: "Allow " + Studio.mcp-ask-app + "?"; color: #ffffff; font-size: 13.6px; font-weight: 700; letter-spacing: -0.54px; vertical-alignment: center; overflow: elide; }
+    Text {
+        x: 17px; y: 40.8px; width: root.width - 34px; height: 30.6px; wrap: word-wrap;
+        text: Studio.mcp-ask-app + " wants to read and change your projects in Device. Every change it makes can be undone.";
+        color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: top;
+    }
+    allow := PillButton { x: root.width - 17px - self.width; y: root.height - 17px - 27.2px; width: self.preferred-width; height: 27.2px; text: "Allow"; primary: true; clicked => { Studio.mcp-answer(true); } }
+    PillButton { x: allow.x - 6.8px - self.width; y: allow.y; width: self.preferred-width; height: 27.2px; text: "Don’t Allow"; clicked => { Studio.mcp-answer(false); } }
+}
+
 // "Report a bug" / "Share your feedback" (top bar). The alert-modal look (24 pt corners,
 // 20 pt padding, 16 pt title, 12 pt body, 32 pt pill buttons). System info is opt-in per
 // report and shown exactly as it will be sent.

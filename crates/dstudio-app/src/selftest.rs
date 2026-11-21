@@ -11463,7 +11463,7 @@ fn general_settings_steps() -> Vec<Step> {
                 let s = a.global::<Studio>();
                 let on: Vec<bool> = s.get_general_on().iter().collect();
                 (s.get_settings_page() == 0
-                    && on == [false, true, false, true, false, true]
+                    && on == [false, true, false, true, false, true, false]
                     && !s.get_general_stop_in_place()
                     && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
                 .then_some(())
@@ -14122,7 +14122,7 @@ fn settings_help_steps() -> Vec<Step> {
         ),
         Do("settings help: open General", Box::new(|a| a.global::<Studio>().invoke_settings_page_select(0))),
         Check("settings help: changing page hides the tip", Box::new(move |_, a| tip(a).is_empty().then_some(()).ok_or(tip(a)))),
-        Do("settings help: hover Talk key's (i) (greyed)", Box::new(|a| hover_settings_info(a, 477.1))),
+        Do("settings help: hover Talk key's (i) (greyed)", Box::new(|a| hover_settings_info(a, 516.3))),
         Check(
             "settings help: a greyed row says it isn't available",
             Box::new(move |_, a| (tip(a) == "Not available in Device.").then_some(()).ok_or(tip(a))),
