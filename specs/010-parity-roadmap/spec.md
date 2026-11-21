@@ -97,7 +97,7 @@ target behaviour.
 - [x] **G14. Settings › Privacy page.** (#150, spec 018). Today "Not available yet". It must hold "Send crash reports" (on by
   default; sends a crash report through the same service as Report a bug, with nothing personal) and "Usage
   tracking" (off; Device collects nothing, so the row explains that and stays off), each with help text.
-- [ ] **G15. Settings › Downloads page.** Today "Not available yet". It must list optional downloadable content
+- [x] **G15. Settings › Downloads page.** (#155). Today "Not available yet". It must list optional downloadable content
   (the factory sound library for the multi-sample instrument in G27, when it exists) with its version and size,
   and a Download / Re-download button with progress. Until there is downloadable content, the page says so.
 - [x] **G16. Real update check and an "Update available" button.** (#148, spec 022). Options › Check for Updates… only says

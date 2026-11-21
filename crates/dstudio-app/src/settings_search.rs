@@ -133,6 +133,8 @@ pub const ENTRIES: &[Entry] = &[
     // Shortcuts
     e(4, "Preset", &["keys", "keyboard", "key commands", "keymap", "other app"], ""),
     e(4, "Reset to defaults", &["keys", "keyboard", "shortcuts", "restore"], ""),
+    // Downloads (nothing to download yet: the page's message is its one row)
+    e(5, "Downloadable content", &["download", "sound library", "library", "content", "samples", "multi-sample", "install"], ""),
     // Privacy
     e(
         PRIVACY_PAGE,
@@ -226,8 +228,15 @@ impl Controller {
 mod tests {
     use super::*;
 
-    const PAGE_COMPONENTS: [(&str, usize); 6] =
-        [("GeneralPage", 0), ("AudioPage", 1), ("MidiPage", 2), ("PluginsPage", 3), ("ShortcutsPage", 4), ("PrivacyPage", PRIVACY_PAGE)];
+    const PAGE_COMPONENTS: [(&str, usize); 7] = [
+        ("GeneralPage", 0),
+        ("AudioPage", 1),
+        ("MidiPage", 2),
+        ("PluginsPage", 3),
+        ("ShortcutsPage", 4),
+        ("DownloadsPage", 5),
+        ("PrivacyPage", PRIVACY_PAGE),
+    ];
 
     /// The source of `component <name>` in settings.slint.
     fn page_body(name: &str) -> &'static str {
@@ -267,7 +276,8 @@ mod tests {
         assert_eq!(page_slots(""), (0..PAGES.len() as i32).collect::<Vec<_>>());
         assert_eq!(page_slots("instr"), [-1, -1, 0, -1, -1, -1, -1]);
         assert_eq!(page_slots("latency"), [-1, 0, -1, -1, -1, -1, -1]);
-        assert_eq!(page_slots("downloads"), [-1, -1, -1, -1, -1, 0, -1], "unavailable pages match by name");
+        assert_eq!(page_slots("downloads"), [-1, -1, -1, -1, -1, 0, -1], "the page name matches");
+        assert_eq!(page_slots("sound library"), [-1, -1, -1, -1, -1, 0, -1]);
         assert_eq!(page_slots("telemetry"), [-1, -1, -1, -1, -1, -1, 0]);
         assert_eq!(PAGES[PRIVACY_PAGE], "Privacy");
         assert!(!PAGES.contains(&"Account") && !PAGES.contains(&"Usage"), "hidden (roadmap Q3)");
