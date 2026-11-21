@@ -867,6 +867,34 @@ the user name removed, and deletes it; with the switch off it is only deleted. S
 runs never record or send. `DSTUDIO_CRASH_TEST=panic|segv` crashes on purpose to check it by hand. Settings ›
 Account and Usage and the sample licensing switch are gone (roadmap Q3), leaving seven pages. Review state
 `review-settings-privacy`; self-test section `privacy_steps`.
+### 2026-11-21: Selected effects and their shortcuts
+
+A press on an effect card's header selects the effect; Shift or Cmd adds it to the selection or takes it out
+(`effect_select.rs`, `DevicesUi::fx_sel`). Selected cards get an accent outline. With effects selected, and no
+clip, section or range, the FX slot keys act on them: ⌘D Duplicate selected effects (copies right after them,
+"Duplicate Effects"), ⌘G Create chain from selected effects (a new chain where the first was, "Create Chain"),
+⌘⇧G Unpack selected chain ("Unpack Chain"). Each is one undo step built in `dstudio_core::effect_edit`, which
+the chain card's Unpack chain now uses too. Selecting a clip, a section, a range or a track, or pressing
+Escape, clears the selection. Settings › Shortcuts lists the three under Editing, bindable like the others.
+Review state `review-effect-selection`; unit tests in `effect_edit`; self-test `effect_select_steps`.
+### 2026-11-21: Live sets keep effects as Live devices
+
+Export › Project's Effects pill now offers Convert to Live devices (spec 019). A track whose effects are all
+Compressor, Utility or Channel EQ (on, not in a chain, not modulated, no automation, neutral trim, width and
+mono) is rendered before its effects; the set puts Live's Compressor, Utility and EQ Eight on that track with
+the settings mapped to Live's units, and Live's mixer gets the track's volume and pan. Other tracks render
+after their effects as before. The notes list both, with the reason, and any setting clamped to Live's range.
+`live_devices.rs` holds the mappings; `live_set.rs` writes them; `dialogs.rs::live_chain` decides per track
+and `make_dry` renders before the effects. Tests: `live_devices` unit tests, a structure check test, and the
+self-test section `live_convert_steps`.
+
+### 2026-11-21: Settings › Downloads
+
+Roadmap G15. Settings › Downloads replaces "Not available yet" with two plain sentences: there is nothing to download
+yet, and optional content such as a sound library for the sampler will be listed there with its version and size. It
+shows nothing else until there is content (the multi-sample instrument's library, roadmap G27, would be the first);
+the page's comment in `ui/settings.slint` says where the list goes. Search settings finds it ("sound library",
+"download"). Review state `review-settings-downloads`; self-test section `downloads_steps`.
 
 ### 2026-11-21: The assistant against the real API
 

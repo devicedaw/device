@@ -97,7 +97,7 @@ target behaviour.
 - [x] **G14. Settings › Privacy page.** (#150, spec 018). Today "Not available yet". It must hold "Send crash reports" (on by
   default; sends a crash report through the same service as Report a bug, with nothing personal) and "Usage
   tracking" (off; Device collects nothing, so the row explains that and stays off), each with help text.
-- [ ] **G15. Settings › Downloads page.** Today "Not available yet". It must list optional downloadable content
+- [x] **G15. Settings › Downloads page.** (#155). Today "Not available yet". It must list optional downloadable content
   (the factory sound library for the multi-sample instrument in G27, when it exists) with its version and size,
   and a Download / Re-download button with progress. Until there is downloadable content, the page says so.
 - [x] **G16. Real update check and an "Update available" button.** (#148, spec 022). Options › Check for Updates… only says
@@ -134,7 +134,7 @@ target behaviour.
   in which selecting an empty time range on a track offers generated material that fits the surrounding clips
   (pattern for drum tracks, notes for instrument tracks, from Device's own pattern library in
   `dstudio-core/src/library.rs`). Needs a decision on scope (Q2).
-- [ ] **G24. Export: convert effects for Live sets.** In File › Export › Project, "Convert effects to Live
+- [x] **G24. Export: convert effects for Live sets** (#152, spec [019](../019-live-device-conversion/spec.md); Compressor, Utility and Channel EQ first). In File › Export › Project, "Convert effects to Live
   devices" is a placeholder; effects are always rendered. Map the built-in effects that have a close Live
   device (EQ, compressor, delay, reverb, utility…) to that device with matching settings, and render the rest.
 - [x] **G37. Tempo changes during a song** (#131, #133, #135, spec [015](../015-tempo-changes/spec.md)). A
@@ -188,7 +188,7 @@ next to the target on the same window size.
   library of a couple of hundred multi-sampled sounds (keys, strings, brass, guitars, vocals, textures), with
   its own preset folder in the browser and its sound library as optional downloadable content (G15). All
   samples must be original or properly licensed for redistribution.
-- [ ] **G28. Device-chain rows in Settings › Shortcuts.** The Shortcuts page lists every timeline and editor
+- [x] **G28. Device-chain rows in Settings › Shortcuts.** (#147; with effect selection in the chain.) The Shortcuts page lists every timeline and editor
   key, but not the device-chain ones (move, delete, duplicate, fold, toggle a device). Add them, bindable like
   the others.
 - [ ] **G29. Windows: interface labels render as empty boxes** (issue #115). The last report is that preferring

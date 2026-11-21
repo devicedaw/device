@@ -14193,6 +14193,49 @@ fn privacy_steps() -> Vec<Step> {
     ]
 }
 
+/// Settings › Downloads (roadmap G15): the sidebar opens it, and searching "sound library" finds it.
+fn downloads_steps() -> Vec<Step> {
+    use Step::*;
+    vec![
+        DoC("downloads: open Settings", Box::new(|_, ctl| ctl.borrow_mut().open_settings())),
+        Do(
+            "downloads: click Downloads in the sidebar",
+            Box::new(|a| {
+                let (x, y) = settings_row(5);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "downloads: the Downloads page is open",
+            Box::new(|c, a| {
+                (c.settings.page == 5 && a.global::<Studio>().get_settings_page() == 5)
+                    .then_some(())
+                    .ok_or(format!("page {}", c.settings.page))
+            }),
+        ),
+        Do(
+            "downloads: search \"sound library\" from General",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_settings_page_select(0);
+                s.set_settings_search("sound library".into());
+                s.invoke_settings_search_edited("sound library".into());
+            }),
+        ),
+        Check(
+            "downloads: only Downloads is listed, and it is open",
+            Box::new(|c, a| {
+                let m = a.global::<Studio>().get_settings_page_slots();
+                let slots: Vec<i32> = (0..m.row_count()).filter_map(|i| m.row_data(i)).collect();
+                (c.settings.page == 5 && slots == [-1, -1, -1, -1, -1, 0, -1])
+                    .then_some(())
+                    .ok_or(format!("page {} slots {slots:?}", c.settings.page))
+            }),
+        ),
+        DoC("downloads: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
+    ]
+}
+
 /// Mouse & modifiers: ⌥-drag copies a clip, ⇧-drag on its right edge time-stretches it, the
 /// top-right corner loops it, ⌥ + scroll changes the track heights, and a double-click deletes
 /// a piano roll note. Driven through the controller's pointer entry points.
@@ -18491,14 +18534,17 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(settings_search_steps());
     all.extend(settings_help_steps());
     all.extend(privacy_steps());
+    all.extend(downloads_steps());
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());
     all.extend(header_monitor_steps());
     all.extend(api_key_steps());
+    all.extend(live_convert_steps());
     all.extend(ask_clip_steps());
     all.extend(assistant_full_steps());
     all.extend(rename_project_steps());
+    all.extend(effect_select_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.
@@ -18657,6 +18703,7 @@ fn live_import_steps() -> Vec<Step> {
                                 sample_rate: 48_000,
                                 markers: vec![(0.0, 0.0), (1.0, 2.0), (3.0, 4.0)],
                             }]),
+                            devices: Vec::new(),
                         },
                         SetTrack {
                             name: "Keys".into(),
@@ -18672,6 +18719,7 @@ fn live_import_steps() -> Vec<Step> {
                                 length: 4.0,
                                 notes: vec![SetNote { pitch: 60, time: 0.0, duration: 1.0, velocity: 100 }],
                             }]),
+                            devices: Vec::new(),
                         },
                     ],
                 };
@@ -18746,6 +18794,213 @@ fn live_import_steps() -> Vec<Step> {
                     clip.start,
                     c.asset_map.contains_key(&clip.asset)
                 ))
+            }),
+        ),
+    ]
+}
+
+/// Selected effects in the device chain (src/effect_select.rs): a header click selects, Cmd+G
+/// makes a chain of them, Cmd+Shift+G unpacks it, Cmd+D copies them, Escape clears.
+fn effect_select_steps() -> Vec<Step> {
+    use Step::*;
+    thread_local! {
+        static START: Cell<usize> = const { Cell::new(0) };
+        static IDS: std::cell::RefCell<Vec<dstudio_core::DeviceId>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    fn chain(c: &Controller) -> Vec<dstudio_core::Device> {
+        c.selected_track.and_then(|t| c.project().track(t)).map(|t| t.devices.clone()).unwrap_or_default()
+    }
+    fn selected_cards(a: &AppWindow) -> Vec<String> {
+        cards(a).into_iter().filter(|c| c.selected).map(|c| c.name.to_string()).collect()
+    }
+    vec![
+        DoC(
+            "effects: three effects on the audio track",
+            Box::new(|a, ctl| {
+                key(a, Key::Escape, false, false);
+                let mut c = ctl.borrow_mut();
+                let Some(t) = track_of(&c, TrackKind::Audio).map(|i| c.project().tracks[i].id) else { return };
+                c.select_track(t);
+                c.set_bottom_tab(crate::controller::BottomTab::Devices);
+                START.set(c.doc.history_labels().len());
+                let n = chain(&c).len();
+                for id in ["channeleq", "delay", "reverb"] {
+                    c.add_item_to_track(&crate::devices::Item::Builtin(dstudio_core::builtin::find(id).expect("builtin")), t, None);
+                }
+                IDS.with(|v| *v.borrow_mut() = chain(&c)[n..].iter().map(|d| d.id).collect());
+                drop(c);
+                if let Ok(mut c) = ctl.try_borrow_mut() {
+                    c.update_ui(a);
+                }
+            }),
+        ),
+        DoC(
+            "effects: click the first one's header",
+            Box::new(|a, ctl| {
+                let first = IDS.with(|v| v.borrow().first().copied());
+                let name = first.and_then(|id| cards(a).into_iter().find(|c| c.id as u64 == id.0)).map(|c| c.name.to_string());
+                let Some(cd) = name.and_then(|n| card_in_view(a, ctl, &n)) else { return };
+                let (x, y) = card_xy(&cd, cd.width / 2.0, 16.0);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "effects: the clicked card is selected and outlined, and the FX slot keys apply",
+            Box::new(|c, a| {
+                let want = IDS.with(|v| v.borrow().first().copied()).ok_or("no effects")?;
+                (c.selected_effects() == [want] && c.fx_slot_selected() && selected_cards(a).len() == 1).then_some(()).ok_or(format!(
+                    "selected {:?}, cards {:?}",
+                    c.selected_effects(),
+                    selected_cards(a)
+                ))
+            }),
+        ),
+        DoC(
+            "effects: Shift-click the third",
+            Box::new(|a, _| {
+                if let Some(id) = IDS.with(|v| v.borrow().get(2).copied()) {
+                    a.global::<Studio>().invoke_device_select(id.0 as i32, true);
+                }
+            }),
+        ),
+        Do("effects: Cmd+G", Box::new(|a| key(a, "g", true, false))),
+        Check(
+            "effects: Create Chain puts both in a new chain where the first was, one undo step; the chain is selected",
+            Box::new(|c, _| {
+                let ids = IDS.with(|v| v.borrow().clone());
+                let devs = chain(c);
+                let at = devs.iter().position(|d| d.id == ids[0]).ok_or("first gone")?;
+                let head =
+                    devs.get(at.wrapping_sub(1)).filter(|d| dstudio_core::modulation::is_rack(d)).ok_or("no chain head before it")?;
+                let in_chain = |id| devs.iter().any(|d| d.id == id && d.chain == Some(head.id));
+                (c.doc.undo_label() == Some("Create Chain")
+                    && in_chain(ids[0])
+                    && in_chain(ids[2])
+                    && !in_chain(ids[1])
+                    && c.selected_effects() == [head.id])
+                .then_some(())
+                .ok_or(format!("last {:?}, selected {:?}", c.doc.undo_label(), c.selected_effects()))
+            }),
+        ),
+        Do("effects: Cmd+Shift+G", Box::new(|a| key(a, "G", true, true))),
+        Check(
+            "effects: Unpack Chain frees them, one undo step; they stay selected",
+            Box::new(|c, _| {
+                let ids = IDS.with(|v| v.borrow().clone());
+                let devs = chain(c);
+                (c.doc.undo_label() == Some("Unpack Chain")
+                    && !devs.iter().any(dstudio_core::modulation::is_rack)
+                    && c.selected_effects() == [ids[0], ids[2]])
+                .then_some(())
+                .ok_or(format!("last {:?}, selected {:?}", c.doc.undo_label(), c.selected_effects()))
+            }),
+        ),
+        Do("effects: Cmd+D", Box::new(|a| key(a, "d", true, false))),
+        Check(
+            "effects: Duplicate Effects adds copies after them, one undo step; the copies are selected",
+            Box::new(|c, _| {
+                let devs = chain(c);
+                let sel = c.selected_effects();
+                let fresh = sel.iter().all(|id| IDS.with(|v| !v.borrow().contains(id)));
+                (c.doc.undo_label() == Some("Duplicate Effects") && sel.len() == 2 && fresh && devs.len() >= 5)
+                    .then_some(())
+                    .ok_or(format!("last {:?}, selected {sel:?}", c.doc.undo_label()))
+            }),
+        ),
+        Do("effects: Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check(
+            "effects: Escape clears the selection",
+            Box::new(|c, a| {
+                (c.selected_effects().is_empty() && selected_cards(a).is_empty())
+                    .then_some(())
+                    .ok_or(format!("cards {:?}", selected_cards(a)))
+            }),
+        ),
+        DoC(
+            "effects: undo back to the start",
+            Box::new(|_, ctl| {
+                while ctl.borrow().doc.history_labels().len() > START.get() {
+                    crate::run_action(ctl, "edit.undo");
+                }
+            }),
+        ),
+    ]
+}
+
+/// Export › Project with Effects › Convert to Live devices (spec 019): a track whose only effect is
+/// a Compressor gets a Live Compressor and a render without compression.
+fn live_convert_steps() -> Vec<Step> {
+    use Step::*;
+    thread_local! {
+        static TRACK: Cell<u64> = const { Cell::new(0) };
+        static START: Cell<usize> = const { Cell::new(0) };
+    }
+    vec![
+        DoC(
+            "convert: a Compressor on a track with clips and no other effect, export a Project with Convert to Live devices",
+            Box::new(|a, ctl| {
+                key(a, Key::Escape, false, false);
+                let mut c = ctl.borrow_mut();
+                START.set(c.doc.history_labels().len());
+                let pick = c
+                    .project()
+                    .tracks
+                    .iter()
+                    .find(|t| {
+                        !t.is_return()
+                            && (!t.clips.is_empty() || !t.midi_clips.is_empty())
+                            && t.devices.is_empty()
+                            && t.automation.is_empty()
+                    })
+                    .map(|t| t.id);
+                let Some(t) = pick else { return };
+                TRACK.set(t.0);
+                let comp = dstudio_core::builtin::find("compressor").expect("compressor");
+                c.add_item_to_track(&crate::devices::Item::Builtin(comp), t, None);
+                let id = c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id);
+                if let Some(id) = id {
+                    c.execute(dstudio_core::Command::SetDeviceParam { device: id, param: "threshold".into(), value: -30.0 });
+                }
+                c.export_open();
+                c.export_pick_recipe(2);
+                c.export_toggle_fx_menu();
+                c.export_pick_fx(1);
+                c.export.dir = run_dir().join("convert");
+                c.export.name = "conv".into();
+                c.export_run();
+            }),
+        ),
+        Check(
+            "convert: the set has a Live Compressor at -30 dB on that track, the notes list it, the set passes its check",
+            Box::new(|c, _| {
+                let t = c.project().track(dstudio_core::TrackId(TRACK.get())).ok_or("no track with clips and no effects")?;
+                let folder = c.export.dir.join("conv Project");
+                let gz = std::fs::read(folder.join("conv.als")).map_err(|e| format!("conv.als: {e}"))?;
+                let mut xml = String::new();
+                std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&gz[..]), &mut xml).map_err(|e| e.to_string())?;
+                crate::live_set::validate(&xml, Some(&folder))?;
+                let notes = std::fs::read_to_string(folder.join("DStudio Export Notes.txt")).unwrap_or_default();
+                let at = xml.find("<Compressor2 Id=").ok_or("no Compressor in the set")?;
+                let threshold = xml[at..]
+                    .find("<Threshold>")
+                    .map(|i| &xml[at + i..])
+                    .and_then(|x| x.split("Manual Value=\"").nth(1))
+                    .and_then(|x| x.split('"').next());
+                let want = format!("{}", 10f64.powf(-30.0 / 20.0));
+                let _ = std::fs::remove_dir_all(&c.export.dir);
+                (threshold.is_some_and(|v| v.parse::<f64>().is_ok_and(|v| (v - want.parse::<f64>().unwrap()).abs() < 1e-6))
+                    && notes.contains(&format!("{} (Compressor)", t.name)))
+                .then_some(())
+                .ok_or(format!("threshold {threshold:?}, notes: {notes}"))
+            }),
+        ),
+        DoC(
+            "convert: back to Render, undo the Compressor",
+            Box::new(|_, ctl| {
+                ctl.borrow_mut().export.convert_fx = false;
+                while ctl.borrow().doc.history_labels().len() > START.get() {
+                    crate::run_action(ctl, "edit.undo");
+                }
             }),
         ),
     ]

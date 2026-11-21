@@ -14,6 +14,7 @@ pub mod builtin;
 pub mod chains;
 pub mod command;
 pub mod device;
+pub mod effect_edit;
 pub mod history;
 pub mod import;
 pub mod instrument;

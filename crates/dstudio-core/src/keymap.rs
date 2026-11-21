@@ -317,6 +317,8 @@ impl Keymap {
                 b("clip.consolidate", &["primary+j"], ClipsSelected),
                 b("clip.bounce_to_track", &["primary+b"], ClipsSelected),
                 b("fx.duplicate", &["primary+d"], FxSlotSelected),
+                b("fx.group", &["primary+g"], FxSlotSelected),
+                b("fx.unpack", &["primary+shift+g"], FxSlotSelected),
                 b("range.duplicate", &["primary+d"], RangeSelected),
                 b("clip.duplicate", &["primary+d"], ClipsSelected),
                 b("section.duplicate", &["primary+d"], SectionSelected),

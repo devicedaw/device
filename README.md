@@ -64,7 +64,8 @@ wgpu.
   clip to cut it at the pointer).
   Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
   Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected
-  clip or marker, ⌘D duplicates the selected clip or marker. Settings › Shortcuts lists them all by section; click
+  clip or marker, ⌘D duplicates the selected clip or marker. Click an effect's header to select it (⇧ or ⌘ for more);
+  ⌘D duplicates the selected effects, ⌘G puts them in a new chain and ⌘⇧G unpacks a selected chain. Settings › Shortcuts lists them all by section; click
   one's keys to record new ones, search by name or key, and reset to the defaults at any time. Its Preset menu swaps in
   the keys of Ableton Live, Logic Pro, GarageBand, FL Studio, Fender Studio Pro, Bitwig, Pro Tools or BandLab. ↑/↓ select the track above
   or below, ⇧↑/⇧↓ (⌘⇧ for an octave) transpose the selected MIDI clips, U folds a group, A shows automation, I
@@ -76,7 +77,8 @@ wgpu.
   top-right corner loops it, ⌥ + scroll sizes the track rows, a double-click deletes a note, and on knobs ⇧-drag
   fine-tunes and ⌥-click resets. Settings › Shortcuts lists them under Mouse & modifiers. Search settings, at the
   top of the Settings sidebar, finds any setting by name or by what it's for (⌘F), and hovering the (i) after a
-  setting's name says in one sentence what it does.
+  setting's name says in one sentence what it does. Settings › Downloads will list optional content such as sound
+  libraries; there is none yet.
 - **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. Clicking, drawing or dragging a
   note, or clicking a key, plays it through the track's instrument for its length (up to a second). A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
@@ -121,7 +123,8 @@ wgpu.
   parameter, × closes one (its automation stays), and right-clicking a lane deletes its automation.
 - **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV or 192 or 320 kbps
   MP3 at 44.1 or 48 kHz (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
-  seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.
+  seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends. With Effects set to Convert to Live
+  devices, a track's Compressor, Utility and Channel EQ become Live devices with the same settings.
 - **Undo for everything.** Every edit is a validated, invertible command, so undo and redo cover the whole project.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
   one undo step. It knows each track's devices, sends and lanes, and can add built-in effects and instruments, set their

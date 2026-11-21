@@ -268,6 +268,7 @@ export struct WinView {
 
 export struct DeviceCard {
     id: int,
+    selected: bool,        // a selected effect (src/effect_select.rs): outlined
     x: length,
     name: string,
     vendor: string,
@@ -1036,10 +1037,16 @@ export global Studio {
     in property <bool> export-range-menu-open;
     in property <length> export-range-menu-h;
     in property <[ChoiceItem]> export-range-items;
+    in property <string> export-fx-label: "Render";
+    in property <bool> export-fx-menu-open;
+    in property <length> export-fx-menu-h;
+    in property <[ChoiceItem]> export-fx-items;
     callback export-pick-recipe(int);
     callback export-toggle-tracks();
     callback export-pick-tracks(int);
     callback export-toggle-range();
+    callback export-toggle-fx();
+    callback export-pick-fx(int);                // 0 render, 1 convert to Live devices (Project)
     callback export-pick-range(int);             // 0 full project, 1 loop region
     callback export-close();
     callback export-run();
@@ -1161,6 +1168,7 @@ export global Studio {
     callback device-edit(int);                  // open / close the plugin window
     callback device-remove(int);                // RemoveDevice (closes its window first)
     callback device-use-synth();                // SetInstrumentPlugin(None)
+    callback device-select(int, bool);         // card id, extend (Shift or Cmd): header press
     callback device-drag(int, int, length);     // card id, phase 0/1/2, window x (MoveDevice on release)
     callback chain-scroll-by(float);
     // Devices minimap (src/devminimap.rs): shown while the chain is wider than the panel. Tiles are strip-local;
