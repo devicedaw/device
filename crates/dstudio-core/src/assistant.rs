@@ -151,6 +151,7 @@ fn valid_target(p: &Project, t: &str) -> bool {
 pub fn parse_turn(json_text: &str) -> Result<AssistantTurn, AssistantError> {
     let mut v: Value = serde_json::from_str(json_text).map_err(|e| AssistantError::Malformed(e.to_string()))?;
     lenient_colors(&mut v);
+    number_new_notes(&mut v);
     serde_json::from_value(v).map_err(|e| AssistantError::Malformed(e.to_string()))
 }
 
@@ -169,6 +170,37 @@ fn lenient_colors(v: &mut Value) {
             }
         }
         Value::Array(items) => items.iter_mut().for_each(lenient_colors),
+        _ => {}
+    }
+}
+
+/// Note ids only need to be unique within a clip, and models often send 0 (or nothing) for every
+/// note of a new bassline. In any `notes` list, a note whose id is 0 or missing gets the next id
+/// after the largest one in that list, so such a reply is accepted instead of failing as
+/// "duplicate note id 0". Non-zero ids are kept as sent.
+fn number_new_notes(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            for (k, child) in map.iter_mut() {
+                if k == "notes"
+                    && let Value::Array(notes) = child
+                {
+                    let id_of = |n: &Value| n.get("id").and_then(Value::as_u64).unwrap_or(0);
+                    let mut next = notes.iter().map(id_of).max().unwrap_or(0) + 1;
+                    for n in notes.iter_mut() {
+                        if let Value::Object(note) = n
+                            && note.get("id").and_then(Value::as_u64).unwrap_or(0) == 0
+                        {
+                            note.insert("id".into(), json!(next));
+                            next += 1;
+                        }
+                    }
+                } else {
+                    number_new_notes(child);
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(number_new_notes),
         _ => {}
     }
 }
@@ -371,7 +403,7 @@ pub fn tool_schema() -> Value {
                      set_time_signature{numerator,denominator}, set_loop{enabled,start,end}, \
                      add_midi_clip{track(instrument),clip{id:0,name,start,length,notes:[]}}, remove_midi_clip{clip}, \
                      move_midi_clip{clip,track,start}, resize_midi_clip{clip,start,length}, \
-                     set_midi_notes{clip,notes:[{id,pitch 0..127 (60=C4),start(ticks, clip-relative),length,velocity 1..127}]} (replaces all notes). \
+                     set_midi_notes{clip,notes:[{id (0 = new note),pitch 0..127 (60=C4),start(ticks, clip-relative),length,velocity 1..127}]} (replaces all notes). \
                      set_synth_params{track(instrument),params(full SynthParams object; start from describe_state's synth and change fields)}. \
                      Devices (ids from tracks[].devices / instrument): set_device_param{device,param,value(plain value in the param's unit)}, \
                      set_device_params{device,params{param:value},preset?}, set_device_enabled{device,enabled}, remove_device{device}, \
