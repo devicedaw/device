@@ -947,3 +947,9 @@ track with an 8-note bassline, volume, tempo and a Reverb, had a bad batch and a
 changed, and undid and redid the edit as one step. It found that `poll_jobs` only ran while a background job was
 pending, so AI app calls waited forever; the poll timer now also runs while the server is on.
 
+### 2026-11-21: 85 factory chains
+
+The factory chains grow from 27 to 85, ten or eleven in each of the eight folders, all built from Device's own
+effects with their own settings and macros (`dstudio_core::chains::FACTORY`); the "FX" folder is now "FX & Glitch".
+Saved chains are unaffected: they live in My chains, and factory chains are found by name, which none changed.
+

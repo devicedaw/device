@@ -112,8 +112,8 @@ wgpu.
 - **Device chain.** A level meter after every device shows what it puts out, and the + between two devices
   inserts another one right there, from your recent effects or any category.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
-  macros. Save a chain to reuse it in any project, or start from one of 27 ready-made chains for vocals, drums, bass,
-  guitar, keys, pads, FX and mix bus.
+  macros. Save a chain to reuse it in any project, or start from one of 85 ready-made chains for vocals, drums, bass,
+  guitar, keys and synths, pads and textures, FX and glitch, and mix and master.
 - **Plugins.** Hosts AU (macOS), VST3 and CLAP plugins. Plugins are scanned in a separate process, so a crashing plugin
   is blocklisted instead of taking the app down, and their editors open in their own windows. Besides the standard
   plugin folders, Settings › Plugins scans any folders you add.
