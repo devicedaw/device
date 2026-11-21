@@ -94,7 +94,7 @@ target behaviour.
 - [x] **G13. Settings search** (spec 014). The search box at the top of the settings sidebar is drawn but does nothing
   (`ui/settings.slint`, "PLACEHOLDER: no settings search yet"). Typing must filter the sidebar to pages with
   matching rows, and highlight the matching rows on the open page. Escape clears.
-- [ ] **G14. Settings › Privacy page.** Today "Not available yet". It must hold "Send crash reports" (on by
+- [x] **G14. Settings › Privacy page.** (#150, spec 018). Today "Not available yet". It must hold "Send crash reports" (on by
   default; sends a crash report through the same service as Report a bug, with nothing personal) and "Usage
   tracking" (off; Device collects nothing, so the row explains that and stays off), each with help text.
 - [ ] **G15. Settings › Downloads page.** Today "Not available yet". It must list optional downloadable content

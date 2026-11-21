@@ -1267,6 +1267,7 @@ dependencies = [
  "embed-resource",
  "flate2",
  "keyring",
+ "libc",
  "mp3lame-encoder",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",

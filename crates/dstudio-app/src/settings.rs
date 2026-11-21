@@ -20,7 +20,8 @@ use dstudio_engine::AssetInfo;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-pub const PAGES: [&str; 9] = ["General", "Audio", "MIDI", "Plugins", "Shortcuts", "Downloads", "Account", "Usage", "Privacy"];
+/// Account and Usage pages are hidden: they need an online service Device doesn't have (roadmap Q3).
+pub const PAGES: [&str; 7] = ["General", "Audio", "MIDI", "Plugins", "Shortcuts", "Downloads", "Privacy"];
 pub const AUDIO_PAGE: usize = 1;
 pub const PLUGINS_PAGE: usize = 3;
 pub const BUFFER_SIZES: [u32; 6] = [64, 128, 256, 512, 1024, 2048];
@@ -668,6 +669,7 @@ impl Controller {
             s.set_general_on(slint::ModelRc::new(slint::VecModel::from(on.to_vec())));
         }
         s.set_general_stop_in_place(g.stop_in_place);
+        s.set_privacy_crash_reports(!self.settings.prefs.crash_reports_off);
         s.set_general_projects_folder(self.projects_folder_text().into());
         s.set_set_latency_text(self.latency_text().into());
         s.set_settings_note(self.settings.note.clone().into());

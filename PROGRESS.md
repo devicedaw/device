@@ -856,6 +856,17 @@ Clicking a sound in Devices › Instruments › Synth plays a C4 note with it in
 WAV to the temp folder (named by a hash of the sound's settings, so a second click plays at once) and loads it
 like a clicked audio file. Nothing is added to the project. Review state `review-sound-preview`; unit tests in
 `sound_preview`; self-test step "synth: a clicked sound plays in the preview bar, rendered to a file".
+### 2026-11-21: Settings › Privacy and crash reports
+
+Roadmap G14 (spec 018). Settings › Privacy has "Send crash reports" (on by default, saved in the preferences) and
+"Usage tracking" (off and greyed: Device collects no usage data, and the row says so), each with its (i). A panic
+anywhere in the app writes `crash-report.json` next to the preferences (message, location, backtrace); on macOS and
+Linux a fatal signal writes one naming the signal from an async-signal-safe handler that then hands the crash on to
+the previous handler. The next launch sends it once through the feedback service as kind `crash`, with home paths and
+the user name removed, and deletes it; with the switch off it is only deleted. Self-test, `--state` and screenshot
+runs never record or send. `DSTUDIO_CRASH_TEST=panic|segv` crashes on purpose to check it by hand. Settings ›
+Account and Usage and the sample licensing switch are gone (roadmap Q3), leaving seven pages. Review state
+`review-settings-privacy`; self-test section `privacy_steps`.
 
 ### 2026-11-21: The assistant against the real API
 
