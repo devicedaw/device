@@ -867,3 +867,13 @@ the user name removed, and deletes it; with the switch off it is only deleted. S
 runs never record or send. `DSTUDIO_CRASH_TEST=panic|segv` crashes on purpose to check it by hand. Settings ›
 Account and Usage and the sample licensing switch are gone (roadmap Q3), leaving seven pages. Review state
 `review-settings-privacy`; self-test section `privacy_steps`.
+### 2026-11-21: Selected effects and their shortcuts
+
+A press on an effect card's header selects the effect; Shift or Cmd adds it to the selection or takes it out
+(`effect_select.rs`, `DevicesUi::fx_sel`). Selected cards get an accent outline. With effects selected, and no
+clip, section or range, the FX slot keys act on them: ⌘D Duplicate selected effects (copies right after them,
+"Duplicate Effects"), ⌘G Create chain from selected effects (a new chain where the first was, "Create Chain"),
+⌘⇧G Unpack selected chain ("Unpack Chain"). Each is one undo step built in `dstudio_core::effect_edit`, which
+the chain card's Unpack chain now uses too. Selecting a clip, a section, a range or a track, or pressing
+Escape, clears the selection. Settings › Shortcuts lists the three under Editing, bindable like the others.
+Review state `review-effect-selection`; unit tests in `effect_edit`; self-test `effect_select_steps`.

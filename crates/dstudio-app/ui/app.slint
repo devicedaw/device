@@ -1157,6 +1157,7 @@ component BottomPanel inherits Panel {
             x: card.x - 255px; y: 34px - 27px; width: card.width; height: 265px;
             if !card.builtin: PluginCard { x: 0; y: 0; card: card; }
             if card.builtin: BuiltinCard { x: 0; y: 0; card: card; }
+            if card.selected: Rectangle { border-radius: 8px; border-width: 1.5px; border-color: Tokens.accent; }
         }
         AddDeviceCard { x: Studio.add-device-x - 255px; y: 34.5px - 27px; }
         // Between the cards: the output meter of the device on the left (lower part of the gap)
