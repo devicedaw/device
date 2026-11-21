@@ -4,7 +4,7 @@ members = ["crates/dstudio-core", "crates/dstudio-engine", "crates/dstudio-app"]
 
 [workspace.package]
 edition = "2024"
-version = "0.3.0"
+version = "0.3.1"
 license = "AGPL-3.0-or-later"
 rust-version = "1.90"
 
