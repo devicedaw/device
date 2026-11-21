@@ -161,7 +161,8 @@ axes over two cards of controls, Pitch Corrector, whose window draws the correct
 its lane tabs and curve editor across the display, and LFO, whose window draws two cycles of its wave across the
 window. Every effect has its window; the instruments and the Rack keep everything in their card. The Synth comes with
 100 factory sounds in ten categories (bass, keys, plucks, leads, pads, brass, motion, textures, effects and drums);
-Devices › Instruments opens the Synth into those categories, and dropping a sound adds the Synth with it.
+Devices › Instruments opens the Synth into those categories; clicking a sound plays a note with it in the preview
+bar, and dropping it adds the Synth with that sound.
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |

@@ -836,3 +836,11 @@ already plays the Synth, the sound loads into it as one `SetDeviceParams` step. 
 adds the plain Synth. A search lists the sounds whose name matches, inside their category. Review state
 `review-instrument-sounds`; unit test `synth_folder_opens_into_categories_and_sounds`; self-test step "synth: a
 browser sound loads into the track's Synth". Clicking a sound to preview it is G40.
+
+### 2026-11-21: Preview the Synth's sounds from the browser
+
+Clicking a sound in Devices › Instruments › Synth plays a C4 note with it in the browser's preview bar
+(`sound_preview.rs`). A worker renders the note on a private offline engine from a one-track project, writes a
+WAV to the temp folder (named by a hash of the sound's settings, so a second click plays at once) and loads it
+like a clicked audio file. Nothing is added to the project. Review state `review-sound-preview`; unit tests in
+`sound_preview`; self-test step "synth: a clicked sound plays in the preview bar, rendered to a file".
