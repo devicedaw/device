@@ -247,8 +247,15 @@ pub fn parse_response(v: &Value) -> Result<String, String> {
 }
 
 fn call_anthropic(key: &str, model: &str, req: &Request) -> Result<String, String> {
-    let agent: ureq::Agent =
-        ureq::Agent::config_builder().http_status_as_error(false).timeout_global(Some(Duration::from_secs(180))).build().into();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(180)))
+        // The system's trusted certificates (Keychain, Windows store, the Linux CA bundle and
+        // SSL_CERT_FILE), so the assistant also works behind a proxy that re-signs HTTPS with
+        // a company certificate.
+        .tls_config(ureq::tls::TlsConfig::builder().root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
+        .build()
+        .into();
     let mut builder =
         agent.post(API_URL).header("x-api-key", key).header("anthropic-version", API_VERSION).header("content-type", "application/json");
     if supports_default_fallback(model) {
@@ -322,5 +329,98 @@ mod tests {
         assert!(p.complete(&r).unwrap().contains("\"b\""));
         assert!(p.complete(&r).unwrap().contains("\"b\""), "last turn repeats");
         assert!(format!("{:?}", Provider::Anthropic { key: "secret".into(), model: "m".into() }).find("secret").is_none());
+    }
+}
+
+/// Real requests to the Anthropic API, end to end: prompt → provider → `plan` → `commit`, on a
+/// fresh default project per prompt. Ignored by default (each run costs a few cents); run with
+/// `DSTUDIO_TEST_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY` set:
+///
+/// `cargo test -p dstudio-app --release live_api -- --ignored --nocapture --test-threads 1`
+#[cfg(test)]
+mod live_api {
+    use super::*;
+    use dstudio_core::assistant::{self, Plan};
+    use dstudio_core::history::Document;
+    use dstudio_core::{Project, TrackKind, builtin, gain_to_db};
+    use std::time::Instant;
+
+    /// `DSTUDIO_TEST_ANTHROPIC_API_KEY` first (a name no other tool reads, for environments that
+    /// keep `ANTHROPIC_API_KEY` for themselves), then the app's own `ANTHROPIC_API_KEY`.
+    fn provider() -> Option<Provider> {
+        if let Ok(key) = std::env::var("DSTUDIO_TEST_ANTHROPIC_API_KEY")
+            && !key.trim().is_empty()
+        {
+            return Some(Provider::from_key(&key));
+        }
+        match Provider::from_env() {
+            Provider::Unavailable => {
+                eprintln!("Neither DSTUDIO_TEST_ANTHROPIC_API_KEY nor ANTHROPIC_API_KEY is set: skipping the live assistant test");
+                None
+            }
+            p => Some(p),
+        }
+    }
+
+    /// One turn the way the panel sends it; the plan is committed in Assist mode.
+    fn turn(p: &Provider, doc: &mut Document, mode: Mode, prompt: &str) -> Plan {
+        let mut state = assistant::describe_state(doc.project());
+        state["next_id_hint"] = json!(doc.project().next_id);
+        let req = Request { mode, prompt: prompt.into(), state, selection: None, history: Vec::new() };
+        let started = Instant::now();
+        let raw = p.complete(&req).unwrap_or_else(|e| panic!("{prompt:?}: request failed: {e}"));
+        let secs = started.elapsed().as_secs_f32();
+        let parsed = assistant::parse_turn(&raw).unwrap_or_else(|e| panic!("{prompt:?}: {e}\n{raw}"));
+        let plan = assistant::plan(doc, mode, &parsed).unwrap_or_else(|e| panic!("{prompt:?}: plan rejected: {e}\n{raw}"));
+        assistant::commit(doc, &plan).unwrap_or_else(|e| panic!("{prompt:?}: commit failed: {e}"));
+        eprintln!(
+            "\n[{secs:.1} s] {prompt}\n  edits: {:?}\n  highlights: {:?}\n  said: {:?}",
+            plan.summary, plan.highlights, plan.explanations
+        );
+        plan
+    }
+
+    fn builtin_on<'a>(doc: &'a Document, track: &str, id: &str) -> Option<&'a dstudio_core::Device> {
+        let t = doc.project().tracks.iter().find(|t| t.name == track)?;
+        t.devices.iter().find(|d| builtin::def_of(d).is_some_and(|def| def.id == id))
+    }
+
+    #[test]
+    #[ignore = "calls the real Anthropic API"]
+    fn live_api_turns_change_the_project() {
+        let Some(p) = provider() else { return };
+
+        let mut doc = Document::new(Project::default());
+        turn(&p, &mut doc, Mode::Assist, "Add a new instrument track called Bass and write a 4-bar bassline in C minor on it.");
+        let bass = doc
+            .project()
+            .tracks
+            .iter()
+            .find(|t| t.kind == TrackKind::Instrument && t.name.contains("Bass"))
+            .expect("a Bass instrument track");
+        let notes: usize = bass.midi_clips.iter().map(|c| c.notes.len()).sum();
+        assert!(notes >= 4, "the bassline has {notes} notes");
+        assert_eq!(doc.undo_label(), Some("Assistant Edit"), "one undo step");
+
+        let mut doc = Document::new(Project::default());
+        turn(&p, &mut doc, Mode::Assist, "Put a reverb on the Audio track with the mix at 45%.");
+        let reverb = builtin_on(&doc, "Audio", "reverb").expect("a reverb on Audio");
+        assert!((reverb.params["mix"] - 45.0).abs() < 0.5, "mix is {}", reverb.params["mix"]);
+
+        let mut doc = Document::new(Project::default());
+        turn(&p, &mut doc, Mode::Assist, "Add a compressor to the Audio track and set its ratio to 6:1.");
+        let comp = builtin_on(&doc, "Audio", "compressor").expect("a compressor on Audio");
+        assert!((comp.params["ratio"] - 6.0).abs() < 0.05, "ratio is {}", comp.params["ratio"]);
+
+        let mut doc = Document::new(Project::default());
+        turn(&p, &mut doc, Mode::Assist, "Set the tempo to 90 BPM and turn the Instrument track down to -6 dB.");
+        assert_eq!(doc.project().transport.bpm, 90.0);
+        let inst = doc.project().tracks.iter().find(|t| t.name == "Instrument").unwrap();
+        assert!((gain_to_db(inst.gain) + 6.0).abs() < 0.1, "volume is {} dB", gain_to_db(inst.gain));
+
+        let mut doc = Document::new(Project::default());
+        let plan = turn(&p, &mut doc, Mode::Teach, "How do I change the tempo?");
+        assert!(plan.batch.is_none(), "Point mode never edits");
+        assert!(!plan.highlights.is_empty() || !plan.explanations.is_empty(), "Point mode shows or explains something");
     }
 }

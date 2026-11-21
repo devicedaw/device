@@ -30,7 +30,7 @@ bytemuck = { version = "=1.24.0", features = ["derive"] }
 png = "=0.18.1"
 pollster = "=0.4.0"
 rfd = "0.15"
-ureq = { version = "3", features = ["json"] }
+ureq = { version = "3", features = ["json", "platform-verifier"] }
 flate2 = "1.1"
 # Already in the tree; local date and time for Edit › Undo History.
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
