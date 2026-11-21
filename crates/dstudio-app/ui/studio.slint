@@ -1041,6 +1041,34 @@ export global Studio {
     in property <bool> export-fx-menu-open;
     in property <length> export-fx-menu-h;
     in property <[ChoiceItem]> export-fx-items;
+    // Smart Fill (src/smart_fill.rs): the mode, and the box under the marked range (lane coordinates:
+    // the range's centre x and its track's bottom y).
+    in property <bool> smart-on;
+    in property <bool> smart-open;
+    in property <length> smart-x;
+    in property <length> smart-y;
+    in property <string> smart-track;
+    in property <bool> smart-audio;
+    in property <int> smart-tab;                 // 0 Create, 1 Record
+    in property <string> smart-text;
+    in property <string> smart-type: "Type";
+    in property <string> smart-genre: "Genre";
+    in property <int> smart-menu;                // 0 none, 1 Type, 2 Genre
+    in property <length> smart-menu-h;
+    in property <[ChoiceItem]> smart-items;
+    in property <bool> smart-typing;
+    in property <bool> smart-count-in;
+    in property <bool> smart-loop;
+    callback smart-toggle();
+    callback smart-close();
+    callback smart-pick-tab(int);
+    callback smart-edited(string);
+    callback smart-open-menu(int);               // 1 Type, 2 Genre
+    callback smart-pick(int);                    // a row of the open menu
+    callback smart-query(string);                // the Genre menu's search
+    callback smart-switch(int);                  // 0 Typing, 1 Count-in, 2 Loop
+    callback smart-create();
+    callback smart-record();
     callback export-pick-recipe(int);
     callback export-toggle-tracks();
     callback export-pick-tracks(int);

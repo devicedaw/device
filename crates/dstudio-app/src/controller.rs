@@ -542,6 +542,8 @@ pub struct Controller {
     pub(crate) snap: crate::snap::State,
     /// Timeline edit tools and the Marquee range (src/tools.rs).
     pub(crate) tools: crate::tools::State,
+    /// Smart Fill mode and box (src/smart_fill.rs).
+    pub(crate) smart: crate::smart_fill::SmartFill,
     /// Transport bar tempo, signature and key fields (src/transport_fields.rs).
     pub(crate) tf: crate::transport_fields::State,
     /// Devices minimap (src/devminimap.rs) and the pointer hide / warp requests of minimap drags (src/pointer.rs).
@@ -732,6 +734,7 @@ impl Controller {
             mm: crate::minimap::State::new(),
             snap: crate::snap::State::new(),
             tools: Default::default(),
+            smart: Default::default(),
             tf: crate::transport_fields::State::new(),
             dm: crate::devminimap::State::new(),
             ptr: crate::pointer::Queue::default(),
@@ -2545,6 +2548,7 @@ impl Controller {
         self.update_devmm(app);
         self.push_snap(&s);
         self.push_tools(&s);
+        self.push_smart_fill(&s);
         self.push_transport_fields(&s);
         s.set_press_epoch(self.press_epoch);
         s.set_doc_epoch(self.doc_epoch as i32);
