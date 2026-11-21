@@ -11483,11 +11483,16 @@ fn general_settings_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "general: Stop in place and built-in windows on; nothing else changed",
+            "general: Stop in place and built-in windows on, the update check off; nothing else changed",
             Box::new(|c, a| {
                 let g = &c.settings.prefs.general;
                 let s = a.global::<Studio>();
-                let want = crate::prefs::GeneralPrefs { stop_in_place: true, show_builtin_windows: true, ..Default::default() };
+                let want = crate::prefs::GeneralPrefs {
+                    stop_in_place: true,
+                    show_builtin_windows: true,
+                    check_updates_at_launch: false,
+                    ..Default::default()
+                };
                 (*g == want && s.get_general_stop_in_place() && s.get_general_on().row_data(2) == Some(true))
                     .then_some(())
                     .ok_or(format!("{g:?}"))
