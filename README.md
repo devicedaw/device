@@ -346,8 +346,8 @@ comes with benchmark results.
 
 Four GitHub Actions workflows check every change: **CI** builds and tests the engine, the workspace and the app on
 macOS, Windows and Linux; **Performance** builds the benchmarks at the base commit and with the change and fails a
-pull request when any benchmark row needs more than 1 % more CPU instructions (timings on all three systems are
-reported too); **Security** reviews new dependencies and checks `Cargo.lock` against the RustSec advisories every
+pull request when any benchmark row needs more than 1 % more CPU instructions. Native timing runs on relevant main
+pushes and on demand. **Security** reviews new dependencies and checks `Cargo.lock` against the RustSec advisories every
 week; **Release** builds the installable packages, attests their build provenance and drafts a GitHub release for a
 `vX.Y.Z` tag. See
 [Continuous integration](docs/building.md#continuous-integration) for the details and how to run the performance

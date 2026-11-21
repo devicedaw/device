@@ -917,6 +917,11 @@ Record arms the track, optionally loops the range and records into it, with the 
 `smart_fill.rs`; review states `review-smart-fill`, `review-smart-fill-type`, `review-smart-fill-record`;
 self-test section `smart_fill_steps`.
 
+### 2026-11-21: Faster CI feedback
+
+- Native benchmark timing runs on eligible main pushes and on demand. The Callgrind PR gate stays required.
+- The full Windows WARP test runs nightly or on demand. Main pushes still build and screenshot the Windows app.
+
 ### 2026-11-21: AI apps can control Device (MCP)
 
 Spec 023. Settings › General › Let AI apps control Device (off by default) starts a listener on 127.0.0.1 and writes
