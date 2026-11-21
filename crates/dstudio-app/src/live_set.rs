@@ -31,7 +31,11 @@ pub fn mark_project(folder: &Path) -> std::io::Result<()> {
 }
 
 pub struct LiveSet {
+    /// The tempo at the song start.
     pub bpm: f64,
+    /// Tempo changes (spec 015): the tempo envelope's events as (beat, BPM), in time order, a step
+    /// being two events at one beat ([tempo_envelope]); empty for one tempo.
+    pub tempo: Vec<(f64, f64)>,
     pub numerator: u32,
     pub denominator: u32,
     /// Arrangement loop in beats (quarter notes).
@@ -51,6 +55,10 @@ pub struct SetReturn {
     pub pan: f32,
     /// Live's per-return switch: sends to it tap before the track faders.
     pub pre: bool,
+    /// Send level to each of the set's returns, in order (linear, clamped to [SEND_RANGE]);
+    /// missing entries are off. A send with a level is written active, the others inactive
+    /// (Live's default for a return's sends). Spec 016: only later returns get one.
+    pub sends: Vec<f32>,
 }
 
 /// Live's send range: -70 dB (shown as -inf) ..= 0 dB.
@@ -109,6 +117,56 @@ pub struct SetNote {
     pub time: f64,
     pub duration: f64,
     pub velocity: u8,
+}
+
+/// Beats between the extra envelope events and warp markers written inside a tempo ramp (a
+/// sixteenth note). Device ramps are linear in BPM over beats; the extra points keep every beat
+/// within 1 ms of Device's timing whatever shape the set's envelope takes between two events.
+const RAMP_STEP: f64 = 0.25;
+
+/// The tempo envelope of a song's tempo map as (beat, BPM) events: each point's tempo where it
+/// starts, a hold's tempo again where it ends (so the step to the next point is vertical), and
+/// within a ramp an event every sixteenth note. Empty without tempo changes.
+pub fn tempo_envelope(map: &dstudio_core::TempoMap) -> Vec<(f64, f64)> {
+    let ppq = dstudio_core::PPQ as f64;
+    let segs = map.segments();
+    let mut out = Vec::new();
+    for (i, g) in segs.iter().enumerate() {
+        let q0 = g.tick as f64 / ppq;
+        out.push((q0, g.start_bpm));
+        let Some(next) = segs.get(i + 1) else { break };
+        let q1 = next.tick as f64 / ppq;
+        if g.ramps() {
+            let mut q = (q0 / RAMP_STEP).floor() * RAMP_STEP + RAMP_STEP;
+            while q < q1 - 1e-9 {
+                out.push((q, map.bpm_at(q * ppq)));
+                q += RAMP_STEP;
+            }
+        }
+        out.push((q1, g.end_bpm));
+    }
+    out
+}
+
+/// Warp markers (seconds into the file, beat) that make a render from the song start, `seconds`
+/// long, play unstretched on the set's tempo envelope: one at every tempo change it crosses and
+/// every sixteenth inside a ramp, plus its ends. Empty (unstretched at the one tempo) without
+/// tempo changes.
+pub fn render_markers(map: &dstudio_core::TempoMap, seconds: f64) -> Vec<(f64, f64)> {
+    if map.is_constant() {
+        return Vec::new();
+    }
+    let ppq = dstudio_core::PPQ as f64;
+    let end = map.ticks_at(seconds) / ppq;
+    let mut beats = vec![0.0];
+    for (q, _) in tempo_envelope(map) {
+        if q > 0.0 && q < end && beats.last().is_none_or(|&b| q > b) {
+            beats.push(q);
+        }
+    }
+    beats.push(end);
+    beats.dedup();
+    beats.into_iter().map(|q| (map.seconds_at(q * ppq), q)).collect()
 }
 
 /// Live's time signature value: numerator − 1 plus 99 × log2(denominator) (4/4 = 201).
@@ -414,7 +472,7 @@ impl Xml {
         self.v("PitchFine", 0);
         self.v("SampleVolume", 1);
         // Without markers, two fix the file's tempo at the set tempo: the file plays unstretched.
-        let beat_sec = 60.0 / set.bpm;
+        let beat_sec = 60.0 / set.bpm.clamp(20.0, 999.0);
         let unstretched = [(0.0, 0.0), (0.03125 * beat_sec, 0.03125)];
         self.open("WarpMarkers", &[]);
         for &(sec, beat) in if c.markers.is_empty() { &unstretched[..] } else { &c.markers[..] } {
@@ -493,7 +551,9 @@ impl Xml {
         self.close("MidiClip");
     }
     /// Track start shared by every track kind, through LinkedTrackGroupId.
-    fn track_head(&mut self, name: &str, user_name: &str, color: u32, envelopes: &[(u64, &str, String)]) {
+    /// `envelopes`: (target id, event tag, events as (time, value)); a static envelope has one event
+    /// at [ENVELOPE_START].
+    fn track_head(&mut self, name: &str, user_name: &str, color: u32, envelopes: &[(u64, &str, Vec<(String, String)>)]) {
         self.v("LomId", 0);
         self.v("LomIdView", 0);
         self.v("IsContentSelectedInDocument", false);
@@ -514,14 +574,16 @@ impl Xml {
             self.empty("Envelopes", &[]);
         } else {
             self.open("Envelopes", &[]);
-            for (i, (pointee, event, value)) in envelopes.iter().enumerate() {
+            for (i, (pointee, event, events)) in envelopes.iter().enumerate() {
                 self.open("AutomationEnvelope", &[("Id", i.to_string())]);
                 self.open("EnvelopeTarget", &[]);
                 self.v("PointeeId", pointee);
                 self.close("EnvelopeTarget");
                 self.open("Automation", &[]);
                 self.open("Events", &[]);
-                self.empty(event, &[("Id", "0".into()), ("Time", ENVELOPE_START.into()), ("Value", value.clone())]);
+                for (k, (time, value)) in events.iter().enumerate() {
+                    self.empty(event, &[("Id", k.to_string()), ("Time", time.clone()), ("Value", value.clone())]);
+                }
                 self.close("Events");
                 self.transform_view_state();
                 self.close("Automation");
@@ -566,17 +628,18 @@ impl Xml {
         self.routing("MidiOutputRouting", "MidiOut/None", "None", "");
     }
     /// Mixer through SendsListWrapper; ids come from the counter. "sends" is None on the main
-    /// and pre-hear tracks (no sends), else (level per return, active): one holder per return.
+    /// and pre-hear tracks (no sends), else (level per return, all active): one holder per
+    /// return; without "all active" only the sends with a level are active (a return track).
     fn mixer_body(&mut self, on: bool, volume: f32, pan: f32, sends: Option<(&[f32], usize, bool)>) {
         self.device_head(false);
         match sends {
-            Some((levels, returns, active)) if returns > 0 => {
+            Some((levels, returns, all_active)) if returns > 0 => {
                 self.open("Sends", &[]);
                 for i in 0..returns {
                     self.open("TrackSendHolder", &[("Id", i.to_string())]);
                     let level = levels.get(i).copied().unwrap_or(0.0) as f64;
                     self.float_param("Send", level.clamp(SEND_RANGE.0, SEND_RANGE.1), SEND_RANGE, true);
-                    self.v("Active", active);
+                    self.v("Active", all_active || level > 0.0);
                     self.close("TrackSendHolder");
                 }
                 self.close("Sends");
@@ -698,14 +761,15 @@ impl Xml {
         }
         self.close(tag);
     }
-    /// A return track: no clips, its own sends present but inactive (Live's default).
+    /// A return track: no clips; its sends into later returns active at their level, the others
+    /// present but inactive (Live's default).
     fn return_track(&mut self, set: &LiveSet, id: u64, r: &SetReturn) {
         self.open("ReturnTrack", &[("Id", id.to_string())]);
         self.track_head(&r.name, &r.name, r.color, &[]);
         self.open("DeviceChain", &[]);
         self.chain_head(1, ("AudioIn/External/S0", "1/2"), ("AudioOut/Master", "Master", ""));
         self.open("Mixer", &[]);
-        self.mixer_body(r.on, r.volume, r.pan, Some((&[], set.returns.len(), false)));
+        self.mixer_body(r.on, r.volume, r.pan, Some((&r.sends, set.returns.len(), false)));
         self.close("Mixer");
         self.open("FreezeSequencer", &[]);
         self.open("AudioSequencer", &[("Id", "0".into())]);
@@ -724,7 +788,11 @@ impl Xml {
         let ts_id = self.id();
         let ts = time_signature_value(set.numerator, set.denominator);
         self.open("MasterTrack", &[]);
-        self.track_head("Master", "", 69, &[(tempo_id, "FloatEvent", num(set.bpm)), (ts_id, "EnumEvent", ts.to_string())]);
+        // The tempo envelope: the song-start tempo, then the tempo changes in beats.
+        let mut tempo = vec![(ENVELOPE_START.to_string(), num(set.bpm))];
+        tempo.extend(set.tempo.iter().map(|&(beat, bpm)| (num(beat), num(bpm))));
+        let ts_events = vec![(ENVELOPE_START.to_string(), ts.to_string())];
+        self.track_head("Master", "", 69, &[(tempo_id, "FloatEvent", tempo), (ts_id, "EnumEvent", ts_events)]);
         self.open("DeviceChain", &[]);
         self.chain_head(1, ("AudioIn/External/S0", "1/2"), ("AudioOut/External/S0", "Ext. Out", "1/2"));
         self.open("Mixer", &[]);
@@ -1060,6 +1128,10 @@ pub struct SetSummary {
     pub return_tracks: usize,
     /// Sends above Live's minimum on ordinary tracks.
     pub sends: usize,
+    /// Active sends above Live's minimum from a return track into a later one (spec 016).
+    pub return_sends: usize,
+    /// Events of the tempo envelope (1 for one tempo).
+    pub tempo_events: usize,
 }
 
 pub(crate) fn child<'a, 'i>(n: roxmltree::Node<'a, 'i>, tag: &str) -> Option<roxmltree::Node<'a, 'i>> {
@@ -1103,7 +1175,17 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
     if scenes == 0 {
         return Err("no scenes".into());
     }
-    let mut sum = SetSummary { audio_tracks: 0, midi_tracks: 0, audio_clips: 0, midi_clips: 0, notes: 0, return_tracks: 0, sends: 0 };
+    let mut sum = SetSummary {
+        audio_tracks: 0,
+        midi_tracks: 0,
+        audio_clips: 0,
+        midi_clips: 0,
+        notes: 0,
+        return_tracks: 0,
+        sends: 0,
+        return_sends: 0,
+        tempo_events: 0,
+    };
     let mut track_ids = std::collections::HashSet::new();
     let tracks = path(set, "Tracks").ok_or("no Tracks")?;
     let returns = tracks.children().filter(|c| c.has_tag_name("ReturnTrack")).count();
@@ -1133,8 +1215,15 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
             {
                 return Err(format!("{what}: bad send {i} (level {level})"));
             }
-            if kind != "ReturnTrack" && active == "true" && level > SEND_RANGE.0 {
-                sum.sends += 1;
+            if active == "true" && level > SEND_RANGE.0 {
+                if kind != "ReturnTrack" {
+                    sum.sends += 1;
+                } else if i > sum.return_tracks {
+                    sum.return_sends += 1;
+                } else {
+                    // Spec 016: a return sends only into a later return, never into itself or up.
+                    return Err(format!("{what}: an active send into return {i}, which is not after it"));
+                }
             }
         }
         if kind == "ReturnTrack" {
@@ -1281,8 +1370,32 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
                 .collect()
         })
         .unwrap_or_default();
-    if tempo_target.is_none_or(|t| !pointees.contains(&t)) || ts_target.is_none_or(|t| !pointees.contains(&t)) {
+    if tempo_target.as_ref().is_none_or(|t| !pointees.contains(t)) || ts_target.is_none_or(|t| !pointees.contains(&t)) {
         return Err("the main track's tempo and time signature envelopes are missing".into());
+    }
+    // The tempo envelope: the song-start event holds the tempo, the others follow in time order,
+    // every tempo in Live's range.
+    let envelope = path(main, "AutomationEnvelopes/Envelopes")
+        .and_then(|e| {
+            e.children().find(|a| path(*a, "EnvelopeTarget/PointeeId").and_then(|p| p.attribute("Value")) == tempo_target.as_deref())
+        })
+        .and_then(|a| path(a, "Automation/Events"))
+        .ok_or("the tempo envelope has no events")?;
+    let mut last = f64::NEG_INFINITY;
+    for (i, ev) in envelope.children().filter(|n| n.has_tag_name("FloatEvent")).enumerate() {
+        let num_attr = |a: &str| ev.attribute(a).and_then(|v| v.parse::<f64>().ok()).ok_or(format!("tempo event {i}: no {a}"));
+        let (time, bpm) = (num_attr("Time")?, num_attr("Value")?);
+        if !(20.0..=999.0).contains(&bpm) {
+            return Err(format!("tempo event {i}: {bpm} BPM is outside Live's range"));
+        }
+        if time < last {
+            return Err(format!("tempo event {i} at {time} comes before the one at {last}"));
+        }
+        if i == 0 && (time != ENVELOPE_START.parse::<f64>().unwrap_or(0.0) || (bpm - tempo).abs() > 1e-6) {
+            return Err("the tempo envelope does not start with the song tempo".into());
+        }
+        last = time;
+        sum.tempo_events += 1;
     }
     Ok(sum)
 }
@@ -1294,6 +1407,7 @@ mod tests {
     fn sample_set() -> LiveSet {
         LiveSet {
             bpm: 120.0,
+            tempo: Vec::new(),
             numerator: 4,
             denominator: 4,
             loop_on: true,
@@ -1351,8 +1465,8 @@ mod tests {
                 },
             ],
             returns: vec![
-                SetReturn { name: "Return A".into(), color: 5, on: true, volume: 0.8, pan: 0.1, pre: false },
-                SetReturn { name: "Return B".into(), color: 6, on: false, volume: 1.0, pan: 0.0, pre: true },
+                SetReturn { name: "Return A".into(), color: 5, on: true, volume: 0.8, pan: 0.1, pre: false, sends: vec![0.0, 0.5] },
+                SetReturn { name: "Return B".into(), color: 6, on: false, volume: 1.0, pan: 0.0, pre: true, sends: Vec::new() },
             ],
         }
     }
@@ -1366,12 +1480,81 @@ mod tests {
     }
 
     #[test]
+    fn tempo_changes_become_an_envelope_and_render_markers() {
+        use dstudio_core::{PPQ, TempoMap, TempoPoint};
+        // 120 for two bars, a step to 90, a ramp from beat 12 to 150 at beat 20.
+        let map = TempoMap::new(
+            120.0,
+            &[
+                TempoPoint { time: 0, bpm: 120.0, ramp: false },
+                TempoPoint { time: 8 * PPQ, bpm: 90.0, ramp: false },
+                TempoPoint { time: 12 * PPQ, bpm: 90.0, ramp: true },
+                TempoPoint { time: 20 * PPQ, bpm: 150.0, ramp: false },
+            ],
+        );
+        let env = tempo_envelope(&map);
+        assert_eq!(&env[..4], &[(0.0, 120.0), (8.0, 120.0), (8.0, 90.0), (12.0, 90.0)], "a step is vertical");
+        assert_eq!(env.len(), 4 + 1 + 31 + 1 + 1, "the ramp: 31 sixteenths between its ends");
+        assert_eq!(*env.last().unwrap(), (20.0, 150.0));
+        // On the envelope's straight lines between events, every beat lands within 1 ms of the map.
+        let mut t = 0.0;
+        let mut q = 0.0;
+        let dq = 1.0 / 512.0;
+        while q < 24.0 - 1e-9 {
+            let mid = q + dq / 2.0;
+            let i = env.partition_point(|e| e.0 <= mid);
+            let bpm = if i >= env.len() {
+                env[env.len() - 1].1
+            } else {
+                let (a, b) = (env[i - 1], env[i]);
+                a.1 + (b.1 - a.1) * (mid - a.0) / (b.0 - a.0)
+            };
+            t += dq * 60.0 / bpm;
+            q += dq;
+            if (q - q.round()).abs() < 1e-9 {
+                assert!((t - map.seconds_at(q * PPQ as f64)).abs() < 0.001, "beat {q}: {t}");
+            }
+        }
+        // A 16 s render: markers at the song start, the changes and the ramp's sixteenths.
+        let m = render_markers(&map, 16.0);
+        assert_eq!(m[0], (0.0, 0.0));
+        assert_eq!(m[1], (4.0, 8.0));
+        assert!(m.windows(2).all(|w| w[1].0 > w[0].0 && w[1].1 > w[0].1));
+        assert!((m.last().unwrap().0 - 16.0).abs() < 1e-9);
+        assert!(render_markers(&TempoMap::constant(120.0), 16.0).is_empty());
+
+        // The set carries them and passes the check.
+        let mut set = sample_set();
+        set.tempo = env.clone();
+        if let SetContent::Audio(clips) = &mut set.tracks[0].content {
+            clips[0].markers = m;
+        }
+        let sum = validate(&to_xml(&set), None).unwrap();
+        assert_eq!(sum.tempo_events, 1 + env.len());
+        // Out of order or out of range: refused.
+        set.tempo = vec![(4.0, 100.0), (2.0, 100.0)];
+        assert!(validate(&to_xml(&set), None).is_err());
+        set.tempo = vec![(4.0, 1000.0)];
+        assert!(validate(&to_xml(&set), None).is_err());
+    }
+
+    #[test]
     fn written_set_passes_the_structural_check() {
         let xml = to_xml(&sample_set());
         let sum = validate(&xml, None).unwrap();
         assert_eq!(
             sum,
-            SetSummary { audio_tracks: 1, midi_tracks: 2, audio_clips: 1, midi_clips: 1, notes: 3, return_tracks: 2, sends: 3 }
+            SetSummary {
+                audio_tracks: 1,
+                midi_tracks: 2,
+                audio_clips: 1,
+                midi_clips: 1,
+                notes: 3,
+                return_tracks: 2,
+                sends: 3,
+                return_sends: 1,
+                tempo_events: 1
+            }
         );
         assert!(xml.contains("<EffectiveName Value=\"Bass &amp; &lt;Drums&gt;\" />"));
         let gz = gzip(&xml).unwrap();
@@ -1404,8 +1587,10 @@ mod tests {
         assert_eq!(sends(tracks[0]), [(0.5, "true".into()), (1.0, "true".into())]);
         assert_eq!(sends(tracks[1]), [(SEND_RANGE.0, "true".into()), (0.25, "true".into())]);
         assert_eq!(sends(tracks[2]), [(SEND_RANGE.0, "true".into()), (SEND_RANGE.0, "true".into())]);
-        // A return's own sends exist but are inactive.
-        assert_eq!(sends(tracks[3]), [(SEND_RANGE.0, "false".into()), (SEND_RANGE.0, "false".into())]);
+        // A return's send into a later return is active at its level (spec 016); its other
+        // sends exist but are inactive.
+        assert_eq!(sends(tracks[3]), [(SEND_RANGE.0, "false".into()), (0.5, "true".into())]);
+        assert_eq!(sends(tracks[4]), [(SEND_RANGE.0, "false".into()), (SEND_RANGE.0, "false".into())]);
         // "Sends Only" output, and the per-return pre/post switches.
         assert_eq!(value(tracks[0], "DeviceChain/AudioOutputRouting/Target").unwrap(), "AudioOut/Master");
         assert_eq!(value(tracks[1], "DeviceChain/AudioOutputRouting/Target").unwrap(), "AudioOut/None");
@@ -1415,6 +1600,14 @@ mod tests {
         assert_eq!(pre, ["false", "true"]);
         // The main and pre-hear tracks have no sends.
         assert!(path(set, "MasterTrack/DeviceChain/Mixer/Sends").unwrap().children().all(|c| !c.is_element()));
+    }
+
+    #[test]
+    fn the_check_refuses_a_return_sending_up_the_list() {
+        let mut s = sample_set();
+        s.returns[1].sends = vec![0.5];
+        let err = validate(&to_xml(&s), None).unwrap_err();
+        assert!(err.contains("not after it"), "{err}");
     }
 
     #[test]

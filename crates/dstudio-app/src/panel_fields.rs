@@ -501,7 +501,7 @@ pub(crate) fn field_rect(def: &DeviceDef, view_right: f32) -> (f32, f32, f32, f3
 
 impl Controller {
     fn bpm(&self) -> f32 {
-        self.project().transport.bpm as f32
+        self.bpm_now() as f32
     }
 
     /// Value of a parameter as the field shows it (live drag value, else the model).

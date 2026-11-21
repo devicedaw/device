@@ -65,8 +65,11 @@ cd engine
 cmake --preset default && cmake --build --preset default && ctest --preset default
 ```
 
-ASIO is not supported (the ASIO SDK's licence keeps it out for now); audio goes
-through WASAPI shared mode at the rate set in the Sound control panel.
+Audio goes through WASAPI shared mode at the rate set in the Sound control
+panel, or through an installed ASIO driver picked in Settings › Audio. The
+engine's configure step downloads the Steinberg ASIO SDK zip (checked against
+its SHA-256); pass `-DDSTUDIO_ENGINE_ASIO=OFF` to build without ASIO, or
+`-DFETCHCONTENT_SOURCE_DIR_DSTUDIO_ASIOSDK=<unpacked ASIOSDK>` offline.
 
 ### Linux
 
@@ -399,7 +402,9 @@ To release:
 3. The Release workflow checks that the tag matches `Cargo.toml`, is on `main` and has a changelog section, builds
    and signs the packages (the macOS signing job waits for approval in the `release` environment), and creates a
    draft release. Its notes are the changelog section followed by GitHub's generated list of pull requests.
-4. Review the draft and its packages, then publish it.
+4. Review the draft and its packages, then publish it. Publishing makes it the latest release, which running copies
+   find at launch and in Options › Check for Updates… (`crates/dstudio-app/src/updates.rs`, spec 022). Pre-releases
+   are never offered there.
 
 The section for the notes is extracted by [`tools/release/changelog-notes.sh`](../tools/release/changelog-notes.sh),
 tested in CI by `tools/release/test-changelog-notes.sh`.

@@ -38,6 +38,7 @@ static CLIP_TAKES_REVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 static ZOOM_FIT_REVIEW: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 mod analyzer_views;
+mod api_key;
 mod appmenu;
 mod assistant_panel;
 mod assistant_provider;
@@ -50,6 +51,7 @@ mod clipedit;
 mod composer;
 mod controller;
 mod count_in;
+mod default_instrument;
 mod device_canvas;
 mod device_editors;
 mod device_fields;
@@ -98,6 +100,7 @@ mod selection;
 mod selftest;
 mod send_to_sampler;
 mod settings;
+mod settings_search;
 mod shape_rack;
 mod shortcut_presets;
 mod shortcuts;
@@ -107,11 +110,14 @@ mod splitters;
 mod stepseq;
 mod synth;
 mod takes;
+mod tempo_lane;
 mod text_measure;
 mod timeline;
+mod tools;
 mod track_menu;
 mod transport_fields;
 mod typing;
+mod updates;
 mod warpedit;
 mod wavgen;
 mod window_buttons;
@@ -187,6 +193,9 @@ struct Args {
     /// 6 Check for Updates, 7 Undo History (after a few edits, the last one undone), 8 export dialog at 44.1 kHz,
     /// 9 with a loop region over bars 3-4 and the Range menu open on it.
     dialog_state: u8,
+    /// review-update-available / review-update-dialog: the update check finds a newer release
+    /// (updates::sample_release), shown as the title-bar pill, or (with dialog state 6) in the dialog.
+    update_review: bool,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
     /// the live recording clip.
@@ -196,6 +205,12 @@ struct Args {
     midi_recording_review: bool,
     /// review-settings-midi: Settings › MIDI with a SCREENSHOT-ONLY fake input list.
     settings_midi_review: bool,
+    /// Settings › MIDI › Default instrument: 1 = its menu open, 2 = a missing plugin chosen.
+    default_instrument_review: u8,
+    /// Settings › Search settings with this text typed (review-settings-search*).
+    settings_search_review: Option<&'static str>,
+    /// review-settings-help: Settings › Audio with Buffer size's (i) hovered, its help showing.
+    settings_help_review: bool,
     /// Settings › Shortcuts: 1 the page, 2 recording keys for Tap tempo, 3 Tap tempo unmapped,
     /// 4-6 searching "track", "notes", "transpose".
     shortcuts_review: u8,
@@ -233,11 +248,18 @@ struct Args {
     chain_gaps_review: u8,
     /// review-devices-minimap: Instrument track with the Synth and a long chain of built-in effects (the Devices minimap shows).
     devices_minimap_review: bool,
+    /// review-tool-menu (1): the timeline's edit tool menu open; review-marquee-range (2): two
+    /// MIDI clips with a Marquee range across both tracks.
+    tools_review: u8,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
     key_change_review: bool,
     /// review-count-in-menu: count-in set to 1 bar, the record button's count-in menu open.
     count_in_menu_review: bool,
+    /// review-tempo-lane: a song with tempo changes (120, a ramp from 140 at bar 3 down to 96 at
+    /// bar 5), the master row on Song › Tempo, a MIDI clip across the changes, the playhead in the
+    /// ramp (spec 015).
+    tempo_review: bool,
     /// review-track-menu: track 1's header menu open with its Color submenu.
     /// review-track-drag: track 1's header dragged below track 2, the drop line showing.
     track_menu_review: u8,
@@ -249,6 +271,9 @@ struct Args {
     /// review-returns-strip: the same project, Audio selected, channel strip on its Sends tab.
     /// review-returns-empty: the default project, Audio selected, Sends tab with no returns yet.
     /// review-returns-options: review-returns with the options of Audio's send to B open.
+    /// review-return-sends: review-returns with Return A sending into Return B at -6 dB and
+    /// Return A selected (spec 016). review-return-sends-strip: the same, mixer closed, channel
+    /// strip on Return A's Sends tab.
     returns_review: u8,
     /// review-groups*: 1 the two tracks in a group, 2 folded, 3 in the mixer.
     groups_review: u8,
@@ -300,6 +325,15 @@ struct Args {
     window_height: Option<f32>,
     /// --assistant-width <px>: saved docked-assistant width in 100%-zoom px (297..600), for reviews.
     assistant_width: Option<f32>,
+    /// review-assistant-full: the docked assistant at the full window height.
+    assistant_full: bool,
+    /// review-title-rename: the title bar's project name field open.
+    title_rename_review: bool,
+    /// review-synth-presets: reference-synth with the Synth's factory sound list open.
+    synth_presets_review: bool,
+    /// review-instrument-sounds: reference-synth with the Instruments browser open on the Synth's
+    /// Bass sounds.
+    instrument_sounds_review: bool,
     clip_menu: Option<i32>,
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
     ac_edit: Option<i32>,
@@ -367,6 +401,16 @@ fn parse_args() -> Result<Args, String> {
                     a.assistant_demo = Some("turn".into());
                     a.assistant_width = Some(600.0);
                     a.window_width.get_or_insert(1470.0);
+                }
+                "review-assistant-full" => {
+                    a.reference_default = true;
+                    a.open_assistant = true;
+                    a.assistant_demo = Some("turn".into());
+                    a.assistant_full = true;
+                }
+                "review-title-rename" => {
+                    a.reference_default = true;
+                    a.title_rename_review = true;
                 }
                 s if s.starts_with("review-assistant-") => {
                     a.reference_default = true;
@@ -468,6 +512,16 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.synth_state = true;
                 }
+                "review-synth-presets" => {
+                    a.reference_default = true;
+                    a.synth_state = true;
+                    a.synth_presets_review = true;
+                }
+                "review-instrument-sounds" => {
+                    a.reference_default = true;
+                    a.synth_state = true;
+                    a.instrument_sounds_review = true;
+                }
                 "reference-input-menu" => {
                     a.reference_default = true;
                     a.input_menu_state = true;
@@ -502,6 +556,15 @@ fn parse_args() -> Result<Args, String> {
                 }
                 "review-check-updates" => {
                     a.reference_default = true;
+                    a.dialog_state = 6;
+                }
+                "review-update-available" => {
+                    a.reference_default = true;
+                    a.update_review = true;
+                }
+                "review-update-dialog" => {
+                    a.reference_default = true;
+                    a.update_review = true;
                     a.dialog_state = 6;
                 }
                 "review-export-44k" => {
@@ -667,6 +730,11 @@ fn parse_args() -> Result<Args, String> {
                     a.open_mixer = true;
                     a.returns_review = 4;
                 }
+                st @ ("review-return-sends" | "review-return-sends-strip") => {
+                    a.reference_default = true;
+                    a.open_mixer = st == "review-return-sends";
+                    a.returns_review = if st == "review-return-sends" { 5 } else { 6 };
+                }
                 "review-track-rename" => {
                     a.reference_default = true;
                     a.track_rename_review = true;
@@ -675,6 +743,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.key_change_review = true;
                 }
+                st @ ("review-tool-menu" | "review-marquee-range") => {
+                    a.reference_default = true;
+                    a.tools_review = if st == "review-tool-menu" { 1 } else { 2 };
+                }
                 "review-snap-menu" => {
                     a.reference_default = true;
                     a.snap_menu_review = true;
@@ -682,6 +754,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-count-in-menu" => {
                     a.reference_default = true;
                     a.count_in_menu_review = true;
+                }
+                "review-tempo-lane" => {
+                    a.reference_default = true;
+                    a.tempo_review = true;
                 }
                 "review-clip-selection" => {
                     a.reference_default = true;
@@ -757,6 +833,19 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_midi_review = true;
                 }
+                "review-settings-help" => {
+                    a.reference_default = true;
+                    a.settings_help_review = true;
+                }
+                st @ ("review-settings-search" | "review-settings-search-none") => {
+                    a.reference_default = true;
+                    a.settings_search_review = Some(if st.ends_with("none") { "zzz" } else { "latency" });
+                }
+                st @ ("review-default-instrument" | "review-default-instrument-missing") => {
+                    a.reference_default = true;
+                    a.settings_midi_review = true;
+                    a.default_instrument_review = if st.ends_with("missing") { 2 } else { 1 };
+                }
                 st @ ("review-shortcuts"
                 | "review-shortcuts-recording"
                 | "review-shortcuts-unmapped"
@@ -787,7 +876,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-synth-presets, review-instrument-sounds, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
                     ));
                 }
             },
@@ -1110,8 +1199,21 @@ pub fn app_keymap() -> Keymap {
         let chords = chords.iter().map(|c| Chord::parse(c).expect("valid chord")).collect();
         k.bindings.push(Binding { action: action.into(), chords, when: Condition::MidiEditorFocused });
     }
+    // The Marquee tool's range: Delete, ⌘X, ⌘C and ⌘L act on it (⌘E and ⌘D are in the core preset).
+    for (action, chords) in [
+        ("range.delete", &["delete", "backspace"][..]),
+        ("range.cut", &["primary+x"][..]),
+        ("range.copy", &["primary+c"][..]),
+        ("range.loop", &["primary+l"][..]),
+    ] {
+        let chords = chords.iter().map(|c| Chord::parse(c).expect("valid chord")).collect();
+        k.bindings.push(Binding { action: action.into(), chords, when: Condition::RangeSelected });
+    }
     // Listed with no default key (record one in Settings › Shortcuts).
     for (action, when) in [
+        ("tool.select_selector", Condition::Always),
+        ("tool.select_marquee", Condition::Always),
+        ("tool.select_scissors", Condition::Always),
         ("clip.move_to_track_above", Condition::ClipsSelected),
         ("clip.move_to_track_below", Condition::ClipsSelected),
         ("midi.glue", Condition::MidiEditorFocused),
@@ -1139,7 +1241,12 @@ fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
     aw.upgrade()
         .map(|a| {
             let s = a.global::<Studio>();
-            s.get_chat_focused() || s.get_rename_open() || s.get_search_focused() || s.get_picker_focused() || s.get_feedback_open()
+            s.get_chat_focused()
+                || s.get_rename_open()
+                || s.get_search_focused()
+                || s.get_picker_focused()
+                || s.get_feedback_open()
+                || s.get_title_focused()
         })
         .unwrap_or(false)
 }
@@ -1149,12 +1256,12 @@ fn pick_import() -> Vec<PathBuf> {
 }
 
 /// `projects` is the projects folder (Settings › General), where Save starts.
-fn pick_project_dir(save: bool, projects: Option<PathBuf>) -> Option<PathBuf> {
+/// `name` is the project's name (renamed from the title bar before its first save, or "Untitled").
+fn pick_project_dir(save: bool, projects: Option<PathBuf>, name: &str) -> Option<PathBuf> {
     if save {
         // A project is a directory; ask for its name and create it.
         // Start in the projects folder the browser's Projects tab lists.
-        let dialog =
-            rfd::FileDialog::new().set_title("Save project").set_file_name(format!("Untitled.{}", dstudio_core::persist::EXTENSION));
+        let dialog = rfd::FileDialog::new().set_title("Save project").set_file_name(format!("{name}.{}", dstudio_core::persist::EXTENSION));
         let dialog = match projects.filter(|d| std::fs::create_dir_all(d).is_ok()) {
             Some(d) => dialog.set_directory(d),
             None => dialog,
@@ -1215,6 +1322,21 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
                     c.copy_clip();
                 }
             }
+        }
+        "tool.scissors" => ctl.borrow_mut().toggle_scissors(),
+        "tool.select_selector" => ctl.borrow_mut().set_tool(tools::Tool::Selector),
+        "tool.select_marquee" => ctl.borrow_mut().set_tool(tools::Tool::Marquee),
+        "tool.select_scissors" => ctl.borrow_mut().set_tool(tools::Tool::Scissors),
+        "range.delete" => ctl.borrow_mut().range_delete(),
+        "range.cut" => ctl.borrow_mut().range_cut(),
+        "range.copy" => {
+            ctl.borrow_mut().range_copy();
+        }
+        "range.duplicate" => ctl.borrow_mut().range_duplicate(),
+        "range.loop" => ctl.borrow_mut().range_loop(),
+        "clip.split_at_range" => ctl.borrow_mut().range_split(),
+        "edit.paste" if ctl.borrow().tools.clipboard.is_some() => {
+            ctl.borrow_mut().range_paste();
         }
         "edit.paste" => {
             let mut c = ctl.borrow_mut();
@@ -1293,6 +1415,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             }
             if c.settings.menu.is_some() {
                 c.settings_menu_dismiss();
+            } else if c.settings.open && c.settings_search_clear() {
+                // Escape with text in Search settings clears it and keeps Settings open.
             } else if c.settings.open {
                 c.close_settings();
             }
@@ -1303,6 +1427,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.devmenu_dismiss();
             c.auto_picker_close();
             c.transport_menus_dismiss();
+            c.tool_menu_dismiss();
+            c.range_clear();
             c.rename = None;
             c.rename_section = None;
             c.pr.menu = -1;
@@ -1321,7 +1447,13 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
                 c.duplicate_section(s);
             }
         }
-        a if a.starts_with("clip.") || a == "assistant.ask" => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
+        "assistant.ask" => {
+            let mut c = ctl.borrow_mut();
+            if let Some(id) = c.selected_clip {
+                c.ask_about_clip(id);
+            }
+        }
+        a if a.starts_with("clip.") => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
         "track.add_audio" => {
             ctl.borrow_mut().add_audio_track();
         }
@@ -1379,12 +1511,13 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "file.save" | "file.save_as" => {
             let existing = ctl.borrow().project_dir.clone().filter(|_| action == "file.save");
             let projects = ctl.borrow().files.projects_dir.clone();
-            if let Some(dir) = existing.or_else(|| pick_project_dir(true, projects)) {
+            let name = ctl.borrow().project().name.clone();
+            if let Some(dir) = existing.or_else(|| pick_project_dir(true, projects, &name)) {
                 ctl.borrow_mut().save_to(&dir);
             }
         }
         "file.open" => {
-            if let Some(dir) = pick_project_dir(false, None) {
+            if let Some(dir) = pick_project_dir(false, None, "") {
                 ctl.borrow_mut().open(&dir);
             }
         }
@@ -1621,7 +1754,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let zoom = Rc::new(RefCell::new(zoom::Zoom::new(zoom_percent)));
     ctl.borrow().bind_models(&app);
     {
-        // Provider: TEST fixture (flag, or the built-in one for --self-test), else the API key env var.
+        // Provider: TEST fixture (flag, or the built-in one for --self-test), else the API key env var,
+        // else the key saved in the keychain.
+        let mut from_keychain = false;
         let provider = match (&args.assistant_fixture, args.self_test) {
             (Some(path), _) => {
                 let text = std::fs::read_to_string(path).map_err(|e| format!("--assistant-fixture {}: {e}", path.display()))?;
@@ -1631,15 +1766,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 include_str!("../fixtures/assistant-selftest.json"),
                 "built-in self-test fixture",
             )?,
+            // review-assistant-key: no key yet (the panel asks for one).
+            (None, false) if args.assistant_demo.as_deref() == Some("key") => assistant_provider::Provider::Unavailable,
             // Review renders: a stand-in provider so the composer shows its enabled state (never sends).
             (None, false) if args.assistant_demo.is_some() => {
                 assistant_provider::Provider::fixture_from_json("{\"actions\": []}", "assistant demo")?
             }
-            (None, false) => assistant_provider::Provider::from_env(),
+            (None, false) => match assistant_provider::Provider::from_env() {
+                p if p.available() => p,
+                // A Finder-launched app has no environment: the key saved in the keychain.
+                _ => match api_key::KeyStore::System.load() {
+                    Some(k) => {
+                        from_keychain = true;
+                        assistant_provider::Provider::from_key(&k)
+                    }
+                    None => assistant_provider::Provider::Unavailable,
+                },
+            },
         };
+        // The self-test never reads or writes the user's keychain.
+        if args.self_test {
+            ctl.borrow_mut().key_store = api_key::KeyStore::Memory(Default::default());
+        }
         eprintln!("assistant: provider {provider:?}{}", if provider.is_fixture() { " (TEST provider, no network)" } else { "" });
         let mut c = ctl.borrow_mut();
         c.provider = Arc::new(provider);
+        c.assistant.key_saved = from_keychain;
         c.settings.prefs = saved_prefs;
         if let Some(dir) = prefs_path.as_ref().and_then(|p| p.parent()) {
             c.devices.chains.open(dir.join("Chains"));
@@ -1680,6 +1832,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Some(px) = args.assistant_width {
             c.settings.prefs.assistant_width = px * zoom::DESIGN_LEVEL;
+        }
+        if args.assistant_full {
+            c.settings.prefs.assistant_full = true;
         }
         if let Some(d) = &args.assistant_demo {
             c.assistant_demo(d)?;
@@ -1890,6 +2045,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.synth_page(args.synth_page.unwrap_or(0));
         c.seek_beats(20.0);
+        if args.synth_presets_review {
+            c.synth_pill(synth::act::PRESETS, 0, 1020.0, 520.0, 160.0);
+        }
+        if args.instrument_sounds_review {
+            c.browser_tab(0);
+            for k in ["i/builtin", "i/b/synth", "i/b/synth/Bass"] {
+                c.devices.expanded.insert(k.into());
+            }
+            c.devices.selected = Some("i/b/synth/Bass/Rubber Acid".into());
+        }
     }
     if args.input_menu_state || (args.settings_state && !args.settings_devices_review) {
         // SCREENSHOT-ONLY fake device listing (recording::screenshot_fake_devices), never
@@ -2441,10 +2606,75 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.key_mode(true);
         c.key_pick(2);
     }
+    if args.tools_review == 1 {
+        // Opened below the tool button of the default 1440 x 820 window (anchors are not measured yet).
+        ctl.borrow_mut().tool_menu_toggle(969.0, 98.0);
+    }
+    if args.tools_review == 2 {
+        let mut c = ctl.borrow_mut();
+        let ppq = dstudio_core::PPQ;
+        let p = c.project();
+        let (n, tracks): (u64, Vec<dstudio_core::TrackId>) = (p.next_id, p.tracks.iter().map(|t| t.id).collect());
+        if let Some(&inst) = tracks.get(1) {
+            let notes = (0..8).map(|i| dstudio_core::Note {
+                id: i + 1,
+                pitch: 60 + (i as u8 * 3) % 12,
+                start: i as i64 * ppq,
+                length: ppq / 2,
+                velocity: 100,
+            });
+            c.execute(dstudio_core::Command::AddMidiClip {
+                track: inst,
+                clip: dstudio_core::MidiClip {
+                    id: dstudio_core::ClipId(n),
+                    notes: notes.collect(),
+                    ..dstudio_core::MidiClip::empty(0, 8 * ppq)
+                },
+            });
+        }
+        c.set_tool(tools::Tool::Marquee);
+        c.tools.range = Some(dstudio_core::range::TimeRange { start: 4 * ppq, end: 12 * ppq, tracks });
+    }
+    if args.title_rename_review {
+        app.global::<Studio>().set_title_editing(true);
+    }
     if args.snap_menu_review {
         let mut c = ctl.borrow_mut();
         c.snap.pick(5);
         c.snap_menu_toggle(1211.0, 98.0);
+    }
+    if args.tempo_review {
+        let mut c = ctl.borrow_mut();
+        let ppq = dstudio_core::PPQ;
+        let tp = |beat: i64, bpm: f64, ramp: bool| dstudio_core::TempoPoint { time: beat * ppq, bpm, ramp };
+        c.execute(dstudio_core::Command::SetTempoMap {
+            points: vec![tp(0, 120.0, false), tp(8, 140.0, true), tp(16, 96.0, false)],
+            bpm: None,
+        });
+        let p = c.project();
+        let (n, inst) = (p.next_id, p.tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id));
+        if let Some(inst) = inst {
+            let notes = (0..24).map(|i| dstudio_core::Note {
+                id: i + 1,
+                pitch: 60 + (i as u8 * 5) % 12,
+                start: i as i64 * ppq,
+                length: ppq / 2,
+                velocity: 100,
+            });
+            c.execute(dstudio_core::Command::AddMidiClip {
+                track: inst,
+                clip: dstudio_core::MidiClip {
+                    id: dstudio_core::ClipId(n),
+                    notes: notes.collect(),
+                    ..dstudio_core::MidiClip::empty(0, 24 * ppq)
+                },
+            });
+        }
+        if !c.auto.shown {
+            c.auto_toggle_shown();
+        }
+        c.auto_choose(None, dstudio_core::AutomationTarget::Tempo);
+        c.seek_beats(12.0);
     }
     if args.count_in_menu_review {
         // Opened just below the record button of the default 1440 x 820 window (layout anchors are not
@@ -2655,13 +2885,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     // Anchored under the B tag of the Audio strip's Sends section.
                     c.open_send_options(audio, b, 16.0, 387.0);
                 }
+                if matches!(args.returns_review, 5 | 6) {
+                    // Spec 016: Return A sends into Return B.
+                    c.set_send_level(a, b, dstudio_core::db_to_gain(-6.0));
+                    c.send_gesture_end();
+                }
             }
-            c.routing.sends_open = matches!(args.returns_review, 1 | 4);
+            c.routing.sends_open = matches!(args.returns_review, 1 | 4 | 5);
         }
-        if let Some(&audio) = ids.first() {
-            c.select_track(audio);
+        let first_return = c.project().returns().next().map(|r| r.id);
+        if let Some(id) = if matches!(args.returns_review, 5 | 6) { first_return } else { ids.first().copied() } {
+            c.select_track(id);
         }
-        if matches!(args.returns_review, 2 | 3) {
+        if matches!(args.returns_review, 2 | 3 | 6) {
             app.global::<Studio>().set_strip_tab(1);
         }
     }
@@ -2785,6 +3021,37 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.settings.prefs.shortcuts = shortcuts::changes(&c.settings.keys.map, &c.settings.prefs.shortcut_preset);
         }
     }
+    if args.settings_help_review {
+        let mut c = ctl.borrow_mut();
+        c.open_settings();
+        c.settings_page(1);
+        drop(c);
+        // Hover Buffer size's (i) as a person would: the pointer runs along the label until the
+        // tip shows (window coordinates: below any in-window menu bar).
+        let aw = app.as_weak();
+        slint::Timer::single_shot(Duration::ZERO, move || {
+            use slint::platform::WindowEvent;
+            let Some(a) = aw.upgrade() else { return };
+            let g = a.get_anchors();
+            let full = a.window().size().to_logical(a.window().scale_factor()).height;
+            let y = g.settings_y + 292.5 + 7.0 + (full - a.get_content_height()).max(0.0);
+            for dx in 0..300 {
+                let position = slint::LogicalPosition::new(g.settings_x + 187.0 + 20.5 + dx as f32, y);
+                a.window().dispatch_event(WindowEvent::PointerMoved { position });
+                if !a.global::<Studio>().get_settings_tip().is_empty() {
+                    break;
+                }
+            }
+        });
+    }
+    if let Some(q) = args.settings_search_review {
+        let mut c = ctl.borrow_mut();
+        c.open_settings();
+        c.settings_page(1);
+        c.settings_search(q);
+        drop(c);
+        app.global::<Studio>().set_settings_search(q.into());
+    }
     if args.settings_midi_review {
         // SCREENSHOT-ONLY fake MIDI inputs (midi_in::screenshot_fake_ports), never opened:
         // "USB Keyboard" on and sending (light lit), "Pad Controller" switched off.
@@ -2796,6 +3063,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.settings.prefs.midi.disabled_inputs = vec!["fake:pads".into()];
         c.open_settings();
         c.settings_page(midi_in::MIDI_PAGE);
+        if args.default_instrument_review > 0 {
+            // SCREENSHOT-ONLY fake instrument plugins (never loaded); with 2, the choice is a
+            // plugin no scan found.
+            let fake = |name: &str, format| dstudio_core::PluginRef {
+                format,
+                id: format!("screenshot.{}", name.to_lowercase().replace(' ', "-")),
+                path: None,
+                name: name.into(),
+                vendor: "Screenshot".into(),
+                version: "1.0".into(),
+                kind: dstudio_core::PluginKind::Instrument,
+            };
+            let plugins = [fake("Glass Keys", dstudio_core::PluginFormat::Clap), fake("Tape Choir", dstudio_core::PluginFormat::Vst3)];
+            c.devices.catalog.plugins = plugins
+                .iter()
+                .map(|p| dstudio_engine::PluginInfo { plugin: p.clone(), has_editor: false, audio_inputs: 0, audio_outputs: 2 })
+                .collect();
+            c.settings.prefs.midi.default_instrument = Some(if args.default_instrument_review == 2 {
+                prefs::InstrumentChoice::Plugin { plugin: fake("Felt Upright", dstudio_core::PluginFormat::Clap) }
+            } else {
+                prefs::InstrumentChoice::Builtin { id: "drum-rack".into() }
+            });
+            if args.default_instrument_review == 1 {
+                c.settings_dropdown(5);
+            }
+        }
     }
     // Push view models once before the first frame, so conditional panels are built
     // for the initial state (setting them from inside the first BeforeRendering is
@@ -2909,7 +3202,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         studio.on_unsaved_save(move || {
             let existing = ctl.borrow().project_dir.clone();
             let projects = ctl.borrow().files.projects_dir.clone();
-            if let Some(dir) = existing.or_else(|| pick_project_dir(true, projects)) {
+            let name = ctl.borrow().project().name.clone();
+            if let Some(dir) = existing.or_else(|| pick_project_dir(true, projects, &name)) {
                 let mut c = ctl.borrow_mut();
                 c.save_to(&dir);
                 if !c.doc.is_dirty() {
@@ -2949,6 +3243,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     on!(on_open_recent, |c, i: i32| c.open_recent(i as usize));
     on!(on_updates_close, |c| c.dialogs_close());
+    on!(on_updates_download_clicked, |c| c.updates_download());
+    on!(on_update_pill_clicked, |c| c.update_pill_clicked());
     on!(on_key_change_choose, |c, i: i32| c.key_change_choice(match i {
         2 => transport_fields::KeyChoice::Transpose,
         1 => transport_fields::KeyChoice::Keep,
@@ -3010,6 +3306,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_shortcut_clear, |c, row: i32| c.shortcut_clear(row.max(0) as usize));
     on!(on_shortcuts_reset, |c| c.shortcuts_reset());
     on!(on_shortcuts_search, |c, text: slint::SharedString| c.shortcuts_search(text.as_str()));
+    on!(on_settings_search_edited, |c, text: slint::SharedString| c.settings_search(text.as_str()));
+    studio.on_settings_row_hit(|query, label| settings_search::row_hit(&query, &label));
+    studio.on_settings_help(|label| settings_search::help(&label).into());
     on!(on_settings_dropdown, |c, f: i32| c.settings_dropdown(f));
     on!(on_settings_menu_pick, |c, i: i32| c.settings_menu_pick(i.max(0) as usize));
     on!(on_settings_menu_dismiss, |c| c.settings_menu_dismiss());
@@ -3112,12 +3411,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     on!(on_chat_new, |c| c.assistant_new_chat());
     on!(on_chat_set_mode, |c, teach: bool| c.assistant_set_mode(teach));
+    on!(on_chat_save_key, |c, key: slint::SharedString| {
+        c.assistant_save_key(key.as_str());
+    });
+    on!(on_chat_remove_key, |c| c.assistant_remove_key());
+    on!(on_chat_toggle_full, |c| c.assistant_toggle_full());
+    on!(on_project_rename, |c, name: slint::SharedString| {
+        c.rename_project(name.as_str());
+    });
     on!(on_chat_dismiss_notice, |c| c.assistant_dismiss_notice());
     on!(on_chat_toggle_entry, |c, i: i32| c.assistant_toggle_entry(i.max(0) as usize));
     on!(on_chat_remove_context, |c| c.assistant_remove_context());
     on!(on_ac_resample, |c| c.resample_open_clip());
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
+        // The Marquee tool and Scissors take lane presses before anything else (src/tools.rs).
+        if kind == 0 {
+            c.snap.bypass = cmd;
+        }
+        if c.tool_pointer(kind, x, y) {
+            return;
+        }
         // A second press that completes a double-click acts on its own, and so do its moves and
         // release (src/clipedit.rs). It leaves press_epoch alone: a bump moves keyboard focus back
         // to the main area, away from a rename field the double-click just opened.
@@ -3138,6 +3452,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     on!(on_snap_toggle, |c| c.snap_toggle());
+    on!(on_tool_menu_toggle, |c, x: f32, y: f32| c.tool_menu_toggle(x, y));
+    on!(on_tool_menu_dismiss, |c| c.tool_menu_dismiss());
+    on!(on_tool_pick, |c, i: i32| c.set_tool(tools::Tool::ALL.get(i.max(0) as usize).copied().unwrap_or_default()));
     on!(on_snap_menu_toggle, |c, x: f32, y: f32| c.snap_menu_toggle(x, y));
     on!(on_snap_menu_pick, |c, i: i32| c.snap_menu_pick(i.max(0) as usize));
     on!(on_snap_menu_dismiss, |c| {
@@ -3217,6 +3534,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     on!(on_pr_zoom, |c, axis: i32, z: f32| c.pr_zoom(axis, z));
+    on!(on_pr_zoom_reset, |c, axis: i32| c.pr_zoom_reset(axis));
+    on!(on_tl_zoom, |c, axis: i32, z: f32| c.timeline_zoom(axis, z));
+    on!(on_tl_zoom_reset, |c, axis: i32| c.timeline_zoom_reset(axis));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
     on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
     on!(on_pr_scale_step, |c, m: i32, s: i32| c.pr_scale_step(m, s));
@@ -3576,6 +3896,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.auto_hover(x, y);
                 c.clip_hover(x, y);
+                c.tool_hover(x, y);
             }
         });
     }
@@ -3657,6 +3978,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     return true;
                 }
             }
+            // ⌘F with Settings open: the cursor goes to Search settings (spec 014).
+            if primary && !shift && !alt && !ctrl && chord.key.eq_ignore_ascii_case("f") && ctl.borrow().settings.open {
+                if let Some(a) = aw.upgrade() {
+                    let s = a.global::<Studio>();
+                    s.set_settings_search_focus(s.get_settings_search_focus() + 1);
+                }
+                return true;
+            }
             let cx = {
                 let c = ctl.borrow();
                 Context {
@@ -3669,6 +3998,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     midi_clip_selected: c.selected_clips().iter().any(|id| c.project().midi_clip(*id).is_some()),
                     midi_editor_focused: c.pr_visible() && c.pr.focused,
                     section_selected: c.selected_section.is_some(),
+                    range_selected: c.tools.range.is_some(),
                     clip_or_devices_focused: c.bottom_panel_shown(),
                     ..Default::default()
                 }
@@ -3781,6 +4111,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     app_menu_timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), appmenu::adopt_items);
     slint::Timer::single_shot(Duration::ZERO, appmenu::set_dock_icon);
     let dialog_timer = slint::Timer::default();
+    // Updates (updates.rs): a real run checks once at launch, in the background and quietly.
+    // Self-tests and review states never use the network: their checks answer at once.
+    {
+        let mut c = ctl.borrow_mut();
+        if use_prefs {
+            c.updates.saved_path = updates::saved_path();
+        } else {
+            let latest = if args.update_review {
+                updates::sample_release()
+            } else {
+                updates::Release { version: env!("CARGO_PKG_VERSION").into(), ..Default::default() }
+            };
+            c.updates.check_override = Some(Ok(Some(latest)));
+        }
+        c.updates_check(false);
+    }
     if args.dialog_state > 0 {
         let dir = std::env::temp_dir().join(format!("dstudio-ref-{}", std::process::id()));
         std::fs::create_dir_all(&dir)?;
@@ -3938,6 +4284,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if !c.pr.preview_offs.is_empty() {
                 c.pr_retry_note_offs();
             }
+            c.pr_preview_tick();
             if c.pending_jobs > 0 {
                 c.poll_jobs();
                 if let Some(a) = aw.upgrade() {

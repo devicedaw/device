@@ -86,6 +86,9 @@ enum Step {
 }
 
 thread_local! {
+    /// Right after the audition click: the previewed pitch, its scheduled length (s) and whether
+    /// its note-off was set (midi steps).
+    static AUDITION_SEEN: Cell<(Option<u8>, Option<f64>, bool)> = const { Cell::new((None, None, false)) };
     /// Audio loop start before the footer Position drag (audio loop section).
     static AUDIO_LOOP_START: Cell<i64> = const { Cell::new(0) };
     /// Track count and the open clip before the audio clip editor's Resample.
@@ -405,6 +408,18 @@ fn midi_steps() -> Vec<Step> {
                 .ok_or(format!("start {} len {} tab {} pr {}", m.start, m.length, s.get_bottom_tab(), s.get_pr_visible()))
             }),
         ),
+        Check(
+            "the empty clip's sidebar offers Shape (selectable) and opens on Patterns",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let empty = instrument_clip(c).is_some_and(|m| m.notes.is_empty());
+                (empty && s.get_composer_shape_ok() && !s.get_composer_shape_tab()).then_some(()).ok_or(format!(
+                    "empty {empty} shape ok {} tab {}",
+                    s.get_composer_shape_ok(),
+                    s.get_composer_shape_tab()
+                ))
+            }),
+        ),
         DoC(
             "click the MIDI clip in the lane",
             Box::new(move |a, ctl| {
@@ -643,6 +658,49 @@ fn midi_steps() -> Vec<Step> {
                 (c.pr.preview.is_none() && held == 0 && c.doc.history_labels().len() == hp2.get())
                     .then_some(())
                     .ok_or(format!("preview {:?} held {held}", c.pr.preview))
+            }),
+        ),
+        DoC(
+            "audition: click the longest note in the clip (no drag); note what sounds right after",
+            Box::new(|a, ctl| {
+                let n = notes_of(&ctl.borrow()).into_iter().max_by_key(|n| n.length);
+                if let Some(n) = n {
+                    let beat = (n.start as f64 + n.length as f64 / 2.0) / dstudio_core::PPQ as f64;
+                    let (x, y) = pr_xy(ctl, beat, n.pitch as i32);
+                    click(a, x, y);
+                    // Read at once: a slow machine may reach the next step after a short note ended.
+                    let c = ctl.borrow();
+                    AUDITION_SEEN.with(|s| {
+                        s.set((c.pr.preview.map(|p| p.1), c.pr.preview_len.map(|(_, secs)| secs), c.pr.preview_off_at.is_some()))
+                    });
+                }
+            }),
+        ),
+        Check(
+            "audition: the click sounded the note, for its length (capped), with its note-off scheduled; no edit",
+            Box::new(|c, _| {
+                let n = notes_of(c).into_iter().max_by_key(|n| n.length).ok_or("no notes")?;
+                let want = c.project().ticks_to_seconds(n.length).clamp(0.05, crate::pianoroll::AUDITION_CAP_S);
+                let (pitch, secs, off) = AUDITION_SEEN.with(Cell::get);
+                let ok = pitch == Some(n.pitch) && secs.is_some_and(|s| (s - want).abs() < 1e-6) && off;
+                ok.then_some(()).ok_or(format!("pitch {pitch:?} (want {}) secs {secs:?} (want {want}) off {off}", n.pitch))
+            }),
+        ),
+        DoC(
+            "audition: its time is up (no waiting: the note-off is moved to now), then the poll timer's tick",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.pr.preview_off_at.is_some() {
+                    c.pr.preview_off_at = Some(std::time::Instant::now());
+                }
+                c.pr_preview_tick();
+            }),
+        ),
+        Check(
+            "audition: the note stopped by itself",
+            Box::new(|c, _| {
+                let held = c.engine.preview().notes;
+                (c.pr.preview.is_none() && held == 0).then_some(()).ok_or(format!("preview {:?} held {held}", c.pr.preview))
             }),
         ),
         DoC(
@@ -1622,16 +1680,17 @@ fn synth_steps() -> Vec<Step> {
             }),
         ),
         Do(
-            "click the preset name, pick the 4th sound in the list",
+            "click the preset name, pick Rubber Acid (Bass, under its heading)",
             Box::new(|a| {
                 let (x, y) = synth_xy(crate::devices::SYNTH_W - 74.0, 16.0);
                 click(a, x, y);
-                let (x, y) = synth_menu_row(a, 4);
+                // Rows: Bass, Basement Sub, Rubber Acid, …
+                let (x, y) = synth_menu_row(a, 2);
                 click(a, x, y);
             }),
         ),
         Check(
-            "synth: preset list loaded factory sound 4 in one undo step, list closed",
+            "synth: preset list loaded Rubber Acid (factory sound 4) in one undo step, list closed",
             Box::new(move |c, a| {
                 one_step(&r2, c, "Load Preset")?;
                 let (v, name) = inst_synth(c).ok_or("no instrument")?;
@@ -1990,7 +2049,7 @@ fn synth_steps() -> Vec<Step> {
             Box::new(|_, ctl| {
                 let mut c = ctl.borrow_mut();
                 let t = c.selected_track.expect("selected track");
-                c.add_item_to_track(&crate::devices::Item::BuiltinSynth, t, None);
+                c.add_item_to_track(&crate::devices::Item::BuiltinSynth(None), t, None);
             }),
         ),
         Check(
@@ -1999,11 +2058,29 @@ fn synth_steps() -> Vec<Step> {
                 (c.synth_device().is_some() && a.global::<Studio>().get_synth_visible()).then_some(()).ok_or("no Synth".to_string())
             }),
         ),
+        DoC(
+            "drop the Synth's Analog Kick sound from the browser on the track",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let t = c.selected_track.expect("selected track");
+                let i =
+                    dstudio_core::builtin::synth_v2::SYNTH_V2.factory.iter().position(|f| f.name == "Analog Kick").expect("Analog Kick");
+                c.add_item_to_track(&crate::devices::Item::BuiltinSynth(Some(i as u16)), t, None);
+            }),
+        ),
+        Check(
+            "synth: a browser sound loads into the track's Synth",
+            Box::new(|c, _| {
+                let p = inst_synth(c).and_then(|p| p.1);
+                (p.as_deref() == Some("Analog Kick")).then_some(()).ok_or(format!("preset {p:?}"))
+            }),
+        ),
         Do(
-            "Cmd+Z x2 (add, remove)",
+            "Cmd+Z x3 (sound, add, remove)",
             Box::new(|a| {
-                key(a, "z", true, false);
-                key(a, "z", true, false);
+                for _ in 0..3 {
+                    key(a, "z", true, false);
+                }
             }),
         ),
         Check(
@@ -2415,7 +2492,7 @@ fn steps() -> Vec<Step> {
             Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into())),
         ),
         DoC(
-            "two returns for the Project export: Return A (sent to at -6 dB from a playing track, and the Out of another track with clips), Return B (with a device, sent to pre-fader from the playing track)",
+            "three returns for the Project export: Return A (sent to at -6 dB from a playing track, and the Out of another track with clips; sends into B and C), Return B (with a device, sent to pre-fader from the playing track; sends pre-fader into C), Return C",
             Box::new(|_a, ctl| {
                 let mut c = ctl.borrow_mut();
                 EXPORT_UNDO_DEPTH.with(|d| d.set(c.doc.undo_depth()));
@@ -2426,7 +2503,18 @@ fn steps() -> Vec<Step> {
                 with_clips.sort_by_key(|(mute, _)| *mute);
                 let with_clips: Vec<dstudio_core::TrackId> = with_clips.into_iter().map(|(_, id)| id).collect();
                 let selected = c.selected_track;
-                let (Some(ra), Some(rb)) = (c.add_return_track(true), c.add_return_track(true)) else { return };
+                let (Some(ra), Some(rb), Some(rc)) = (c.add_return_track(true), c.add_return_track(true), c.add_return_track(true)) else {
+                    return;
+                };
+                // Spec 016: A into B (rendered, so left out of the set) and C (a Live return send),
+                // B pre-fader into C (carried by B's rendered track).
+                for (from, to, pre) in [(ra, rb, false), (ra, rc, false), (rb, rc, true)] {
+                    c.set_send_level(from, to, 0.5);
+                    c.send_gesture_end();
+                    if pre {
+                        c.toggle_send_pre(from, to);
+                    }
+                }
                 let plugin = dstudio_core::PluginRef {
                     format: dstudio_core::PluginFormat::Clap,
                     id: "studio.dstudio.test.gain".into(),
@@ -2489,12 +2577,14 @@ fn steps() -> Vec<Step> {
                 // Return B has a device and is fed, so it is rendered as one more audio clip.
                 let wet = std::fs::read_dir(folder.join("Samples/Processed/DStudio"))
                     .map_or(0, |d| d.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().contains("Return B")).count());
-                let sends = if with_clips > 1 { 3 } else { 2 };
+                // Plus the rendered Return B's send into Return C.
+                let sends = if with_clips > 1 { 4 } else { 3 };
                 let _ = std::fs::remove_dir_all(&c.export.dir);
                 (sum.audio_clips == with_clips + 1
                     && sum.midi_clips == midi
-                    && sum.return_tracks == 2
+                    && sum.return_tracks == 3
                     && sum.sends == sends
+                    && sum.return_sends == 1
                     && wet == 1
                     && !a.global::<Studio>().get_export_open())
                 .then_some(())
@@ -2502,9 +2592,17 @@ fn steps() -> Vec<Step> {
                     "{sum:?} vs {with_clips} rendered, {midi} MIDI clips, {sends} sends; Return B renders {wet}; tracks {:?}",
                     p.tracks.iter().map(|t| (t.name.as_str(), t.mute, t.devices.len(), t.sends.len())).collect::<Vec<_>>()
                 ))?;
-                ["Return A, Return B", "Returns with devices (Return B)", "Pre-fader sends", if with_clips > 1 { "Sends Only" } else { "" }]
-                    .iter()
-                    .try_for_each(|w| notes.contains(w).then_some(()).ok_or(format!("the notes do not mention '{w}': {notes}")))
+                [
+                    "Return A, Return B, Return C",
+                    "Returns with devices (Return B)",
+                    "Pre-fader sends",
+                    if with_clips > 1 { "Sends Only" } else { "" },
+                    "Sends between return tracks",
+                    "Return A to Return C",
+                    "Return B to Return C",
+                ]
+                .iter()
+                .try_for_each(|w| notes.contains(w).then_some(()).ok_or(format!("the notes do not mention '{w}': {notes}")))
             }),
         ),
         DoC(
@@ -4369,7 +4467,7 @@ fn returns_steps() -> Vec<Step> {
             Box::new(|a| click(a, bottom_x() + 8.0 * 0.85 + 14.0, bottom_end() - 302.0 * 0.85 + 11.0 * 0.85)),
         ),
         Check(
-            "returns: every track strip shows one send row per return, the return strips none",
+            "returns: every track strip shows one send row per return, Return A one for Return B (spec 016)",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
                 let strips: Vec<_> = s.get_strips().iter().collect();
@@ -4379,7 +4477,7 @@ fn returns_steps() -> Vec<Step> {
                 (c.mixer_open
                     && c.routing.sends_open
                     && s.get_sends_open()
-                    && rows == ordinary * 2
+                    && rows == ordinary * 2 + 1
                     && ret == 2
                     && s.get_strip_sends_max() == 2)
                     .then_some(())
@@ -4571,6 +4669,187 @@ fn returns_steps() -> Vec<Step> {
                 for r in rs {
                     c.execute(dstudio_core::Command::RemoveTrack { track: r });
                 }
+                a.global::<Studio>().set_strip_tab(0);
+                c.ui_dirty = true;
+            }),
+        ),
+    ]
+}
+
+/// Sends between return tracks (spec 016): Return A's Sends tab knob into Return B, its mixer
+/// row and tag menu, the last return without slots, and a refused return move.
+fn return_send_steps() -> Vec<Step> {
+    use Step::*;
+    let u = 0.85;
+    // As in returns_steps: the first Sends tab knob, and a mixer send tag (row `r` of `n`) on
+    // the strip in `column`.
+    let knob = move || (bottom_x() + 47.0, bottom_y() + 128.0 * u + 6.0 + 33.0);
+    let tag = move |column: i32, r: usize, n: usize| {
+        (
+            bottom_x() + column as f32 * 108.0 * u + 8.0 * u + 9.0 * u,
+            bottom_end() - 302.0 * u - (n as f32 * 20.0 + 4.0) * u + r as f32 * 20.0 * u + 10.0 * u,
+        )
+    };
+    let ab = |c: &Controller| -> Option<(dstudio_core::TrackId, dstudio_core::TrackId)> {
+        let r: Vec<_> = c.project().returns().map(|t| t.id).collect();
+        Some((*r.first()?, *r.get(1)?))
+    };
+    let a_send = move |c: &Controller| ab(c).and_then(|(a, b)| c.project().track(a)?.sends.iter().find(|s| s.target == b).copied());
+    vec![
+        DoC(
+            "return sends: two returns, Return A selected on its Sends tab",
+            Box::new(move |a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.mixer_open = false;
+                c.routing.sends_open = false;
+                let t = c.project().tracks[0].id;
+                let ra = c.sends_add_return(t);
+                c.sends_add_return(t);
+                if let Some(ra) = ra {
+                    c.select_track(ra);
+                }
+                c.set_bottom_tab(BottomTab::Devices);
+                a.global::<Studio>().set_strip_tab(1);
+                c.ui_dirty = true;
+            }),
+        ),
+        Check(
+            "return sends: Return A's Sends tab has one silent knob, for Return B",
+            Box::new(move |c, a| {
+                let rows: Vec<_> = a.global::<Studio>().get_sel_sends().iter().collect();
+                let b = ab(c).map(|(_, b)| b.0 as i32);
+                (rows.len() == 1 && Some(rows[0].target) == b && !rows[0].stored && a.global::<Studio>().get_sel_can_send())
+                    .then_some(())
+                    .ok_or(format!("rows {:?}", rows.iter().map(|r| (r.target, r.stored)).collect::<Vec<_>>()))
+            }),
+        ),
+        DoC(
+            "return sends: drag the Return B knob up 60 pt",
+            Box::new(move |a, ctl| {
+                ctl.borrow_mut().doc.coalesce_window = std::time::Duration::ZERO;
+                let (x, y) = knob();
+                drag(a, x, y, x, y - 60.0);
+                ctl.borrow_mut().doc.coalesce_window = std::time::Duration::from_millis(750);
+            }),
+        ),
+        Check(
+            "return sends: Return A sends into Return B post-fader ('Send Level Change')",
+            Box::new(move |c, _| {
+                let s = a_send(c);
+                (s.is_some_and(|s| s.level > 0.0 && !s.pre_fader) && c.doc.undo_label() == Some("Send Level Change"))
+                    .then_some(())
+                    .ok_or(format!("send {s:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "return sends: select Return B",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if let Some((_, b)) = ab(&c) {
+                    c.select_track(b);
+                }
+            }),
+        ),
+        Check(
+            "return sends: the last return has no send slots",
+            Box::new(|_, a| {
+                let n = a.global::<Studio>().get_sel_sends().row_count();
+                (n == 0).then_some(()).ok_or(format!("{n} slots"))
+            }),
+        ),
+        DoC(
+            "return sends: open the mixer with the Sends sections expanded",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.mixer_open = true;
+                c.routing.sends_open = true;
+                c.ui_dirty = true;
+            }),
+        ),
+        Check(
+            "return sends: Return A's strip has one row (on Return B's line), Return B's none",
+            Box::new(move |c, a| {
+                let s = a.global::<Studio>();
+                let (ra, rb) = ab(c).ok_or("no returns")?;
+                let strips: Vec<_> = s.get_strips().iter().collect();
+                let strip =
+                    |id: dstudio_core::TrackId| strips.iter().find(|st| st.id == id.0 as i32).map(|st| (st.send_count, st.send_first));
+                let (Some((na, fa)), Some((nb, _))) = (strip(ra), strip(rb)) else { return Err("no return strips".into()) };
+                let row = s.get_strip_sends().row_data(fa as usize).map(|r| r.row);
+                (na == 1 && nb == 0 && row == Some(1)).then_some(()).ok_or(format!("A {na} rows (row {row:?}), B {nb}"))
+            }),
+        ),
+        DoC(
+            "return sends: click the B tag on Return A's strip",
+            Box::new(move |a, ctl| {
+                let column = {
+                    let c = ctl.borrow();
+                    let ra = ab(&c).map(|(a, _)| a.0 as i32);
+                    a.global::<Studio>().get_strips().iter().find(|st| Some(st.id) == ra).map_or(0, |st| st.column)
+                };
+                let (x, y) = tag(column, 1, 2);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "return sends: the send options list Post-fader (checked), Pre-fader, Reset to 0 dB, Remove send",
+            Box::new(|c, _| {
+                let l = c.route_menu_labels();
+                (l == ["Post-fader", "Pre-fader", "Reset to 0 dB", "Remove send"]).then_some(()).ok_or(format!("{l:?}"))
+            }),
+        ),
+        DoC(
+            "return sends: pick 'Pre-fader'",
+            Box::new(|a, ctl| {
+                let (x, y) = route_row(ctl, 1);
+                click(a, x, y)
+            }),
+        ),
+        Check(
+            "return sends: the send is pre-fader ('Send Pre-Fader')",
+            Box::new(move |c, _| {
+                (a_send(c).is_some_and(|s| s.pre_fader) && c.doc.undo_label() == Some("Send Pre-Fader")).then_some(()).ok_or(format!(
+                    "send {:?} undo {:?}",
+                    a_send(c),
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        DoC(
+            "return sends: move Return B above Return A",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if let Some((ra, rb)) = ab(&c) {
+                    let to = c.project().track_index(ra).unwrap_or(0);
+                    c.execute(dstudio_core::Command::MoveTrack { track: rb, index: to });
+                }
+            }),
+        ),
+        Check(
+            "return sends: the move is refused, the status line names the send",
+            Box::new(move |c, _| {
+                let msg = c.status_text().unwrap_or_default().to_string();
+                let order: Vec<_> = c.project().returns().map(|t| t.name.clone()).collect();
+                (msg.contains("Return A sends into Return B: remove that send to move it here")
+                    && order == ["Return A", "Return B"]
+                    && c.doc.undo_label() == Some("Send Pre-Fader"))
+                .then_some(())
+                .ok_or(format!("status {msg:?} order {order:?}"))
+            }),
+        ),
+        DoC(
+            "return sends: clean up (close the mixer, delete the returns, back to the Input tab)",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.route_menu_close();
+                c.mixer_open = false;
+                c.routing.sends_open = false;
+                let rs: Vec<_> = c.project().returns().map(|t| t.id).collect();
+                for r in rs {
+                    c.execute(dstudio_core::Command::RemoveTrack { track: r });
+                }
+                let t = c.project().tracks[0].id;
+                c.select_track(t);
                 a.global::<Studio>().set_strip_tab(0);
                 c.ui_dirty = true;
             }),
@@ -10532,7 +10811,7 @@ fn files_steps() -> Vec<Step> {
             }),
         ),
         Do("files: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
-        Do("files: click the Projects tab", Box::new(|a| click(a, geo().browser_x + 112.0, geo().browser_y + 13.8))),
+        Do("files: click the Projects tab", Box::new(|a| click(a, geo().browser_x + 33.0, geo().browser_y + 13.8))),
         Check(
             "files: Projects is empty, Back is enabled",
             Box::new(|c, a| {
@@ -10546,7 +10825,7 @@ fn files_steps() -> Vec<Step> {
                 ok.then_some(()).ok_or(format!("section {} tab {} title {:?}", c.files.section, c.files.tab, s.get_files_empty_title()))
             }),
         ),
-        Do("files: click the Files tab", Box::new(|a| click(a, geo().browser_x + 191.0, geo().browser_y + 13.8))),
+        Do("files: click the Files tab", Box::new(|a| click(a, geo().browser_x + 111.0, geo().browser_y + 13.8))),
         Check(
             "files: Folders is empty with its hint",
             Box::new(|c, a| {
@@ -10848,13 +11127,14 @@ fn menu_bar_steps() -> Vec<Step> {
     vec![
         DoC("menu: Options › Check for Updates…", Box::new(|_, ctl| ctl.borrow_mut().menu_action("options.check_updates"))),
         Check(
-            "menu: the updates dialog is open and names the version",
+            "menu: the updates dialog is open and says this version is the latest",
             Box::new(|_, a| {
                 let s = a.global::<Studio>();
-                (s.get_updates_open() && s.get_app_version() == env!("CARGO_PKG_VERSION")).then_some(()).ok_or(format!(
-                    "open {} version {:?}",
+                let want = format!("You're running Device v{}, the latest version.", env!("CARGO_PKG_VERSION"));
+                (s.get_updates_open() && s.get_updates_text() == want.as_str() && !s.get_updates_download()).then_some(()).ok_or(format!(
+                    "open {} text {:?}",
                     s.get_updates_open(),
-                    s.get_app_version()
+                    s.get_updates_text()
                 ))
             }),
         ),
@@ -10995,6 +11275,122 @@ fn menu_bar_steps() -> Vec<Step> {
     ]
 }
 
+/// Update check (spec 022): a newer release shows the title-bar pill, which opens the dialog with
+/// the version and notes; Download opens the release page (recorded: the self-test never opens a
+/// browser or uses the network); with Settings › General's launch check off, nothing is shown.
+fn updates_steps() -> Vec<Step> {
+    use Step::*;
+    let reset = |c: &mut Controller, latest: crate::updates::Release| {
+        c.dialogs_close();
+        c.updates.state = Default::default();
+        c.updates.opened = None;
+        c.updates.check_override = Some(Ok(Some(latest)));
+    };
+    let current = || crate::updates::Release { version: env!("CARGO_PKG_VERSION").into(), ..Default::default() };
+    vec![
+        Check(
+            "updates: no pill when this version is the latest",
+            Box::new(|_, a| {
+                let v = a.global::<Studio>().get_update_version();
+                v.is_empty().then_some(()).ok_or(format!("pill {v:?}"))
+            }),
+        ),
+        DoC(
+            "updates: a launch check finds a newer release",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                reset(&mut c, crate::updates::sample_release());
+                c.updates_check(false);
+            }),
+        ),
+        Check(
+            "updates: the pill shows the new version and the dialog stays closed",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let want = crate::updates::sample_release().version;
+                (s.get_update_version() == want.as_str() && !c.updates_open).then_some(()).ok_or(format!(
+                    "pill {:?} open {}",
+                    s.get_update_version(),
+                    c.updates_open
+                ))
+            }),
+        ),
+        Do("updates: click the pill", Box::new(|a| click(a, win().0 - 227.0 - 15.0, 9.45 + 11.0))),
+        Check(
+            "updates: the dialog shows the new version, notes and Download",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let r = crate::updates::sample_release();
+                let want = format!("Device {} is available. You're running v{}.", r.version, env!("CARGO_PKG_VERSION"));
+                (c.updates_open
+                    && s.get_updates_text() == want.as_str()
+                    && s.get_updates_notes().row_count() == 3
+                    && s.get_updates_more() == "and 12 more changes"
+                    && s.get_updates_download())
+                .then_some(())
+                .ok_or(format!("open {} text {:?} more {:?}", c.updates_open, s.get_updates_text(), s.get_updates_more()))
+            }),
+        ),
+        Do("updates: click Download", Box::new(|a| a.global::<Studio>().invoke_updates_download_clicked())),
+        Check(
+            "updates: the release page is opened and the dialog closed",
+            Box::new(|c, _| {
+                let want = crate::updates::sample_release().page;
+                (c.updates.opened.as_deref() == Some(want.as_str()) && !c.updates_open)
+                    .then_some(())
+                    .ok_or(format!("opened {:?} open {}", c.updates.opened, c.updates_open))
+            }),
+        ),
+        DoC(
+            "updates: with the launch check off in Settings › General, a launch check shows nothing",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                reset(&mut c, crate::updates::sample_release());
+                c.general_toggle(5);
+                c.updates_check(false);
+            }),
+        ),
+        Check(
+            "updates: no pill",
+            Box::new(|c, a| {
+                let v = a.global::<Studio>().get_update_version();
+                (v.is_empty() && !c.settings.prefs.general.check_updates_at_launch).then_some(()).ok_or(format!("pill {v:?}"))
+            }),
+        ),
+        DoC(
+            "updates: the menu still checks; restore the defaults",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.menu_action("options.check_updates");
+                c.general_toggle(5);
+            }),
+        ),
+        Check(
+            "updates: the menu found it",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                (c.updates_open && s.get_updates_download() && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
+                    .then_some(())
+                    .ok_or(format!("open {} download {}", c.updates_open, s.get_updates_download()))
+            }),
+        ),
+        DoC(
+            "updates: back to no update",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                reset(&mut c, current());
+            }),
+        ),
+        Check(
+            "updates: the pill is gone",
+            Box::new(|c, a| {
+                let v = a.global::<Studio>().get_update_version();
+                (v.is_empty() && !c.updates_open).then_some(()).ok_or(format!("pill {v:?}"))
+            }),
+        ),
+    ]
+}
+
 /// Settings › General: the controls DStudio backs change the preferences; the others stay off.
 fn general_settings_steps() -> Vec<Step> {
     use Step::*;
@@ -11017,12 +11413,12 @@ fn general_settings_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "general: defaults (Return to start; third-party windows and on top on)",
+            "general: defaults (Return to start; third-party windows, on top and update check on)",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
                 let on: Vec<bool> = s.get_general_on().iter().collect();
                 (s.get_settings_page() == 0
-                    && on == [false, true, false, true, false]
+                    && on == [false, true, false, true, false, true]
                     && !s.get_general_stop_in_place()
                     && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
                 .then_some(())
@@ -11031,20 +11427,35 @@ fn general_settings_steps() -> Vec<Step> {
         ),
         Do(
             "general: click Stop in place",
-            Box::new(|a| click(a, page_x() + content_w() - 20.5 - 172.5 + 87.0 + 40.0, set_y() + 203.8 + 8.6)),
+            Box::new(|a| click(a, page_x() + content_w() - 20.5 - 172.5 + 87.0 + 40.0, set_y() + 223.4 + 8.6)),
         ),
         Do(
             "general: click Auto-show built-in effect windows",
             Box::new(move |a| {
-                let (x, y) = switch_xy(391.4);
+                let (x, y) = switch_xy(411.0);
                 click(a, x, y);
             }),
         ),
         Do(
             "general: click the disabled Sample licensing switch",
             Box::new(move |a| {
-                let (x, y) = switch_xy(262.9);
+                let (x, y) = switch_xy(282.5);
                 click(a, x, y);
+            }),
+        ),
+        Do(
+            "general: click Check for updates at launch",
+            Box::new(move |a| {
+                let (x, y) = switch_xy(108.0);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "general: the launch update check is off",
+            Box::new(|c, a| {
+                (!c.settings.prefs.general.check_updates_at_launch && a.global::<Studio>().get_general_on().row_data(5) == Some(false))
+                    .then_some(())
+                    .ok_or(format!("{:?}", c.settings.prefs.general))
             }),
         ),
         Check(
@@ -11084,6 +11495,7 @@ fn general_settings_steps() -> Vec<Step> {
                     c.device_remove(id);
                 }
                 c.general_toggle(2);
+                c.general_toggle(5);
                 c.general_stop_in_place(false);
             }),
         ),
@@ -12054,6 +12466,464 @@ fn snap_steps() -> Vec<Step> {
     ]
 }
 
+/// Timeline header zoom sliders (roadmap G2): the horizontal one sets the zoom, the vertical one
+/// every shown track's height (a view change, not an undo step); double-clicks reset both.
+fn zoom_slider_steps() -> Vec<Step> {
+    use crate::timeline::DEFAULT_PX_PER_BEAT;
+    use Step::*;
+    let before = Rc::new(Cell::new(0usize));
+    let b2 = before.clone();
+    vec![
+        DoC(
+            "zoom sliders: drag both to the right end",
+            Box::new(move |a, ctl| {
+                b2.set(ctl.borrow().doc.undo_depth());
+                let s = a.global::<Studio>();
+                s.invoke_tl_zoom(1, 1.0);
+                s.invoke_tl_zoom(0, 1.0);
+            }),
+        ),
+        Check(
+            "zoom sliders: closest zoom, every track at the tallest row, knobs at the end, no undo step",
+            Box::new(move |c, a| {
+                let s = a.global::<Studio>();
+                let tall = c.project().tracks.iter().take(c.view.pinned_from).all(|t| t.height == dstudio_core::Track::HEIGHT_RANGE.1);
+                ((c.view.px_per_beat - crate::timeline::MAX_PX_PER_BEAT).abs() < 1e-6
+                    && tall
+                    && s.get_tl_hzoom() > 0.99
+                    && s.get_tl_vzoom() > 0.99
+                    && c.doc.undo_depth() == before.get())
+                .then_some(())
+                .ok_or(format!("ppb {} knobs {} {} undo {}", c.view.px_per_beat, s.get_tl_hzoom(), s.get_tl_vzoom(), c.doc.undo_depth()))
+            }),
+        ),
+        Do(
+            "zoom sliders: double-click both",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_tl_zoom_reset(1);
+                s.invoke_tl_zoom_reset(0);
+            }),
+        ),
+        Check(
+            "zoom sliders: default zoom and row height again",
+            Box::new(|c, _| {
+                let unit = c.project().tracks.iter().take(c.view.pinned_from).all(|t| t.height == 1.0);
+                ((c.view.px_per_beat - DEFAULT_PX_PER_BEAT).abs() < 1e-6 && unit).then_some(()).ok_or(format!("ppb {}", c.view.px_per_beat))
+            }),
+        ),
+    ]
+}
+
+/// Edit tools (spec 012): the tool menu picks Scissors, T toggles it, a Scissors click splits a
+/// clip (one undo step), a Marquee drag over two tracks then Delete cuts a hole through both,
+/// ⌘Z restores it, Escape clears the range but keeps the tool.
+fn tool_steps() -> Vec<Step> {
+    use crate::tools::Tool;
+    use Step::*;
+    use dstudio_core::{ClipId, Command, MidiClip, Track, TrackId};
+    const B: i64 = dstudio_core::PPQ;
+    fn spans(c: &Controller, track: usize) -> Vec<(i64, i64)> {
+        c.project().tracks.get(track).map(|t| t.midi_clips.iter().map(|k| (k.start, k.end())).collect()).unwrap_or_default()
+    }
+    // A point low in track `track`'s lane at `beat` (clear of the clip name).
+    fn lane_at(c: &Controller, track: usize, beat: f64) -> (f32, f32) {
+        (lane_x() + c.view.x_of(beat), lane_y0() + c.view.track_top(track) + c.view.pitch(track) * 0.8)
+    }
+    let ids = Rc::new(Cell::new(0u64));
+    let (i1, i2) = (ids.clone(), ids.clone());
+    vec![
+        DoC(
+            "tools: two instrument tracks on top, each with a MIDI clip on beats 0-8",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.mixer_open {
+                    c.toggle_mixer();
+                }
+                let n = c.project().next_id;
+                let track = |id: u64, name: &str| {
+                    Track::new(TrackId(id), dstudio_core::TrackKind::Instrument, name, dstudio_core::ColorIndex::FIRST)
+                };
+                c.execute(Command::Batch {
+                    label: "tools test".into(),
+                    commands: vec![
+                        Command::AddTrack { index: Some(0), track: track(n, "Tools A") },
+                        Command::AddTrack { index: Some(1), track: track(n + 1, "Tools B") },
+                        Command::AddMidiClip { track: TrackId(n), clip: MidiClip { id: ClipId(n + 2), ..MidiClip::empty(0, 8 * B) } },
+                        Command::AddMidiClip { track: TrackId(n + 1), clip: MidiClip { id: ClipId(n + 3), ..MidiClip::empty(0, 8 * B) } },
+                    ],
+                });
+                i1.set(n);
+                c.view.scroll_y = 0.0;
+                c.view.start_beats = 0.0;
+                c.snap.on = true;
+                c.snap.grid = None;
+                c.select_clip(None);
+                c.ui_dirty = true;
+            }),
+        ),
+        Do(
+            "tools: open the tool menu and pick Scissors",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_tool_menu_toggle(900.0, 40.0);
+                s.invoke_tool_pick(2);
+            }),
+        ),
+        Check(
+            "tools: Scissors is the tool, the header shows it, the menu closed",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                (c.tools.tool == Tool::Scissors && s.get_tool() == 2 && !s.get_tool_menu_open()).then_some(()).ok_or(format!(
+                    "tool {:?} header {} open {}",
+                    c.tools.tool,
+                    s.get_tool(),
+                    s.get_tool_menu_open()
+                ))
+            }),
+        ),
+        Do("tools: T", Box::new(|a| key(a, "t", false, false))),
+        Check(
+            "tools: T went back to Selector",
+            Box::new(|c, _| (c.tools.tool == Tool::Selector).then_some(()).ok_or(format!("tool {:?}", c.tools.tool))),
+        ),
+        Do("tools: T again", Box::new(|a| key(a, "t", false, false))),
+        DoC(
+            "tools: a Scissors click at beat 4 of the first clip",
+            Box::new(|a, ctl| {
+                let (x, y) = lane_at(&ctl.borrow(), 0, 4.0);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "tools: the clip is cut in two at beat 4, one Split Clip step",
+            Box::new(|c, _| {
+                (spans(c, 0) == [(0, 4 * B), (4 * B, 8 * B)] && c.doc.undo_label() == Some("Split Clip")).then_some(()).ok_or(format!(
+                    "spans {:?} undo {:?}",
+                    spans(c, 0),
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        Do(
+            "tools: pick the Marquee tool",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_tool_menu_toggle(900.0, 40.0);
+                s.invoke_tool_pick(1);
+            }),
+        ),
+        DoC(
+            "tools: drag a range from beat 2 on the first track to beat 6 on the second",
+            Box::new(|a, ctl| {
+                let ((x0, y0), (x1, y1)) = {
+                    let c = ctl.borrow();
+                    (lane_at(&c, 0, 2.0), lane_at(&c, 1, 6.0))
+                };
+                drag(a, x0, y0, x1, y1);
+            }),
+        ),
+        Check(
+            "tools: the range covers beats 2-6 on both tracks and shows",
+            Box::new(move |c, a| {
+                let n = i2.get();
+                let want = Some(dstudio_core::range::TimeRange { start: 2 * B, end: 6 * B, tracks: vec![TrackId(n), TrackId(n + 1)] });
+                (c.tools.range == want && a.global::<Studio>().get_range_on()).then_some(()).ok_or(format!("range {:?}", c.tools.range))
+            }),
+        ),
+        Do("tools: Delete", Box::new(|a| key(a, Key::Delete, false, false))),
+        Check(
+            "tools: both tracks lost beats 2-6 in one Delete Range step",
+            Box::new(|c, _| {
+                let want = [(0, 2 * B), (6 * B, 8 * B)];
+                (spans(c, 0) == want && spans(c, 1) == want && c.doc.undo_label() == Some("Delete Range")).then_some(()).ok_or(format!(
+                    "spans {:?} {:?} undo {:?}",
+                    spans(c, 0),
+                    spans(c, 1),
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        Do("tools: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check(
+            "tools: undo brought the clips back",
+            Box::new(|c, _| {
+                (spans(c, 0) == [(0, 4 * B), (4 * B, 8 * B)] && spans(c, 1) == [(0, 8 * B)]).then_some(()).ok_or(format!(
+                    "spans {:?} {:?}",
+                    spans(c, 0),
+                    spans(c, 1)
+                ))
+            }),
+        ),
+        Do("tools: Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check(
+            "tools: Escape cleared the range and kept the Marquee tool",
+            Box::new(|c, _| {
+                (c.tools.range.is_none() && c.tools.tool == Tool::Marquee)
+                    .then_some(())
+                    .ok_or(format!("range {:?} tool {:?}", c.tools.range, c.tools.tool))
+            }),
+        ),
+        DoC(
+            "tools: back to Selector, remove the test tracks",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.set_tool(Tool::Selector);
+                let n = ids.get();
+                c.execute(Command::Batch {
+                    label: "tools test cleanup".into(),
+                    commands: vec![Command::RemoveTrack { track: TrackId(n + 1) }, Command::RemoveTrack { track: TrackId(n) }],
+                });
+                c.ui_dirty = true;
+            }),
+        ),
+    ]
+}
+
+/// Tempo changes (spec 015): the master row's picker chooses Song › Tempo; clicking the line at
+/// bar 3 and dragging up adds a faster point (the song keeps 120 before it), one more point at
+/// bar 5, a point's menu makes it ramp; the transport field shows the tempo at the playhead at two
+/// positions; the ruler shows a mark per point and clicking one shows the lane; undo takes every
+/// step back to one tempo.
+fn tempo_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::{AutomationTarget, TempoPoint};
+    const B: i64 = dstudio_core::PPQ;
+    let start: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    let s1 = start.clone();
+    fn master_row(c: &Controller) -> Option<crate::automation::Row> {
+        c.auto_rows().into_iter().find(|r| r.master)
+    }
+    // Window point on the master row's tempo line (or a point's value) at `beat`.
+    fn on_line(c: &Controller, beat: f64, bpm: Option<f64>) -> (f32, f32) {
+        let r = master_row(c).expect("master row");
+        let v = bpm.map_or_else(
+            || {
+                c.lane(None, &AutomationTarget::Tempo)
+                    .and_then(|l| l.value_at((beat * B as f64) as i64))
+                    .unwrap_or(c.project().transport.bpm as f32)
+            },
+            |b| b as f32,
+        );
+        (lane_x() + c.view.x_of(beat), lane_y0() + r.y_of(crate::automation::norm_of(&AutomationTarget::Tempo, v)))
+    }
+    fn tempo(c: &Controller) -> Vec<TempoPoint> {
+        c.project().transport.tempo.clone()
+    }
+    fn right_click(a: &AppWindow, x: f32, y: f32) {
+        let w = a.window();
+        let p = LogicalPosition::new(x, y);
+        dispatch(w, WindowEvent::PointerMoved { position: p });
+        dispatch(w, WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        dispatch(w, WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+    }
+    vec![
+        DoC(
+            "tempo: 120 BPM, no changes, lanes shown, mixer closed, timeline at bar 1",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.mixer_open {
+                    c.toggle_mixer();
+                }
+                c.execute(dstudio_core::Command::SetTempo { bpm: 120.0, at: None });
+                s1.set(c.doc.history_labels().len());
+                if !c.auto.shown {
+                    c.auto_toggle_shown();
+                }
+                c.view.start_beats = 0.0;
+                c.view.px_per_beat = 30.0;
+                c.snap.on = true;
+                c.seek_beats(0.0);
+                c.ui_dirty = true;
+            }),
+        ),
+        DoC(
+            "tempo: the master pill's picker: Song › Tempo",
+            Box::new(|a, _| {
+                let s = a.global::<Studio>();
+                s.invoke_auto_open_picker(-1, 200.0, 500.0);
+                s.invoke_picker_pick(0);
+                s.invoke_picker_sub_pick(0);
+            }),
+        ),
+        Check(
+            "tempo: the master row shows Song › Tempo at 120.00 BPM",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let labels = s.get_auto_labels();
+                let text = (0..labels.row_count()).filter_map(|i| labels.row_data(i)).map(|l| l.text.to_string()).collect::<Vec<_>>();
+                (c.auto_target(None) == AutomationTarget::Tempo
+                    && s.get_master_auto_cat() == "Song"
+                    && s.get_master_auto_param() == "Tempo"
+                    && text.iter().any(|t| t == "120.00 BPM"))
+                .then_some(())
+                .ok_or(format!(
+                    "target {:?} pill {} {} labels {text:?}",
+                    c.auto_target(None),
+                    s.get_master_auto_cat(),
+                    s.get_master_auto_param()
+                ))
+            }),
+        ),
+        DoC(
+            "tempo: click the line at bar 3 and drag the new point up",
+            Box::new(|a, ctl| {
+                let (x, y) = on_line(&ctl.borrow(), 8.0, None);
+                drag(a, x, y, x, y - 18.0);
+            }),
+        ),
+        Check(
+            "tempo: a faster whole-BPM point at bar 3, 120 kept from bar 1, one Edit Tempo Automation step",
+            Box::new(|c, _| {
+                let t = tempo(c);
+                (t.len() == 2
+                    && t[0] == TempoPoint { time: 0, bpm: 120.0, ramp: false }
+                    && t[1].time == 8 * B
+                    && t[1].bpm > 125.0
+                    && t[1].bpm.fract() == 0.0
+                    && c.project().transport.bpm == 120.0
+                    && c.doc.undo_label() == Some("Edit Tempo Automation"))
+                .then_some(())
+                .ok_or(format!("tempo {t:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "tempo: click the line at bar 5 and drag that point down",
+            Box::new(|a, ctl| {
+                let (x, y) = on_line(&ctl.borrow(), 16.0, None);
+                drag(a, x, y, x, y + 25.0);
+            }),
+        ),
+        DoC(
+            "tempo: right-click the bar 3 point, Ramp to Next Point",
+            Box::new(|a, ctl| {
+                let (x, y) = {
+                    let c = ctl.borrow();
+                    on_line(&c, 8.0, Some(tempo(&c)[1].bpm))
+                };
+                right_click(a, x, y);
+                let s = a.global::<Studio>();
+                let items = s.get_menu_items();
+                if let Some(i) =
+                    (0..items.row_count()).find(|&i| items.row_data(i).is_some_and(|m| m.label == "Ramp to Next Point" && m.enabled))
+                {
+                    s.invoke_menu_activate(i as i32);
+                }
+            }),
+        ),
+        Check(
+            "tempo: three points, the bar 3 point ramps down to the slower bar 5 point",
+            Box::new(|c, _| {
+                let t = tempo(c);
+                (t.len() == 3
+                    && t[1].ramp
+                    && !t[2].ramp
+                    && t[2].time == 16 * B
+                    && t[2].bpm < t[1].bpm
+                    && c.doc.undo_label() == Some("Edit Tempo Automation"))
+                .then_some(())
+                .ok_or(format!("tempo {t:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        DoC("tempo: playhead to beat 4", Box::new(|_, ctl| ctl.borrow_mut().seek_beats(4.0))),
+        Check(
+            "tempo: the transport field shows 120 before the change",
+            Box::new(|_, a| {
+                let t = a.global::<Studio>().get_bpm_text();
+                (t == "120").then_some(()).ok_or(format!("text {t}"))
+            }),
+        ),
+        DoC("tempo: playhead to beat 12, halfway down the ramp", Box::new(|_, ctl| ctl.borrow_mut().seek_beats(12.0))),
+        Check(
+            "tempo: the transport field shows the tempo halfway down the ramp",
+            Box::new(|c, a| {
+                let t = tempo(c);
+                let want = crate::transport_fields::fmt_bpm((t[1].bpm + t[2].bpm) / 2.0);
+                let text = a.global::<Studio>().get_bpm_text();
+                (text == want.as_str()).then_some(()).ok_or(format!("text {text} want {want}"))
+            }),
+        ),
+        DoC("tempo: type 100 in the field at beat 12", Box::new(|a, _| a.global::<Studio>().invoke_tempo_text("100".into()))),
+        Check(
+            "tempo: the point in effect (bar 3) is 100, a Tempo Change step",
+            Box::new(|c, _| {
+                let t = tempo(c);
+                (t[1].bpm == 100.0 && t[0].bpm == 120.0 && c.doc.undo_label() == Some("Tempo Change"))
+                    .then_some(())
+                    .ok_or(format!("tempo {t:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        Check(
+            "tempo: the ruler marks every point, the ramp with an arrow",
+            Box::new(|c, a| {
+                let marks = a.global::<Studio>().get_tempo_marks();
+                let text = (0..marks.row_count()).filter_map(|i| marks.row_data(i)).map(|m| m.text.to_string()).collect::<Vec<_>>();
+                let t = tempo(c);
+                let want = vec![
+                    crate::tempo_lane::mark_text(120.0, None),
+                    crate::tempo_lane::mark_text(t[1].bpm, Some(t[2].bpm)),
+                    crate::tempo_lane::mark_text(t[2].bpm, None),
+                ];
+                (text == want).then_some(()).ok_or(format!("marks {text:?} want {want:?}"))
+            }),
+        ),
+        DoC(
+            "tempo: hide the lanes, click the bar 3 mark on the ruler",
+            Box::new(|a, ctl| {
+                let m = {
+                    let mut c = ctl.borrow_mut();
+                    c.auto_toggle_shown();
+                    c.auto.targets.insert(None, AutomationTarget::Volume);
+                    c.tempo_marks()[1].clone()
+                };
+                click(a, lane_x() + m.text_x + 4.0, lane_y0() + 5.0);
+            }),
+        ),
+        Check(
+            "tempo: the lanes show with Song › Tempo",
+            Box::new(|c, _| {
+                (c.auto.shown && c.auto_target(None) == AutomationTarget::Tempo).then_some(()).ok_or(format!(
+                    "shown {} target {:?}",
+                    c.auto.shown,
+                    c.auto_target(None)
+                ))
+            }),
+        ),
+        DoC(
+            "tempo: undo every step",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                while c.doc.history_labels().len() > start.get() {
+                    c.undo();
+                }
+            }),
+        ),
+        Check(
+            "tempo: one tempo again, 120 BPM, no marks",
+            Box::new(|c, a| {
+                let marks = a.global::<Studio>().get_tempo_marks().row_count();
+                (tempo(c).is_empty() && c.project().transport.bpm == 120.0 && marks == 0).then_some(()).ok_or(format!(
+                    "tempo {:?} bpm {} marks {marks}",
+                    tempo(c),
+                    c.project().transport.bpm
+                ))
+            }),
+        ),
+        DoC(
+            "tempo: master row back to Volume, lanes hidden, playhead at 0",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.auto.targets.insert(None, AutomationTarget::Volume);
+                if c.auto.shown {
+                    c.auto_toggle_shown();
+                }
+                c.seek_beats(0.0);
+                c.ui_dirty = true;
+            }),
+        ),
+    ]
+}
+
 /// The transport bar's project fields: tempo drag (one undo step), typed tempo, tap tempo (one
 /// undo step per series), the Sig menu and the key picker. Puts 120 BPM, 4/4 and no key back.
 fn transport_fields_steps() -> Vec<Step> {
@@ -12378,7 +13248,7 @@ fn transport_fields_steps() -> Vec<Step> {
             "transport: back to 120 BPM and 4/4",
             Box::new(|_, ctl| {
                 let mut c = ctl.borrow_mut();
-                c.execute(dstudio_core::Command::SetTempo { bpm: 120.0 });
+                c.execute(dstudio_core::Command::SetTempo { bpm: 120.0, at: None });
                 c.execute(dstudio_core::Command::SetTimeSignature { numerator: 4, denominator: 4 });
             }),
         ),
@@ -12910,6 +13780,307 @@ fn shortcut_page_steps() -> Vec<Step> {
             }),
         ),
         DoC("shortcuts: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
+    ]
+}
+
+/// Settings › MIDI › Default instrument (spec 013): the dropdown lists the built-in
+/// instruments, picking Drum Rack is saved, and ⇧⌘T then makes a Drum Rack track.
+fn default_instrument_steps() -> Vec<Step> {
+    use Step::*;
+    fn labels(a: &AppWindow) -> Vec<String> {
+        let items = a.global::<Studio>().get_settings_menu_items();
+        (0..slint::Model::row_count(&items))
+            .filter_map(|i| slint::Model::row_data(&items, i))
+            .map(|it| format!("{}{}", it.label, if it.checked { " ✓" } else { "" }))
+            .collect()
+    }
+    vec![
+        DoC(
+            "default instrument: open Settings › MIDI and the Default instrument menu",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().open_settings();
+                let s = a.global::<Studio>();
+                s.invoke_settings_page_select(crate::midi_in::MIDI_PAGE as i32);
+                s.invoke_settings_dropdown(5);
+            }),
+        ),
+        Check(
+            "default instrument: Synth (checked), Sampler, Pad Sampler, Drum Rack",
+            Box::new(|_, a| {
+                let s = a.global::<Studio>();
+                let l = labels(a);
+                (s.get_settings_menu_open()
+                    && s.get_midi_instrument_text() == "Synth"
+                    && l.len() >= 4
+                    && l[..4] == ["Synth ✓", "Sampler", "Pad Sampler", "Drum Rack"])
+                .then_some(())
+                .ok_or(format!("{l:?}"))
+            }),
+        ),
+        Do("default instrument: pick Drum Rack", Box::new(|a| a.global::<Studio>().invoke_settings_menu_pick(3))),
+        Check(
+            "default instrument: Drum Rack is shown and kept in the preferences",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let kept = matches!(&c.settings.prefs.midi.default_instrument,
+                    Some(crate::prefs::InstrumentChoice::Builtin { id }) if id == "drum-rack");
+                (kept && !s.get_settings_menu_open() && s.get_midi_instrument_text() == "Drum Rack").then_some(()).ok_or(format!(
+                    "{:?} / {}",
+                    c.settings.prefs.midi.default_instrument,
+                    s.get_midi_instrument_text()
+                ))
+            }),
+        ),
+        DoC(
+            "default instrument: close Settings, press ⇧⌘T",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().close_settings();
+                key(a, "t", true, true);
+            }),
+        ),
+        Check(
+            "default instrument: the new track is \"Drum Rack\", plays a Drum Rack, one undo step",
+            Box::new(|c, _| {
+                let t = c.selected_track.and_then(|id| c.project().track(id));
+                let dev = t.and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.plugin.id.clone());
+                (t.is_some_and(|t| t.name == "Drum Rack")
+                    && dev.as_deref() == Some("drum-rack")
+                    && c.doc.undo_label() == Some("Add Instrument Track"))
+                .then_some(())
+                .ok_or(format!("{:?} {dev:?} {:?}", t.map(|t| &t.name), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "default instrument: undo the track, set Synth back",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().undo();
+                ctl.borrow_mut().open_settings();
+                let s = a.global::<Studio>();
+                s.invoke_settings_page_select(crate::midi_in::MIDI_PAGE as i32);
+                s.invoke_settings_dropdown(5);
+                s.invoke_settings_menu_pick(0);
+            }),
+        ),
+        Check(
+            "default instrument: Synth again, nothing left in the preferences",
+            Box::new(|c, a| {
+                (c.settings.prefs.midi.default_instrument.is_none() && a.global::<Studio>().get_midi_instrument_text() == "Synth")
+                    .then_some(())
+                    .ok_or(format!("{:?}", c.settings.prefs.midi.default_instrument))
+            }),
+        ),
+        DoC("default instrument: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
+    ]
+}
+
+/// Search settings (spec 014, roadmap G13): ⌘F focuses the field, typing filters the sidebar and
+/// highlights the matching rows, Escape clears, and the text is gone after Settings closes.
+fn settings_search_steps() -> Vec<Step> {
+    use Step::*;
+    fn slots(a: &AppWindow) -> Vec<i32> {
+        let m = a.global::<Studio>().get_settings_page_slots();
+        (0..slint::Model::row_count(&m)).filter_map(|i| slint::Model::row_data(&m, i)).collect()
+    }
+    let tracks = Rc::new(Cell::new(0));
+    let (t1, t2) = (tracks.clone(), tracks);
+    vec![
+        DoC(
+            "settings search: open Settings › General, ⌘F",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().open_settings();
+                a.global::<Studio>().invoke_settings_page_select(0);
+                key(a, "f", true, false);
+            }),
+        ),
+        Check(
+            "settings search: the field has the cursor and every page is listed",
+            Box::new(|_, a| {
+                let s = a.global::<Studio>();
+                (s.get_search_focused() && slots(a) == (0..9).collect::<Vec<i32>>() && !s.get_settings_search_none())
+                    .then_some(())
+                    .ok_or(format!("focused {} slots {:?}", s.get_search_focused(), slots(a)))
+            }),
+        ),
+        Do(
+            "settings search: type \"instr\"",
+            Box::new(|a| {
+                for ch in ["i", "n", "s", "t", "r"] {
+                    key(a, ch, false, false);
+                }
+            }),
+        ),
+        Check(
+            "settings search: only MIDI is listed, MIDI is open, Default instrument is highlighted",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let hit = s.invoke_settings_row_hit(s.get_settings_search(), "Default instrument".into());
+                let other = s.invoke_settings_row_hit(s.get_settings_search(), "MIDI inputs".into());
+                (c.settings.search == "instr"
+                    && slots(a) == [-1, -1, 0, -1, -1, -1, -1, -1, -1]
+                    && c.settings.page == crate::midi_in::MIDI_PAGE
+                    && hit
+                    && !other)
+                    .then_some(())
+                    .ok_or(format!("search {:?} slots {:?} page {} hit {hit} other {other}", c.settings.search, slots(a), c.settings.page))
+            }),
+        ),
+        Do(
+            "settings search: type \"zzz\" instead",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.set_settings_search("zzz".into());
+                s.invoke_settings_search_edited("zzz".into());
+            }),
+        ),
+        Check(
+            "settings search: nothing matches, the page stays",
+            Box::new(|c, a| {
+                (a.global::<Studio>().get_settings_search_none() && slots(a).iter().all(|&i| i < 0) && c.settings.page == 2)
+                    .then_some(())
+                    .ok_or(format!("slots {:?} page {}", slots(a), c.settings.page))
+            }),
+        ),
+        Do("settings search: Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check(
+            "settings search: the text is cleared, Settings stays open, every page is back",
+            Box::new(|c, a| {
+                (c.settings.open
+                    && c.settings.search.is_empty()
+                    && a.global::<Studio>().get_settings_search().is_empty()
+                    && slots(a)[0] == 0)
+                    .then_some(())
+                    .ok_or(format!("open {} search {:?}", c.settings.open, c.settings.search))
+            }),
+        ),
+        DoC(
+            "settings search: ⌘F, close Settings with the cursor in the field",
+            Box::new(|a, ctl| {
+                key(a, "f", true, false);
+                ctl.borrow_mut().close_settings();
+            }),
+        ),
+        DoC(
+            "settings search: press ⇧⌘T",
+            Box::new(move |a, ctl| {
+                t1.set(ctl.borrow().project().tracks.len());
+                key(a, "t", true, true);
+            }),
+        ),
+        Check(
+            "settings search: shortcuts work again once Settings is closed (⇧⌘T added a track)",
+            Box::new(move |c, a| {
+                let focused = a.global::<Studio>().get_search_focused();
+                (!focused && c.project().tracks.len() == t2.get() + 1).then_some(()).ok_or(format!(
+                    "focused {focused} tracks {} -> {}",
+                    t2.get(),
+                    c.project().tracks.len()
+                ))
+            }),
+        ),
+        DoC(
+            "settings search: undo the track, reopen Settings",
+            Box::new(|_, ctl| {
+                ctl.borrow_mut().undo();
+                ctl.borrow_mut().open_settings();
+            }),
+        ),
+        Do(
+            "settings search: type \"latency\"",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.set_settings_search("latency".into());
+                s.invoke_settings_search_edited("latency".into());
+            }),
+        ),
+        DoC(
+            "settings search: close and reopen Settings",
+            Box::new(|_, ctl| {
+                ctl.borrow_mut().close_settings();
+                ctl.borrow_mut().open_settings();
+            }),
+        ),
+        Check(
+            "settings search: reopened with an empty field and every page",
+            Box::new(|c, a| {
+                (c.settings.search.is_empty()
+                    && a.global::<Studio>().get_settings_search().is_empty()
+                    && slots(a) == (0..9).collect::<Vec<i32>>())
+                .then_some(())
+                .ok_or(format!("search {:?} slots {:?}", c.settings.search, slots(a)))
+            }),
+        ),
+        Do("settings search: Escape closes Settings", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("settings search: Settings is closed", Box::new(|c, _| (!c.settings.open).then_some(()).ok_or("still open".to_string()))),
+    ]
+}
+
+/// Moves the pointer along a settings row's label (panel-relative y of the label's top) from its
+/// start until its (i) shows a tip, as a person hovering it would.
+fn hover_settings_info(a: &AppWindow, label_y: f32) {
+    let y = set_y() + label_y + 7.0;
+    for dx in 0..300 {
+        dispatch(a.window(), WindowEvent::PointerMoved { position: LogicalPosition::new(set_x() + 187.0 + 20.5 + dx as f32, y) });
+        if !a.global::<Studio>().get_settings_tip().is_empty() {
+            return;
+        }
+    }
+}
+
+/// Help on every setting (roadmap G12): hovering a row's (i) shows its sentence under it, leaving
+/// it or changing page hides it, and a greyed row says it isn't available.
+fn settings_help_steps() -> Vec<Step> {
+    use Step::*;
+    let tip = |a: &AppWindow| a.global::<Studio>().get_settings_tip().to_string();
+    vec![
+        DoC(
+            "settings help: open Settings › Audio, hover Buffer size's (i)",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().open_settings();
+                a.global::<Studio>().invoke_settings_page_select(1);
+                hover_settings_info(a, 292.5);
+            }),
+        ),
+        Check(
+            "settings help: the tip shows Buffer size's sentence, under its (i), inside Settings",
+            Box::new(move |_, a| {
+                let s = a.global::<Studio>();
+                let (x, y) = (s.get_settings_tip_x(), s.get_settings_tip_y());
+                (tip(a) == crate::settings_search::help("Buffer size")
+                    && x > set_x() + 187.0 + 40.0
+                    && x < set_x() + set_w()
+                    // Window coordinates: below Linux's in-window menu bar.
+                    && (y - menu_bar_h() - (set_y() + 292.5 + 11.25)).abs() < 2.0)
+                    .then_some(())
+                    .ok_or(format!("tip {:?} at {x}, {y}", tip(a)))
+            }),
+        ),
+        Do(
+            "settings help: move the pointer back to the start of the label",
+            Box::new(|a| {
+                dispatch(
+                    a.window(),
+                    WindowEvent::PointerMoved { position: LogicalPosition::new(set_x() + 187.0 + 22.0, set_y() + 292.5 + 7.0) },
+                )
+            }),
+        ),
+        Check("settings help: the tip is gone", Box::new(move |_, a| tip(a).is_empty().then_some(()).ok_or(tip(a)))),
+        Do("settings help: hover Mute audio input's (i)", Box::new(|a| hover_settings_info(a, 199.0))),
+        Check(
+            "settings help: Mute audio input's sentence",
+            Box::new(move |_, a| (tip(a) == crate::settings_search::help("Mute audio input")).then_some(()).ok_or(tip(a))),
+        ),
+        Do("settings help: open General", Box::new(|a| a.global::<Studio>().invoke_settings_page_select(0))),
+        Check("settings help: changing page hides the tip", Box::new(move |_, a| tip(a).is_empty().then_some(()).ok_or(tip(a)))),
+        Do("settings help: hover Talk key's (i) (greyed)", Box::new(|a| hover_settings_info(a, 531.6))),
+        Check(
+            "settings help: a greyed row says it isn't available",
+            Box::new(move |_, a| (tip(a) == "Not available in Device.").then_some(()).ok_or(tip(a))),
+        ),
+        DoC("settings help: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
+        Check(
+            "settings help: Settings closed, no tip left",
+            Box::new(move |c, a| (!c.settings.open && tip(a).is_empty()).then_some(()).ok_or(tip(a))),
+        ),
     ]
 }
 
@@ -14933,7 +16104,7 @@ fn clip_render_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "clip render: Consolidate, Bounce and Export are enabled, Ask is not; Bounce has a submenu",
+            "clip render: Consolidate, Bounce, Export and Ask are enabled; Bounce has a submenu",
             Box::new(|_, a| {
                 let s = a.global::<Studio>();
                 let items = s.get_menu_items();
@@ -14941,7 +16112,7 @@ fn clip_render_steps() -> Vec<Step> {
                 let ok = on("Consolidate")
                     && on("Bounce")
                     && on("Export audio to Finder")
-                    && entry(&items, "Ask").is_some_and(|m| !m.enabled)
+                    && on("Ask")
                     && entry(&items, "Bounce").is_some_and(|m| m.submenu);
                 ok.then_some(()).ok_or("menu entries".into())
             }),
@@ -15030,7 +16201,7 @@ fn clip_render_steps() -> Vec<Step> {
         ),
         Do("clip render: open Bounce", Box::new(|a| click_entry(a, "Bounce"))),
         Check(
-            "clip render: the Bounce submenu lists Bounce to new track (enabled, ⌘ B) and Bounce track in place (greyed)",
+            "clip render: the Bounce submenu lists Bounce to new track (enabled, ⌘ B) and Bounce track in place (enabled)",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
                 let sub = s.get_sub_items();
@@ -15038,7 +16209,7 @@ fn clip_render_steps() -> Vec<Step> {
                 let ok = s.get_sub_open()
                     && sub.row_count() == 2
                     && entry(&sub, "Bounce to new track").is_some_and(|m| m.enabled && m.shortcut == "⌘ B")
-                    && entry(&sub, "Bounce track in place").is_some_and(|m| !m.enabled);
+                    && entry(&sub, "Bounce track in place").is_some_and(|m| m.enabled);
                 ok.then_some(()).ok_or(format!("open {} rows {}", s.get_sub_open(), sub.row_count()))
             }),
         ),
@@ -15375,6 +16546,407 @@ fn clip_render_steps() -> Vec<Step> {
                     p.assets.len()
                 ))
             }),
+        ),
+    ]
+}
+
+/// The assistant's API key (roadmap G22): a key with a space is refused; a good one is saved
+/// (in the self-test's in-memory store, never the keychain) and the assistant can use it;
+/// removing it stops the assistant. The test provider is put back afterwards.
+fn api_key_steps() -> Vec<Step> {
+    use Step::*;
+    let saved: Rc<std::cell::RefCell<Option<std::sync::Arc<crate::assistant_provider::Provider>>>> = Rc::new(Default::default());
+    let (s1, s2) = (saved.clone(), saved.clone());
+    vec![
+        DoC(
+            "api key: try a key with a space, then a good one",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                *s1.borrow_mut() = Some(c.provider.clone());
+                c.assistant_save_key("sk-ant bad");
+                c.assistant_save_key("  sk-ant-test-key  ");
+            }),
+        ),
+        Check(
+            "api key: the good key is saved (trimmed) and the assistant is available with it",
+            Box::new(|c, a| {
+                let ok = c.key_store.load().as_deref() == Some("sk-ant-test-key")
+                    && c.provider.available()
+                    && !c.provider.is_fixture()
+                    && a.global::<Studio>().get_chat_key_saved();
+                ok.then_some(()).ok_or(format!("stored {:?} provider {:?}", c.key_store.load(), c.provider))
+            }),
+        ),
+        DoC("api key: remove it", Box::new(|_, ctl| ctl.borrow_mut().assistant_remove_key())),
+        Check(
+            "api key: gone from the store and the assistant asks for a key",
+            Box::new(|c, a| {
+                let ok = c.key_store.load().is_none() && !c.provider.available() && !a.global::<Studio>().get_chat_available();
+                ok.then_some(()).ok_or(format!("stored {:?}", c.key_store.load()))
+            }),
+        ),
+        DoC(
+            "api key: put the test provider back",
+            Box::new(move |_, ctl| {
+                if let Some(p) = s2.borrow_mut().take() {
+                    ctl.borrow_mut().provider = p;
+                }
+            }),
+        ),
+    ]
+}
+
+/// Rename the project from the title bar (roadmap G10): an unsaved project keeps the name for
+/// its first save; a saved one's folder is renamed on disk with Open Recent following; a name
+/// that is taken or can't name a folder is refused with a message and changes nothing.
+fn rename_project_steps() -> Vec<Step> {
+    use Step::*;
+    fn dir() -> std::path::PathBuf {
+        run_dir().join("rename-project")
+    }
+    fn title_xy() -> (f32, f32) {
+        (win().0 / 2.0, 20.0)
+    }
+    vec![
+        DoC(
+            "rename project: start a fresh unsaved project",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.replace_project(dstudio_core::Project::default());
+                c.project_dir = None;
+                let _ = std::fs::remove_dir_all(dir());
+                std::fs::create_dir_all(dir()).unwrap();
+            }),
+        ),
+        Do(
+            "rename project: click the title",
+            Box::new(|a| {
+                let (x, y) = title_xy();
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "rename project: the title is a field with the keyboard",
+            Box::new(|_, a| a.global::<Studio>().get_title_focused().then_some(()).ok_or("no field".into())),
+        ),
+        Do(
+            "rename project: type Night Drive, Return",
+            Box::new(|a| {
+                key(a, "a", true, false);
+                type_text(a, "Night Drive");
+                key(a, Key::Return, false, false);
+            }),
+        ),
+        Check(
+            "rename project: the unsaved project is named Night Drive, no folder made",
+            Box::new(|c, a| {
+                let ok = c.project().name == "Night Drive" && c.project_dir.is_none() && !a.global::<Studio>().get_title_focused();
+                ok.then_some(()).ok_or(format!("name {:?} dir {:?}", c.project().name, c.project_dir))
+            }),
+        ),
+        DoC(
+            "rename project: save it as First.dsproj, rename it to Second",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.save_to(&dir().join("First.dsproj"));
+                c.rename_project("Second");
+            }),
+        ),
+        Check(
+            "rename project: the folder is Second.dsproj on disk, the project opens there and is in Open Recent",
+            Box::new(|c, a| {
+                let new = dir().join("Second.dsproj");
+                let ok = new.join("project.json").exists()
+                    && !dir().join("First.dsproj").exists()
+                    && c.project_dir.as_deref() == Some(new.as_path())
+                    && a.global::<Studio>().get_project_name() == "Second"
+                    && c.settings.prefs.recent_projects.first().is_some_and(|p| p.ends_with("Second.dsproj"))
+                    && !c.settings.prefs.recent_projects.iter().any(|p| p.ends_with("First.dsproj"));
+                ok.then_some(()).ok_or(format!("dir {:?} recent {:?}", c.project_dir, c.settings.prefs.recent_projects.first()))
+            }),
+        ),
+        DoC(
+            "rename project: try a name that is taken, then one with a slash",
+            Box::new(|_, ctl| {
+                std::fs::create_dir_all(dir().join("Taken.dsproj")).unwrap();
+                let mut c = ctl.borrow_mut();
+                c.rename_project("Taken");
+                c.rename_project("a/b");
+            }),
+        ),
+        Check(
+            "rename project: both refused with a reason, the project still Second",
+            Box::new(|c, _| {
+                let ok = c.project_dir.as_deref() == Some(dir().join("Second.dsproj").as_path())
+                    && c.status_message().is_some_and(|m| m.starts_with("Can't rename the project"));
+                ok.then_some(()).ok_or(format!("dir {:?} status {:?}", c.project_dir, c.status_message()))
+            }),
+        ),
+        DoC(
+            "rename project: back to an unsaved project, remove the folder",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let recent: Vec<String> =
+                    c.settings.prefs.recent_projects.iter().filter(|p| !p.contains("rename-project")).cloned().collect();
+                c.settings.prefs.recent_projects = recent;
+                c.settings.prefs.recent_resolved.clear();
+                c.replace_project(dstudio_core::Project::default());
+                c.project_dir = None;
+                let _ = std::fs::remove_dir_all(dir());
+            }),
+        ),
+    ]
+}
+
+/// Ask from a clip (roadmap G17): with a clip selected, ⌘K opens the assistant with the clip as
+/// its context and the cursor in the composer.
+fn ask_clip_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::ClipId;
+    let id = Rc::new(std::cell::RefCell::new((0u64, String::new())));
+    let (i1, i2) = (id.clone(), id.clone());
+    vec![
+        DoC(
+            "ask: a MIDI clip named Hook on the instrument track, selected; assistant closed",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.assistant_open = false;
+                let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) else {
+                    return;
+                };
+                let k = ClipId(c.project().next_id);
+                let clip = dstudio_core::MidiClip {
+                    id: k,
+                    name: "Hook".into(),
+                    ..dstudio_core::MidiClip::empty(300 * dstudio_core::PPQ, 4 * dstudio_core::PPQ)
+                };
+                c.execute(dstudio_core::Command::AddMidiClip { track: t, clip });
+                *i1.borrow_mut() = (k.0, "Hook".into());
+                c.select_track(t);
+                c.select_clip(Some(k));
+                c.pr.focused = false;
+                c.ui_dirty = true;
+            }),
+        ),
+        Do("ask: Cmd+K", Box::new(|a| key(a, "k", true, false))),
+        // The panel opens on this update and its composer takes the focus on the next.
+        DoC(
+            "ask: let the panel open",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().update_ui(a);
+            }),
+        ),
+        DoC(
+            "ask: let the composer take the focus",
+            Box::new(|a, ctl| {
+                ctl.borrow_mut().update_ui(a);
+            }),
+        ),
+        Check(
+            "ask: the assistant is open with the clip as its context and the cursor in the composer",
+            Box::new(move |c, a| {
+                let s = a.global::<Studio>();
+                let (k, name) = i2.borrow().clone();
+                let ok = k != 0
+                    && c.assistant_open
+                    && s.get_chat_context_visible()
+                    && s.get_chat_context_name() == name.as_str()
+                    && s.get_chat_context_scope() == "Clip"
+                    && s.get_chat_focused()
+                    && c.selected_clip == Some(ClipId(k));
+                ok.then_some(()).ok_or(format!(
+                    "clip {k} open {} context {} {:?} focused {}",
+                    c.assistant_open,
+                    s.get_chat_context_visible(),
+                    s.get_chat_context_name(),
+                    s.get_chat_focused()
+                ))
+            }),
+        ),
+        DoC(
+            "ask: close the assistant",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.assistant_open = false;
+                a.global::<Studio>().set_chat_focused(false);
+                c.select_clip(None);
+                c.ui_dirty = true;
+            }),
+        ),
+    ]
+}
+
+/// Bounce Track in Place (roadmap G4): an instrument track with a MIDI clip at beat 4 becomes an
+/// audio track holding the render from beat 4, its name and fader kept and its instrument off,
+/// in one undo step; ⌘Z brings the instrument track and its MIDI clip back.
+fn bounce_in_place_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::{AssetId, ClipId, Command, MidiClip, Note, Track, TrackId, TrackKind};
+    const B: i64 = dstudio_core::PPQ;
+    fn dir() -> std::path::PathBuf {
+        run_dir().join("bounce-in-place")
+    }
+    let id = Rc::new(Cell::new(0u64));
+    let (i1, i2, i3, i4) = (id.clone(), id.clone(), id.clone(), id.clone());
+    vec![
+        DoC(
+            "bounce in place: an instrument track at fader 0.8 with a MIDI clip of two notes at beat 4",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.clip_render.dir_override = Some(dir());
+                let n = c.project().next_id;
+                let mut clip = MidiClip::empty(4 * B, 4 * B);
+                clip.id = ClipId(n + 1);
+                clip.notes = vec![
+                    Note { id: 1, pitch: 60, start: 0, length: 2 * B, velocity: 110 },
+                    Note { id: 2, pitch: 67, start: 2 * B, length: B, velocity: 110 },
+                ];
+                let mut track = Track::new(TrackId(n), TrackKind::Instrument, "In place", dstudio_core::ColorIndex::FIRST);
+                track.gain = 0.8;
+                c.execute(Command::Batch {
+                    label: "bounce in place test".into(),
+                    commands: vec![Command::AddTrack { index: None, track }, Command::AddMidiClip { track: TrackId(n), clip }],
+                });
+                i1.set(n);
+                c.bounce_track_in_place(TrackId(n));
+            }),
+        ),
+        Check(
+            "bounce in place: an audio track with one clip from beat 4, same name and fader, instrument off, one undo step",
+            Box::new(move |c, _| {
+                eprintln!("bounce-in-place: render {:.1} ms (1 bar and its tail)", c.clip_render.last_ms);
+                let t = c.project().track(TrackId(i2.get())).ok_or("no track")?;
+                let k = t.clips.first().ok_or(format!("no clip; status {:?}", c.status_message()))?;
+                let ok = t.kind == TrackKind::Audio
+                    && t.clips.len() == 1
+                    && t.midi_clips.is_empty()
+                    && k.start == 4 * B
+                    && t.name == "In place"
+                    && t.gain == 0.8
+                    && t.instrument_plugin.as_ref().is_none_or(|d| !d.enabled)
+                    && c.doc.undo_label() == Some("Bounce Track in Place");
+                ok.then_some(()).ok_or(format!("{:?} {} clips; undo {:?}", t.kind, t.clips.len(), c.doc.undo_label()))
+            }),
+        ),
+        Do("bounce in place: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check(
+            "bounce in place: the instrument track and its MIDI clip are back",
+            Box::new(move |c, _| {
+                let t = c.project().track(TrackId(i3.get())).ok_or("no track")?;
+                (t.kind == TrackKind::Instrument
+                    && t.clips.is_empty()
+                    && t.midi_clips.len() == 1
+                    && t.instrument_plugin.as_ref().is_none_or(|d| d.enabled))
+                .then_some(())
+                .ok_or(format!("{:?} {} audio {} MIDI clips", t.kind, t.clips.len(), t.midi_clips.len()))
+            }),
+        ),
+        DoC(
+            "bounce in place: remove the test track, its render and the scratch folder",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let mut commands = vec![Command::RemoveTrack { track: TrackId(i4.get()) }];
+                commands.extend(
+                    c.project()
+                        .assets
+                        .iter()
+                        .filter(|a| in_dir(&a.absolute_path, &dir()))
+                        .map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }),
+                );
+                c.execute(Command::Batch { label: "bounce in place cleanup".into(), commands });
+                c.clip_render.dir_override = Some(run_dir().join("renders"));
+                let _ = std::fs::remove_dir_all(dir());
+            }),
+        ),
+    ]
+}
+
+/// Assistant full height (roadmap G21): the header's layout button takes the docked assistant
+/// down over the bottom panel's right end, which narrows; pressing it again puts it back. Saved.
+fn assistant_full_steps() -> Vec<Step> {
+    use Step::*;
+    let w0 = Rc::new(Cell::new(0.0f32));
+    let (w1, w2) = (w0.clone(), w0.clone());
+    vec![
+        DoC(
+            "assistant height: open the assistant at the timeline row height",
+            Box::new(move |a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.assistant_full = false;
+                c.assistant_open = true;
+                c.update_ui(a);
+            }),
+        ),
+        DoC(
+            "assistant height: press the header's layout button",
+            Box::new(move |a, ctl| {
+                ctl.borrow_mut().update_ui(a);
+                w1.set(geo().bottom_w);
+                a.global::<Studio>().invoke_chat_toggle_full();
+            }),
+        ),
+        Check(
+            "assistant height: full height is on and saved, the bottom panel narrowed by the assistant's width",
+            Box::new(move |c, _| {
+                let (before, now) = (w2.get(), geo().bottom_w);
+                (c.settings.prefs.assistant_full && now < before - 200.0)
+                    .then_some(())
+                    .ok_or(format!("full {} bottom {before} -> {now}", c.settings.prefs.assistant_full))
+            }),
+        ),
+        Do("assistant height: press it again", Box::new(|a| a.global::<Studio>().invoke_chat_toggle_full())),
+        Check(
+            "assistant height: back to the timeline row, the bottom panel full width again",
+            Box::new(move |c, _| {
+                let now = geo().bottom_w;
+                (!c.settings.prefs.assistant_full && (now - w0.get()).abs() < 0.5).then_some(()).ok_or(format!("bottom {now}"))
+            }),
+        ),
+        DoC("assistant height: close the assistant", Box::new(|_, ctl| ctl.borrow_mut().assistant_open = false)),
+    ]
+}
+
+/// I on an audio track's header (roadmap G30): every recordable track has input monitoring.
+fn header_monitor_steps() -> Vec<Step> {
+    use Step::*;
+    vec![
+        DoC(
+            "monitor: lanes at the top, track 1 an audio track",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.view.scroll_y = 0.0;
+                if c.mixer_open {
+                    c.toggle_mixer();
+                }
+                c.ui_dirty = true;
+            }),
+        ),
+        DoC(
+            "monitor: click I on track 1's header (an audio track)",
+            Box::new(|a, ctl| {
+                let (x, y) = header_r(ctl, 0);
+                click(a, x + 13.6, y);
+            }),
+        ),
+        Check(
+            "monitor: the audio track's header has I: input monitoring on, one undo step",
+            Box::new(|c, _| {
+                let t = &c.project().tracks[0];
+                (t.kind == dstudio_core::TrackKind::Audio && t.monitor && c.doc.undo_label() == Some("Input Monitoring Change"))
+                    .then_some(())
+                    .ok_or(format!("{:?} monitor {} undo {:?}", t.kind, t.monitor, c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "monitor: click I again",
+            Box::new(|a, ctl| {
+                let (x, y) = header_r(ctl, 0);
+                click(a, x + 13.6, y);
+            }),
+        ),
+        Check(
+            "monitor: input monitoring off again",
+            Box::new(|c, _| (!c.project().tracks[0].monitor).then_some(()).ok_or("still monitoring".into())),
         ),
     ]
 }
@@ -16739,10 +18311,14 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_selection_steps());
     all.extend(clip_fade_steps());
     all.extend(clip_render_steps());
+    all.extend(bounce_in_place_steps());
     all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
+    all.extend(tool_steps());
+    all.extend(zoom_slider_steps());
     all.extend(transport_fields_steps());
+    all.extend(tempo_steps());
     all.extend(track_rename_steps());
     all.extend(track_menu_steps());
     all.extend(group_steps());
@@ -16754,15 +18330,25 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(more_key_steps());
     all.extend(gesture_steps());
     all.extend(menu_bar_steps());
+    all.extend(updates_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());
     all.extend(live_import_steps());
     all.extend(strip_steps());
     all.extend(returns_steps());
+    all.extend(return_send_steps());
     all.extend(plugin_folder_steps());
+    all.extend(default_instrument_steps());
+    all.extend(settings_search_steps());
+    all.extend(settings_help_steps());
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     all.extend(note_redraw_steps());
+    all.extend(header_monitor_steps());
+    all.extend(api_key_steps());
+    all.extend(ask_clip_steps());
+    all.extend(assistant_full_steps());
+    all.extend(rename_project_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.
@@ -16894,6 +18480,7 @@ fn live_import_steps() -> Vec<Step> {
                 crate::wavgen::write_wav(&wav, 48_000, 1, &samples).unwrap();
                 let set = LiveSet {
                     bpm: 100.0,
+                    tempo: Vec::new(),
                     numerator: 4,
                     denominator: 4,
                     loop_on: false,

@@ -34,11 +34,15 @@ pub enum Field {
     BufferSize = 3,
     /// Settings › Shortcuts › Preset.
     ShortcutPreset = 4,
+    /// Settings › MIDI › Default instrument (src/default_instrument.rs).
+    DefaultInstrument = 5,
 }
 
 impl Field {
     fn from_i32(i: i32) -> Option<Field> {
-        [Field::Output, Field::Input, Field::SampleRate, Field::BufferSize, Field::ShortcutPreset].into_iter().find(|f| *f as i32 == i)
+        [Field::Output, Field::Input, Field::SampleRate, Field::BufferSize, Field::ShortcutPreset, Field::DefaultInstrument]
+            .into_iter()
+            .find(|f| *f as i32 == i)
     }
 }
 
@@ -49,6 +53,10 @@ pub enum Choice {
     Rate(f64),
     Buffer(u32),
     Preset(&'static str),
+    /// A default instrument (None = the Synth).
+    Instrument(Option<crate::prefs::InstrumentChoice>),
+    /// A heading row; can't be picked.
+    Header,
 }
 
 #[derive(Debug)]
@@ -75,6 +83,11 @@ pub struct SettingsState {
     pub tone: Option<TestTone>,
     /// Settings › Shortcuts and the live keymap (src/shortcuts.rs).
     pub keys: crate::shortcuts::ShortcutsUi,
+    /// Search settings (src/settings_search.rs): the text typed; cleared on close.
+    pub search: String,
+    /// Settings closed since the last view-model push: the search fields it held may have had
+    /// the keyboard, and their focus flag must not outlive them (it blocks every shortcut).
+    pub release_focus: std::cell::Cell<bool>,
 }
 
 pub fn fmt_rate(r: f64) -> String {
@@ -97,6 +110,8 @@ pub fn buffer_note(requested: u32, running: bool, actual: u32, device_rate: f64)
 /// Settings dropdown popup rows: 22 pt, 4 pt padding.
 pub const MENU_ROW: f32 = 22.0;
 pub const MENU_PAD: f32 = 4.0;
+/// Rows a settings dropdown shows before it scrolls (a long plugin list).
+pub const MENU_MAX_ROWS: f32 = 14.0;
 
 /// -24 dBFS, 0.5 s, 440 Hz with 10 ms fades (Settings › Audio "Test").
 pub fn test_tone_samples(rate: u32) -> Vec<f32> {
@@ -179,12 +194,14 @@ impl Controller {
         self.settings.menu = None;
         self.settings.keys.recording = None;
         self.settings.keys.search.clear();
+        self.settings.search.clear();
+        self.settings.release_focus.set(true);
         self.ui_dirty = true;
     }
 
     /// Settings › General switches, in page order: 0 Always load last session, 1 Auto-show
     /// third-party effect windows, 2 Auto-show built-in effect windows, 3 Keep plugin windows
-    /// on top, 4 Sections move clips. Saved at once.
+    /// on top, 4 Sections move clips, 5 Check for updates at launch. Saved at once.
     pub fn general_toggle(&mut self, i: i32) {
         let g = &mut self.settings.prefs.general;
         let flag = match i {
@@ -193,6 +210,7 @@ impl Controller {
             2 => &mut g.show_builtin_windows,
             3 => &mut g.plugin_windows_on_top,
             4 => &mut g.sections_move_clips,
+            5 => &mut g.check_updates_at_launch,
             _ => return,
         };
         *flag = !*flag;
@@ -350,6 +368,7 @@ impl Controller {
             Field::ShortcutPreset => {
                 crate::shortcut_presets::PRESETS.iter().map(|p| (p.name.to_string(), Choice::Preset(p.name))).collect()
             }
+            Field::DefaultInstrument => self.instrument_choices(),
         }
     }
 
@@ -361,6 +380,9 @@ impl Controller {
             (Field::SampleRate, Choice::Rate(r)) => (r - self.current_rate()).abs() < 0.5,
             (Field::BufferSize, Choice::Buffer(n)) => *n == self.current_buffer(),
             (Field::ShortcutPreset, Choice::Preset(p)) => *p == crate::shortcut_presets::find(&self.settings.prefs.shortcut_preset).name,
+            (Field::DefaultInstrument, Choice::Instrument(c)) => {
+                crate::default_instrument::same_choice(c.as_ref(), self.settings.prefs.midi.default_instrument.as_ref())
+            }
             _ => false,
         }
     }
@@ -385,7 +407,16 @@ impl Controller {
         let Some((f, items)) = self.settings.menu.take() else { return };
         let Some((_, c)) = items.get(i).cloned() else { return };
         self.ui_dirty = true;
+        if matches!(c, Choice::Header) {
+            self.settings.menu = Some((f, items));
+            return;
+        }
         if self.is_current(f, &c) {
+            return;
+        }
+        if let Choice::Instrument(choice) = c {
+            self.settings.prefs.midi.default_instrument = choice;
+            self.save_prefs();
             return;
         }
         if let Choice::Preset(name) = c {
@@ -558,6 +589,8 @@ impl Controller {
             master_gain: 1.0,
             master_automation: vec![],
             device_assets: Default::default(),
+            tempo: vec![],
+            click_quarters: 1.0,
         };
         let e = &self.engine;
         let off = dstudio_engine::MetronomeConfig { enabled: false, gain: 0.0, frames_per_beat: 24_000.0, beats_per_bar: 4 };
@@ -592,9 +625,18 @@ impl Controller {
     pub(crate) fn push_settings(&self, s: &Studio) {
         s.set_settings_open(self.settings.open);
         if !self.settings.open {
+            // A setting's help tip doesn't outlive the window (its (i) may be under the pointer).
+            s.set_settings_tip("".into());
+            if self.settings.release_focus.take() {
+                s.set_search_focused(false);
+            }
             return;
         }
         s.set_settings_page(self.settings.page as i32);
+        s.set_settings_search(self.settings.search.clone().into());
+        let slots = crate::settings_search::page_slots(&self.settings.search);
+        s.set_settings_search_none(slots.iter().all(|&i| i < 0));
+        s.set_settings_page_slots(slint::ModelRc::new(slint::VecModel::from(slots)));
         s.set_set_output_text(self.output_text().into());
         s.set_set_input_text(self.input_text().into());
         s.set_set_rate_text(fmt_rate(self.current_rate()).into());
@@ -604,12 +646,23 @@ impl Controller {
         s.set_set_pdc_on(!self.settings.prefs.audio.pdc_off);
         if self.settings.page == crate::midi_in::MIDI_PAGE {
             self.push_midi_settings();
+            s.set_midi_instrument_text(
+                crate::default_instrument::choice_label(self.settings.prefs.midi.default_instrument.as_ref()).into(),
+            );
+            s.set_midi_instrument_missing(self.default_instrument_missing());
         }
         if self.settings.page == crate::shortcuts::SHORTCUTS_PAGE {
             self.push_shortcuts(s);
         }
         let g = &self.settings.prefs.general;
-        let on = [g.load_last_session, g.show_plugin_windows, g.show_builtin_windows, g.plugin_windows_on_top, g.sections_move_clips];
+        let on = [
+            g.load_last_session,
+            g.show_plugin_windows,
+            g.show_builtin_windows,
+            g.plugin_windows_on_top,
+            g.sections_move_clips,
+            g.check_updates_at_launch,
+        ];
         let shown = s.get_general_on();
         if (0..on.len()).any(|i| slint::Model::row_data(&shown, i) != Some(on[i])) {
             s.set_general_on(slint::ModelRc::new(slint::VecModel::from(on.to_vec())));
@@ -626,12 +679,15 @@ impl Controller {
                     .map(|(i, (label, c))| ChoiceItem {
                         label: label.clone().into(),
                         checked: self.is_current(*f, c),
-                        hint: false,
+                        hint: matches!(c, Choice::Header),
                         y: MENU_PAD + i as f32 * MENU_ROW,
                         h: MENU_ROW,
                     })
                     .collect();
-                s.set_settings_menu_h(MENU_PAD * 2.0 + rows.len() as f32 * MENU_ROW);
+                let full = MENU_PAD * 2.0 + rows.len() as f32 * MENU_ROW;
+                let shown = full.min(MENU_PAD * 2.0 + MENU_MAX_ROWS * MENU_ROW);
+                s.set_settings_menu_h(shown);
+                s.set_settings_menu_content_h(if full > shown { full } else { 0.0 });
                 s.set_settings_menu_field(*f as i32);
                 sync_model(&self.settings_menu_model, rows);
                 s.set_settings_menu_open(true);

@@ -1470,9 +1470,13 @@ int32_t se_preview_get(se_engine* engine, se_preview_info* out);
  *
  * Sends between returns (a later addition, for group tracks, which the app
  * publishes as returns): a return may send into other returns as long as the
- * sends between returns form no loop. Its sends follow the rule for its main
- * output under mute and solo, and delay compensation counts the return's own
- * arrival and chain before the return it feeds. */
+ * sends between returns form no loop. Delay compensation counts the return's
+ * own arrival and chain before the return it feeds. With returns soloed
+ * (spec 016, one rule for every return): a soloed return plays with every
+ * return it feeds through unmuted returns' sends, and those play only what
+ * comes down that path; a return that feeds a soloed one keeps sending into
+ * it without playing; other returns are silent. A muted return sends
+ * nothing. Without a soloed return, every unmuted return plays and sends. */
 #define SE_MAX_RETURNS 16
 
 typedef struct se_track_route {
@@ -1566,6 +1570,57 @@ typedef struct se_session_desc_v11 {
 
 /* MAIN THREAD (like se_session_publish_v5). */
 int32_t se_session_publish_v11(se_engine* engine, const se_session_desc_v11* session);
+
+/* ---- tempo changes (ABI v1 addition, specs/015-tempo-changes) -------------
+ * se_session_publish_v12 is se_session_publish_v11 plus the song's tempo map.
+ * Clips, notes, automation and the loop still arrive in frames (the core
+ * converts them through the map); the map is for what counts musical time on
+ * the audio thread. With tempo_count > 0, in live playback, se_render_offline
+ * and se_export_wav:
+ *  - tempo-synced built-in devices and the plugin host see the tempo at the
+ *    first frame of each block and the song position (quarter notes from
+ *    bar 1) at every position they ask for, both from the map; the value of
+ *    se_transport_set_tempo is ignored;
+ *  - metronome beat k sounds at timeline frame llround(frame_at(k *
+ *    click_quarters)) instead of llround(k * frames_per_beat) (enable, gain
+ *    and beats_per_bar still come from se_metronome_set).
+ * With tempo_count == 0 everything is exactly as with se_session_publish_v11.
+ *
+ * Segment i starts at frame f0 = start_frame and quarter q0 = start_quarter
+ * with tempo a = start_bpm, and runs to the next segment's start quarter q1,
+ * where it reaches b = end_bpm (b == a: the tempo holds; else it ramps
+ * linearly in BPM over quarters). With R the engine sample rate and
+ * k = (b - a) / (q1 - q0):
+ *   hold: q(f) = q0 + (f - f0) * a / (60 R)
+ *   ramp: q(f) = q0 + (a / k) * (exp(k (f - f0) / (60 R)) - 1)
+ *         frame_at(q) = f0 + (60 R / k) * ln(1 + k (q - q0) / a)
+ *         tempo(f) = a * exp(k (f - f0) / (60 R))
+ * Before frame 0 the first segment's tempo holds.
+ *
+ * Validation (else SE_ERR_INVALID_ARG): tempo non-NULL when counted, at most
+ * SE_MAX_TEMPO_SEGMENTS; segment 0 starts at frame 0 and quarter 0; start
+ * frames and start quarters finite and strictly increasing; tempos finite in
+ * [1, 10000]; the last segment holds (end_bpm == start_bpm); click_quarters
+ * finite and > 0 (only checked when tempo_count > 0). The map is copied; the
+ * audio thread only reads it. */
+#define SE_MAX_TEMPO_SEGMENTS 65536u
+typedef struct se_tempo_segment {
+    double start_frame;   /* exact (unrounded) timeline frame where the segment starts */
+    double start_quarter; /* quarter notes from bar 1 at start_frame */
+    double start_bpm;
+    double end_bpm;       /* == start_bpm: hold; else the tempo at the next segment's start */
+} se_tempo_segment; /* 32 bytes, align 8 */
+
+typedef struct se_session_desc_v12 {
+    se_session_desc_v11 v11;
+    const se_tempo_segment* tempo;
+    uint32_t tempo_count;
+    uint32_t _pad;
+    double click_quarters; /* quarter notes per metronome beat (4 / time-signature denominator) */
+} se_session_desc_v12; /* 144 bytes, align 8 */
+
+/* MAIN THREAD (like se_session_publish_v5). */
+int32_t se_session_publish_v12(se_engine* engine, const se_session_desc_v12* session);
 
 /* ---- MIDI input (specs/003-midi-input-and-recording) ----------------------
  * The engine reads MIDI input ports (Core MIDI on macOS, the Windows

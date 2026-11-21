@@ -4,8 +4,9 @@
 // Exactly one backend translation unit provides create_platform_audio_device(),
 // list_audio_devices() and query_default_output_sample_rate():
 //   coreaudio_device.cpp  macOS  (AUHAL; private aggregate device for duplex)
-//   wasapi_device.cpp     Windows (WASAPI shared mode; a separate capture client for duplex)
-//   pipewire_device.cpp   Linux  (PipeWire; separate playback and capture streams for duplex)
+//   windows_audio_device.cpp  Windows (WASAPI shared mode, wasapi_device.cpp, or an ASIO
+//                             driver, asio_device.cpp, picked per setup)
+//   linux_audio_device.cpp    Linux  (PipeWire, pipewire_device.cpp, or ALSA, alsa_device.cpp)
 //   audio_device.cpp      fallback for any other platform
 #pragma once
 

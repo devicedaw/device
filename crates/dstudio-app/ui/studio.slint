@@ -55,6 +55,9 @@ export struct AutoExtra { track-id: int, index: int, y: length, cat: string, par
 
 export struct RulerLabel { x: length, text: string }
 
+// A tempo point on the ruler (src/tempo_lane.rs): the mark at x, its BPM text from text-x.
+export struct TempoMark { x: length, text-x: length, text: string }
+
 // Section name in the ruler's section lane (src/sections.rs): x and room in lane points, ink per block.
 export struct SectionLabel { x: length, w: length, text: string, ink: color }
 
@@ -467,6 +470,8 @@ export global Studio {
     in property <length> scroll-y;
     in property <image> timeline-image;
     in property <[RulerLabel]> ruler-labels;
+    in property <[TempoMark]> tempo-marks;
+    in property <color> tempo-mark-color: #65c9b8;
     in property <[SectionLabel]> section-labels;
     in property <length> section-add-x: 8.5px;     // centre of the section lane's "+"
     in property <[ClipLabel]> clip-labels;
@@ -518,7 +523,7 @@ export global Studio {
     callback tree-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
     callback tree-scroll-by(float);
     // ---- browser sections, Back / Forward and the Files section (src/files.rs) ----
-    in property <int> browser-section: 2;      // 2 Devices, 3 Files (Search and Library have no content)
+    in property <int> browser-section: 2;      // 2 Devices, 3 Files
     in property <bool> browser-can-back;
     in property <bool> browser-can-forward;
     in property <int> files-tab;               // 0 Projects, 1 Folders
@@ -688,6 +693,16 @@ export global Studio {
     in property <bool> chat-context-instrument;
     in-out property <string> chat-draft;   // composer text (transient input, not project state)
     in-out property <bool> chat-focused;
+    in property <bool> chat-key-saved;           // the assistant's API key came from the keychain
+    callback chat-save-key(string);
+    callback chat-remove-key();
+    // Bumped to put the cursor in the composer (Ask, ⌘K).
+    in property <int> chat-focus-epoch;
+    in property <bool> assistant-full;          // the assistant spans the window height (its header button)
+    callback chat-toggle-full();
+    in-out property <bool> title-editing;       // the title bar shows its project name field
+    in-out property <bool> title-focused;       // the title bar's project name field has the keyboard
+    callback project-rename(string);
     in property <[HighlightRect]> highlights;
     callback chat-send(string);
     callback chat-new();
@@ -755,6 +770,7 @@ export global Studio {
     callback typing-release();
     callback toggle-typing();
     callback pr-zoom(int, float);                           // 0 vertical, 1 horizontal; 0..1
+    callback pr-zoom-reset(int);                            // double-click: back to the default
     in property <float> pr-vzoom: 0.49;
     in property <float> pr-hzoom;
     callback pr-action(string);                             // quantize|humanize|reverse|legato|double|pen|smart_quantize|velocity_lane
@@ -918,6 +934,30 @@ export global Studio {
     callback snap-menu-toggle(length, length);
     callback snap-menu-pick(int);
     callback snap-menu-dismiss();
+    // Timeline edit tools (src/tools.rs): 0 Selector, 1 Marquee tool, 2 Scissors; the header menu;
+    // the Marquee range and the Scissors cut line, in lane coordinates.
+    in property <int> tool;
+    in property <bool> tool-menu-open;
+    in property <length> tool-menu-x;
+    in property <length> tool-menu-y;
+    in property <bool> range-on;
+    in property <length> range-x;
+    in property <length> range-y;
+    in property <length> range-w;
+    in property <length> range-h;
+    in property <bool> cut-on;
+    in property <length> cut-x;
+    in property <length> cut-y;
+    in property <length> cut-h;
+    callback tool-menu-toggle(length, length);
+    callback tool-pick(int);
+    callback tool-menu-dismiss();
+    // Timeline header zoom sliders (src/fit.rs): positions 0..1, vertical (track heights) and
+    // horizontal (time); moved, and reset by a double-click.
+    in property <float> tl-vzoom;
+    in property <float> tl-hzoom;
+    callback tl-zoom(int, float);
+    callback tl-zoom-reset(int);
     // ---- return tracks, sends and Out (src/routing.rs) ----
     in-out property <int> strip-tab;               // channel strip tab: 0 Input, 1 Sends (view state)
     in property <bool> returns-shown;             // Timeline Returns pill lit (return rows show)
@@ -1000,8 +1040,9 @@ export global Studio {
     callback export-name-edited(string);
     in property <bool> unsaved-open;
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show
-    // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top.
-    in property <[bool]> general-on: [false, true, false, true, false];
+    // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top,
+    // Sections move clips, Check for updates at launch.
+    in property <[bool]> general-on: [false, true, false, true, false, true];
     // Settings › General › Projects folder, shown with ~ for the home folder; Choose… picks another.
     in property <string> general-projects-folder: "~/Documents/Device Studio";
     callback general-choose-projects-folder();
@@ -1010,6 +1051,16 @@ export global Studio {
     callback general-stop-mode(bool);                       // true = Stop in place
     in property <bool> updates-open;                        // Options › Check for Updates…
     in property <string> app-version;
+    // Its message, release-note lines, "and N more changes", and whether an update is shown
+    // (Later / Download instead of OK). src/updates.rs.
+    in property <string> updates-text;
+    in property <[string]> updates-notes;
+    in property <string> updates-more;
+    in property <bool> updates-download;
+    callback updates-download-clicked();
+    // Title bar "Update available" pill: the new version ("" hides it); a click opens the dialog.
+    in property <string> update-version;
+    callback update-pill-clicked();
     in property <bool> undo-history-open;                   // Edit › Undo History…
     in property <[UndoHistoryRow]> undo-history-rows;
     in property <int> undo-history-current;                 // row index of the current state
@@ -1035,11 +1086,16 @@ export global Studio {
     in property <bool> set-pdc-on: true;
     in property <string> set-latency-text;
     in property <[MidiInputRow]> midi-inputs;
+    // Settings › MIDI › Default instrument: the choice's name, and whether it is a plugin the
+    // last scan didn't find.
+    in property <string> midi-instrument-text: "Synth";
+    in property <bool> midi-instrument-missing;
     callback settings-midi-toggle(int);
     in property <bool> settings-menu-open;
     in property <int> settings-menu-field;      // 0 output, 1 input, 2 sample rate, 3 buffer size
     in property <[ChoiceItem]> settings-menu-items;
     in property <length> settings-menu-h;
+    in property <length> settings-menu-content-h; // all the rows when they don't fit (the list scrolls)
     callback toggle-settings();
     callback close-settings();
     callback settings-page-select(int);
@@ -1054,6 +1110,22 @@ export global Studio {
     callback shortcut-clear(int);                   // ×: unmapped
     callback shortcuts-reset();
     callback shortcuts-search(string);
+    // Settings › Search settings (src/settings_search.rs): the text, each page's sidebar row
+    // (-1 = hidden), whether nothing matched, a counter that asks the field to take focus (⌘F),
+    // and whether the row labelled arg 2 matches the query arg 1.
+    in-out property <string> settings-search;
+    in property <[int]> settings-page-slots;
+    in property <bool> settings-search-none;
+    in-out property <int> settings-search-focus;
+    callback settings-search-edited(string);
+    pure callback settings-row-hit(string, string) -> bool;
+    // Settings help (roadmap G12): the sentence for a setting's (i), from src/settings_search.rs,
+    // and the one showing (the (i) under the pointer; "" = none) with the (i)'s bottom-left
+    // corner in window coordinates.
+    pure callback settings-help(string) -> string;
+    in-out property <string> settings-tip;
+    in-out property <length> settings-tip-x;
+    in-out property <length> settings-tip-y;
     callback settings-dropdown(int);
     callback settings-menu-pick(int);
     callback settings-menu-dismiss();
@@ -1185,6 +1257,10 @@ export global Studio {
     in property <length> tracks-height: 149px;  // content height of all track rows
     in property <length> master-h: 30px;        // master row (64.5 pt while lanes are shown)
     in property <int> master-auto-state;
+    // The master row's lane pill: "Master › Volume" or "Song › Tempo" (spec 015).
+    in property <string> master-auto-cat: "Master";
+    in property <string> master-auto-param: "Volume";
+    in property <color> master-auto-accent: #ebc542;
     in property <bool> master-vol-auto;
     in property <bool> sel-vol-auto;
     in property <bool> sel-pan-auto;

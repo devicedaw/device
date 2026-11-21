@@ -541,21 +541,63 @@ int32_t apply_routing(RenderGraph& g, const se_session_desc_v9& desc9, std::stri
             }
         }
     }
-    // Mute and solo.
+    // Mute and solo, one rule for every bus (returns and groups, spec 016).
+    // With no bus soloed, buses are solo-safe: each plays and sends while
+    // unmuted. With a bus soloed, `heard` is the soloed buses and every bus
+    // they reach through unmuted buses' sends: those play on the master.
+    // `feeds` is every bus that reaches a soloed one: it keeps sending (so the
+    // soloed bus sounds as in the full mix) without being heard. A bus that is
+    // heard only downstream of a soloed one takes only what comes down that
+    // path (SendNode::live). Ordinary tracks follow spec 002 as before.
     bool solo_track = false, solo_return = false;
     for (std::size_t t = 0; t < n; ++t)
         (g.tracks[t].is_return ? solo_return : solo_track) |= desc.tracks[t].solo != 0;
+    std::vector<uint8_t> soloed(g.bus_count, 0), heard(g.bus_count, 0), feeds(g.bus_count, 0);
+    if (solo_return) {
+        std::vector<std::size_t> bus_track(g.bus_count, 0);
+        for (std::size_t t = 0; t < n; ++t)
+            if (g.tracks[t].bus >= 0) bus_track[static_cast<std::size_t>(g.tracks[t].bus)] = t;
+        for (uint32_t b = 0; b < g.bus_count; ++b) soloed[b] = heard[b] = desc.tracks[bus_track[b]].solo != 0;
+        // The bus graph is acyclic (checked above) and small: repeat until nothing changes.
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (uint32_t b = 0; b < g.bus_count; ++b) {
+                const TrackNode& node = g.tracks[bus_track[b]];
+                if (static_mute(desc.tracks[bus_track[b]])) continue;
+                for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s) {
+                    const auto to = static_cast<std::size_t>(g.sends[s].bus);
+                    if (heard[b] && !heard[to]) {
+                        heard[to] = 1;
+                        changed = true;
+                    }
+                    if (!feeds[b] && (soloed[to] || feeds[to])) {
+                        feeds[b] = 1;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    // Heard only downstream of a soloed bus: fed by that path alone.
+    const auto downstream_only = [&](int32_t bus) {
+        const auto b = static_cast<std::size_t>(bus);
+        return solo_return && heard[b] && !soloed[b] && !feeds[b];
+    };
     for (std::size_t t = 0; t < n; ++t) {
         TrackNode& node = g.tracks[t];
         const se_track_desc_v6& td = desc.tracks[t];
         const bool on = !static_mute(td);
+        const bool on_path = node.is_return && heard[static_cast<std::size_t>(node.bus)];
         if (node.is_return) {
-            node.main_on = on && (!solo_return || td.solo != 0);
-            node.send_live = node.main_on;
+            node.main_on = on && (!solo_return || on_path);
+            node.send_live = on && (!solo_return || on_path || feeds[static_cast<std::size_t>(node.bus)]);
         } else {
             node.send_live = on && (!solo_track || td.solo != 0);
-            node.main_on = node.out_bus >= 0 ? node.send_live : on && ((!solo_track && !solo_return) || td.solo != 0);
+            node.main_on = node.out_bus >= 0 ? node.send_live && !downstream_only(node.out_bus)
+                                             : on && ((!solo_track && !solo_return) || td.solo != 0);
         }
+        for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s)
+            g.sends[s].live = on_path || !downstream_only(g.sends[s].bus);
         node.audible = node.main_on || (node.send_live && node.send_count > 0);
         node.plain = node.send_count == 0 && node.out_bus < 0 && node.bus < 0;
     }
@@ -597,6 +639,42 @@ int32_t build_render_graph(const se_session_desc_v10& desc, const AssetLookup& l
     se_session_desc_v11 d11{};
     d11.v10 = desc;
     return build_render_graph(d11, lookup, out, err);
+}
+
+// Validates a tempo map (se_session_publish_v12); nullptr when it is valid.
+static const char* validate_tempo(const se_session_desc_v12& d) noexcept {
+    if (d.tempo_count == 0) return nullptr;
+    if (d.tempo == nullptr) return "tempo_count > 0 but tempo == NULL";
+    if (d.tempo_count > SE_MAX_TEMPO_SEGMENTS) return "too many tempo segments";
+    if (!std::isfinite(d.click_quarters) || d.click_quarters <= 0.0) return "click_quarters must be finite and > 0";
+    if (d.tempo[0].start_frame != 0.0 || d.tempo[0].start_quarter != 0.0)
+        return "the first tempo segment must start at frame 0 and quarter 0";
+    for (uint32_t i = 0; i < d.tempo_count; ++i) {
+        const se_tempo_segment& g = d.tempo[i];
+        if (!std::isfinite(g.start_frame) || !std::isfinite(g.start_quarter)) return "tempo segment start not finite";
+        if (!(g.start_bpm >= 1.0 && g.start_bpm <= 10000.0) || !(g.end_bpm >= 1.0 && g.end_bpm <= 10000.0))
+            return "tempo must be finite and in [1, 10000] BPM";
+        if (i > 0 && (g.start_frame <= d.tempo[i - 1].start_frame || g.start_quarter <= d.tempo[i - 1].start_quarter))
+            return "tempo segments must start at strictly increasing frames and quarters";
+    }
+    if (d.tempo[d.tempo_count - 1].end_bpm != d.tempo[d.tempo_count - 1].start_bpm)
+        return "the last tempo segment must hold its tempo";
+    return nullptr;
+}
+
+int32_t build_render_graph(const se_session_desc_v12& desc12, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    if (const char* why = validate_tempo(desc12)) {
+        err = std::string("tempo map: ") + why;
+        return SE_ERR_INVALID_ARG;
+    }
+    const int32_t rc = build_render_graph(desc12.v11, lookup, out, err);
+    if (rc != SE_OK) return rc;
+    if (desc12.tempo_count > 0) {
+        out->tempo.assign(desc12.tempo, desc12.tempo + desc12.tempo_count);
+        out->click_quarters = desc12.click_quarters;
+    }
+    return SE_OK;
 }
 
 int32_t build_render_graph(const se_session_desc_v11& desc11, const AssetLookup& lookup,
@@ -1166,6 +1244,8 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
     c->warp_voice_keys = g.warp_voice_keys;
     c->warp_voice_refs = g.warp_voice_refs;
     c->warp_voices = g.warp_voices;
+    c->tempo = g.tempo;
+    c->click_quarters = g.click_quarters;
     return c;
 }
 

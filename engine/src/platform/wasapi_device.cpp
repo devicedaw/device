@@ -41,6 +41,7 @@
 #include "frame_ring.hpp"
 #include "os.hpp"
 #include "wasapi_period.hpp"
+#include "windows_audio.hpp"
 #include "dstudio_engine.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -637,12 +638,12 @@ private:
 
 } // namespace
 
-// Creates the Windows audio device (WASAPI shared mode).
-std::unique_ptr<AudioDevice> create_platform_audio_device() { return std::make_unique<WasapiDevice>(); }
+// Creates a WASAPI shared-mode device (windows_audio_device.cpp dispatches to it).
+std::unique_ptr<AudioDevice> windows_audio::create_wasapi_device() { return std::make_unique<WasapiDevice>(); }
 
 // Lists every active render and capture endpoint as a device, each with its
 // shared-mode rate. No devices (and no error) without a Windows audio stack.
-int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string& err) {
+int32_t windows_audio::wasapi_list(std::vector<DeviceInfo>& out, std::string& err) {
     out.clear();
     ComScope com;
     if (!com.ok()) {
@@ -693,7 +694,7 @@ int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string& err) {
 }
 
 // The default render endpoint's shared-mode rate, or 0 if there is none.
-double query_default_output_sample_rate() {
+double windows_audio::wasapi_default_output_rate() {
     ComScope com;
     if (!com.ok()) return 0.0;
     std::string err;

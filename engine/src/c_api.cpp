@@ -98,6 +98,12 @@ static_assert(sizeof(se_clip_fade_desc) == 24 && alignof(se_clip_fade_desc) == 8
 static_assert(sizeof(se_session_desc_v11) == 120 && offsetof(se_session_desc_v11, fades) == 104 &&
                   offsetof(se_session_desc_v11, fade_count) == 112,
               "se_session_desc_v11 layout");
+static_assert(sizeof(se_tempo_segment) == 32 && alignof(se_tempo_segment) == 8 &&
+                  offsetof(se_tempo_segment, start_quarter) == 8 && offsetof(se_tempo_segment, end_bpm) == 24,
+              "se_tempo_segment layout");
+static_assert(sizeof(se_session_desc_v12) == 144 && offsetof(se_session_desc_v12, tempo) == 120 &&
+                  offsetof(se_session_desc_v12, tempo_count) == 128 && offsetof(se_session_desc_v12, click_quarters) == 136,
+              "se_session_desc_v12 layout");
 #endif
 static_assert(sizeof(se_warp_point) == 16 && alignof(se_warp_point) == 8 && offsetof(se_warp_point, source) == 8);
 static_assert(sizeof(se_warp_slice) == 16 && offsetof(se_warp_slice, percussive) == 8);
@@ -503,6 +509,14 @@ int32_t se_session_publish_v10(se_engine* engine, const se_session_desc_v10* ses
     });
 }
 int32_t se_session_publish_v11(se_engine* engine, const se_session_desc_v11* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
+int32_t se_session_publish_v12(se_engine* engine, const se_session_desc_v12* session) {
     SE_REQUIRE_ENGINE(engine);
     if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
     return guarded([&] {

@@ -46,6 +46,8 @@ pub enum ClipOp {
     Consolidate { span: ClipSpan },
     /// New audio track below the clip's track holding the render; the source clip is disabled.
     Bounce { source: ClipId, span: ClipSpan },
+    /// The whole track replaced by its render: an audio track with one clip, its devices off.
+    BounceInPlace { span: ClipSpan },
     /// A WAV the user picked; `reveal` shows it in the file manager afterwards.
     Export { reveal: bool },
 }
@@ -461,6 +463,24 @@ impl Controller {
         self.start_render(ClipOp::Bounce { source: id, span: span.clone() }, &span, RenderMode::Bounce, out, "Bouncing to New Track");
     }
 
+    /// Bounce Track in Place: every enabled clip of `track` rendered through its devices (neutral
+    /// fader and pan, with the tail of a ringing track) to one audio clip from the first clip's
+    /// start. The track becomes an audio track holding that clip, keeping its name, colour, mix,
+    /// sends, output and lanes; its effects and instrument stay, switched off. One undo step.
+    pub fn bounce_track_in_place(&mut self, track: TrackId) {
+        if self.clip_render.busy() {
+            return self.set_status("Still rendering. One moment.", 3);
+        }
+        let Some(span) = render_plan::track_span(self.project(), track) else {
+            return self.set_status("Bounce: the track has no clips to bounce", 4);
+        };
+        if let Some(why) = span.clips.iter().find_map(|&c| self.render_block(c, false)) {
+            return self.set_status(format!("Bounce: {why}"), 4);
+        }
+        let out = self.new_output(&span, "bounce", "bounce");
+        self.start_render(ClipOp::BounceInPlace { span: span.clone() }, &span, RenderMode::Bounce, out, "Bouncing Track in Place");
+    }
+
     /// The audio clip editor's Resample button: the open clip rendered in place through its
     /// track's devices, the way Bounce to new track does it. Rendering onto the same track would
     /// run the devices twice, so the printed clip lands on a new track below at the same time
@@ -634,6 +654,16 @@ impl Controller {
                 cmds.push(Command::AddTrack { index: Some(index + 1), track: t });
                 cmds.push(Command::SetClipEnabled { clip: *source, enabled: false });
                 ("Bounce to New Track", id, "Bounced to a new track".to_string())
+            }
+            ClipOp::BounceInPlace { span } => {
+                // Clips added or removed while it rendered would be lost or doubled.
+                if render_plan::track_span(p, span.track).map(|s| s.clips) != Some(span.clips.clone()) {
+                    return discard(self, "the track changed while it rendered");
+                }
+                let Some(src) = p.track(span.track) else { return discard(self, "the track is gone while it rendered") };
+                let t = render_plan::bounced_in_place(src, new_clip(src.name.trim().to_string(), span.start));
+                cmds.push(Command::ReplaceTrack { track: t });
+                ("Bounce Track in Place", span.track, "Bounced the track in place".to_string())
             }
             ClipOp::Export { .. } => return,
         };

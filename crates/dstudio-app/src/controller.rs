@@ -164,7 +164,7 @@ pub fn track_color(c: ColorIndex) -> [f32; 3] {
 }
 
 /// Colour for a new track: the first palette entry after the last track's colour that no track
-/// uses yet, else the least-used one. The first track is pink.
+/// uses yet, else the least-used one. The first track is teal.
 pub fn next_track_color(p: &Project) -> ColorIndex {
     let n = TRACK_PALETTE.len();
     let Some(last) = p.tracks.last() else { return ColorIndex::FIRST };
@@ -223,6 +223,8 @@ pub enum JobResult {
     Assistant { started: Instant, mode: dstudio_core::assistant::Mode, result: Result<String, String> },
     /// A bug report or feedback was posted (feedback.rs).
     Feedback(Result<(), String>),
+    /// The latest release was looked up (updates.rs).
+    UpdateChecked(Result<Option<crate::updates::Release>, String>),
     /// Takes of one finished recording pass, loaded into the engine.
     Recorded {
         doc_epoch: u64,
@@ -375,6 +377,9 @@ pub enum MenuAction {
     /// An expanded automation row's menu (src/automation.rs).
     AutoLaneDelete,
     AutoLaneClose,
+    /// A tempo point's menu (src/tempo_lane.rs): ramp to the next point, or hold until it.
+    TempoRamp,
+    TempoHold,
     /// Record button menu (src/count_in.rs): count-in off, one bar, two bars.
     CountInOff,
     CountIn1,
@@ -395,6 +400,8 @@ pub struct MenuState {
     pub count_in: bool,
     /// An expanded automation row's menu: the track and row index.
     pub auto_lane: Option<(TrackId, usize)>,
+    /// A tempo point's menu: the point's index in the tempo map.
+    pub tempo_point: Option<usize>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
     /// The entry whose submenu `sub_open` shows (Transpose or Bounce).
@@ -458,6 +465,8 @@ pub struct Controller {
     pub(crate) pending_import: Option<crate::live_import::PendingImport>,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
+    /// The update check and what it found (updates.rs).
+    pub updates: crate::updates::Updates,
     /// "Change project key?": the key change waiting on Transpose MIDI / Don't transpose / Cancel.
     pub key_change: Option<crate::transport_fields::KeyChange>,
     /// Settings › General › Playhead on stop: where the last playback started, whether the
@@ -488,11 +497,14 @@ pub struct Controller {
     pub(crate) tracks_model: Rc<VecModel<TrackRow>>,
     ruler_model: Rc<VecModel<RulerLabel>>,
     section_label_model: Rc<VecModel<crate::SectionLabel>>,
+    tempo_mark_model: Rc<VecModel<crate::TempoMark>>,
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64, i64),
     pub(crate) mm: crate::minimap::State,
     /// Timeline snap toggle, grid size and menu (src/snap.rs).
     pub(crate) snap: crate::snap::State,
+    /// Timeline edit tools and the Marquee range (src/tools.rs).
+    pub(crate) tools: crate::tools::State,
     /// Transport bar tempo, signature and key fields (src/transport_fields.rs).
     pub(crate) tf: crate::transport_fields::State,
     /// Devices minimap (src/devminimap.rs) and the pointer hide / warp requests of minimap drags (src/pointer.rs).
@@ -566,6 +578,8 @@ pub struct Controller {
     pub assistant_open: bool,
     pub assistant: AssistantState,
     pub provider: Arc<Provider>,
+    /// Where the assistant's API key is kept (src/api_key.rs).
+    pub key_store: crate::api_key::KeyStore,
     ballistics: Ballistics,
     strips_model: Rc<VecModel<MixerStrip>>,
     strip_meters_model: Rc<VecModel<StripMeter>>,
@@ -654,6 +668,7 @@ impl Controller {
             unsaved_open: false,
             pending_import: None,
             updates_open: false,
+            updates: Default::default(),
             key_change: None,
             play_start: None,
             paused: false,
@@ -676,10 +691,12 @@ impl Controller {
             ruler_model: Rc::new(VecModel::default()),
             mm: crate::minimap::State::new(),
             snap: crate::snap::State::new(),
+            tools: Default::default(),
             tf: crate::transport_fields::State::new(),
             dm: crate::devminimap::State::new(),
             ptr: crate::pointer::Queue::default(),
             section_label_model: Rc::new(VecModel::default()),
+            tempo_mark_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
             ruler_key: (i64::MIN, 0, 0, 0),
             clip_vis: Vec::new(),
@@ -726,6 +743,7 @@ impl Controller {
             assistant_open: false,
             assistant: AssistantState::default(),
             provider: Arc::new(Provider::Unavailable),
+            key_store: crate::api_key::KeyStore::System,
             ballistics: Ballistics::default(),
             strips_model: Rc::new(VecModel::default()),
             strip_meters_model: Rc::new(VecModel::default()),
@@ -780,6 +798,8 @@ impl Controller {
         s.set_snap_menu_items(ModelRc::from(self.snap.model.clone()));
         s.set_sig_menu_items(ModelRc::from(self.tf.sig_model.clone()));
         s.set_section_labels(ModelRc::from(self.section_label_model.clone()));
+        s.set_tempo_marks(ModelRc::from(self.tempo_mark_model.clone()));
+        s.set_tempo_mark_color(crate::automation::Hue::key("Song", "Tempo").slint_bright());
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
         s.set_strip_meters(ModelRc::from(self.strip_meters_model.clone()));
@@ -869,10 +889,7 @@ impl Controller {
                 self.undo_history_open = true;
                 self.ui_dirty = true;
             }
-            "options.check_updates" => {
-                self.updates_open = true;
-                self.ui_dirty = true;
-            }
+            "options.check_updates" => self.updates_check(true),
             "file.export_ableton" => {
                 self.export_open();
                 self.export_pick_recipe(2);
@@ -951,6 +968,7 @@ impl Controller {
     /// Publish a new engine snapshot if the document changed.
     pub fn after_change(&mut self) {
         self.remember_device_names();
+        self.refresh_tempo_lane();
         let p = self.doc.project();
         if let Some(t) = self.selected_track
             && p.track(t).is_none()
@@ -985,6 +1003,18 @@ impl Controller {
     /// The session the engine should play right now: the document plus any
     /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
+        // A tempo lane drag: the song plays on the map being drawn (every position moves with it).
+        if let Some((None, lane)) = &self.auto.pending
+            && lane.target == dstudio_core::AutomationTarget::Tempo
+        {
+            let mut p = self.doc.project().clone();
+            let points = crate::automation::tempo_points(lane, p.transport.bpm, p.transport.tempo.is_empty());
+            if dstudio_core::tempo::validate(&points).is_ok() {
+                p.transport.bpm = points.first().map_or(p.transport.bpm, |q| q.bpm);
+                p.transport.tempo = points;
+            }
+            return snapshot::build_full(&p, self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset()).0;
+        }
         let (mut snap, _skipped) =
             snapshot::build_full(self.doc.project(), self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset());
         // Automation drag / write preview: the pending lane replaces the model lane.
@@ -1202,19 +1232,6 @@ impl Controller {
         if self.execute(Command::AddTrack { index: None, track }) {
             self.select_track(id);
             return Some(id);
-        }
-        None
-    }
-
-    /// ⇧⌘T: a new instrument track at the end of the ordinary tracks, selected.
-    pub fn add_instrument_track(&mut self) -> Option<TrackId> {
-        let track = Track::new(TrackId(0), TrackKind::Instrument, "Instrument", next_track_color(self.project()));
-        if self.execute(Command::AddTrack { index: None, track }) {
-            let id = self.project().tracks.iter().rev().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id);
-            if let Some(id) = id {
-                self.select_track(id);
-            }
-            return id;
         }
         None
     }
@@ -1501,6 +1518,7 @@ impl Controller {
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
                 JobResult::Feedback(result) => self.finish_feedback(result),
+                JobResult::UpdateChecked(result) => self.finish_update_check(result),
                 JobResult::Recorded { doc_epoch, takes, midi, punch, rec_loop } => {
                     self.finish_recorded(doc_epoch, takes, midi, punch, rec_loop)
                 }
@@ -1651,6 +1669,57 @@ impl Controller {
         }
     }
 
+    /// The title bar's rename field: `name` for the project. A saved project's folder is renamed
+    /// on disk (`<name>.dsproj` next to it) and its media, Open Recent and the window follow; an
+    /// unsaved one keeps the name for its first save. Not an undo step (it is a file operation).
+    /// A name that can't be used, or a rename that fails, says why and changes nothing.
+    pub fn rename_project(&mut self, name: &str) -> bool {
+        let name = name.trim();
+        if let Err(why) = check_project_name(name) {
+            self.set_status(format!("Can't rename the project: {why}"), 5);
+            return false;
+        }
+        let Some(old) = self.project_dir.clone() else {
+            self.doc.set_project_name(name);
+            self.ui_dirty = true;
+            return true;
+        };
+        if project_name_of(&old).as_deref() == Some(name) {
+            return true;
+        }
+        let new = old.with_file_name(format!("{name}.{}", persist::EXTENSION));
+        // A case-only change on a case-insensitive disk names the same folder: still a rename.
+        let same_folder = std::fs::canonicalize(&new).ok().zip(std::fs::canonicalize(&old).ok()).is_some_and(|(a, b)| a == b);
+        if new.exists() && !same_folder {
+            self.set_status(format!("Can't rename the project: \"{name}\" already exists in that folder"), 5);
+            return false;
+        }
+        if let Err(e) = std::fs::rename(&old, &new) {
+            self.set_status(format!("Can't rename the project: {e}"), 5);
+            return false;
+        }
+        let (old_abs, new_abs) =
+            (std::fs::canonicalize(&new).map(|n| n.with_file_name(old.file_name().unwrap_or_default())), std::fs::canonicalize(&new));
+        self.doc.relocate_media(&old, &new);
+        if let (Ok(o), Ok(n)) = (old_abs, new_abs) {
+            self.doc.relocate_media(&o, &n);
+        }
+        self.doc.set_project_name(name);
+        self.project_dir = Some(new.clone());
+        let old_s = old.to_string_lossy().into_owned();
+        if let Some(i) = self.settings.prefs.recent_projects.iter().position(|p| *p == old_s) {
+            self.settings.prefs.recent_projects.remove(i);
+            if i < self.settings.prefs.recent_resolved.len() {
+                self.settings.prefs.recent_resolved.remove(i);
+            }
+        }
+        self.remember_recent(&new);
+        self.files_refresh();
+        self.set_status(format!("Renamed the project to {name}"), 3);
+        self.ui_dirty = true;
+        true
+    }
+
     /// Open the project in `dir`; false (with a status message) when it can't be read.
     pub fn open(&mut self, dir: &Path) -> bool {
         let loaded = match persist::load(dir) {
@@ -1783,7 +1852,7 @@ impl Controller {
             if !w.markers.is_empty() {
                 return None;
             }
-            w.original_bpm = (self.project().transport.bpm / w.varispeed()).clamp(MIN_ORIGINAL_BPM, MAX_ORIGINAL_BPM);
+            w.original_bpm = (self.project().bpm_at(c.start) / w.varispeed()).clamp(MIN_ORIGINAL_BPM, MAX_ORIGINAL_BPM);
             w.speed = 1.0;
             w.enabled = true;
         }
@@ -1823,6 +1892,9 @@ impl Controller {
                 let hit = timeline::hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y);
                 match hit {
                     Hit::Ruler => {
+                        if self.tempo_mark_click(x, y) {
+                            return;
+                        }
                         self.seek_beats(beat);
                         self.drag = Some(Drag::Scrub);
                     }
@@ -2423,6 +2495,7 @@ impl Controller {
         self.update_minimap(app);
         self.update_devmm(app);
         self.push_snap(&s);
+        self.push_tools(&s);
         self.push_transport_fields(&s);
         s.set_press_epoch(self.press_epoch);
         s.set_doc_epoch(self.doc_epoch as i32);
@@ -2515,9 +2588,8 @@ impl Controller {
         // ---- mixer strips ----
         s.set_mixer_open(self.mixer_open);
         let first_return = p.ordinary_track_count();
-        // Each strip's range in the strip-sends model (push_routing: ordinary tracks in order,
-        // one send slot per return track).
-        let slots = p.returns().count() as i32;
+        // Each strip's range in the strip-sends model (push_routing: every track in order, one
+        // send slot per return it can send into).
         let mut send_first = 0;
         let mut column = 0;
         // The group a strip belongs to (a group strip belongs to itself).
@@ -2529,7 +2601,7 @@ impl Controller {
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                let n = if t.is_return() { 0 } else { slots };
+                let n = self.send_slots(t).count() as i32;
                 send_first += n;
                 (i, t, send_first - n, n)
             })
@@ -2583,8 +2655,19 @@ impl Controller {
             None => self.chat_saved_w(),
         });
         s.set_chat_available(self.provider.available());
+        s.set_chat_key_saved(self.assistant.key_saved);
         s.set_chat_busy(self.assistant.busy.is_some());
         s.set_chat_notice(self.assistant.notice_visible);
+        // Ask focuses the composer once the panel exists (an update after it opened).
+        if self.assistant.focus_pending && self.assistant.shown && self.assistant_open {
+            self.assistant.focus_pending = false;
+            self.assistant.focus_epoch += 1;
+        } else if self.assistant.focus_pending {
+            self.ui_dirty = true;
+        }
+        self.assistant.shown = self.assistant_open;
+        s.set_chat_focus_epoch(self.assistant.focus_epoch);
+        s.set_assistant_full(self.settings.prefs.assistant_full);
         s.set_teach_mode(self.assistant.mode == dstudio_core::assistant::Mode::Teach);
         if self.chat_rev != Some(self.assistant.rev) {
             self.chat_rev = Some(self.assistant.rev);
@@ -2608,6 +2691,7 @@ impl Controller {
         self.push_settings(&s);
         self.push_dialogs(&s);
         self.push_feedback(&s);
+        self.push_updates(&s);
         self.push_clip_render(&s);
         self.push_devices(&s);
         self.push_files(&s);
@@ -2645,6 +2729,9 @@ impl Controller {
             })
             .collect();
         crate::controller::sync_model(&self.section_label_model, section_labels);
+        let marks: Vec<crate::TempoMark> =
+            self.tempo_marks().into_iter().map(|m| crate::TempoMark { x: m.x, text_x: m.text_x, text: m.text.into() }).collect();
+        crate::controller::sync_model(&self.tempo_mark_model, marks);
         let key = (
             (v.start_beats * 4096.0) as i64,
             (v.px_per_beat * 4096.0) as i64,
@@ -2711,6 +2798,24 @@ pub(crate) fn mini_notes(notes: &[(dstudio_core::Note, bool)], shift: Ticks, len
 /// unless the playhead was moved since it stopped; Stop in place resumes where it stopped.
 /// Where Play starts: a position the user chose since the last pause, else the last playback's
 /// start after a pause (Return to start), else wherever the transport is (None).
+/// Why `name` can't name a project folder, if it can't: empty, too long, a path separator or a
+/// character the file systems refuse, or a leading dot (a hidden folder).
+pub(crate) fn check_project_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("the name is empty");
+    }
+    if name.chars().count() > 128 {
+        return Err("the name is longer than 128 characters");
+    }
+    if name.starts_with('.') {
+        return Err("the name can't start with a dot");
+    }
+    if name.chars().any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control()) {
+        return Err("the name can't contain / \\ : * ? \" < > |");
+    }
+    Ok(())
+}
+
 /// The project's name for its folder `dir` (`Song.dsproj` is "Song").
 fn project_name_of(dir: &Path) -> Option<String> {
     dir.file_stem().and_then(|s| s.to_str()).map(str::trim).filter(|s| !s.is_empty()).map(String::from)
@@ -2768,6 +2873,16 @@ fn stretched_len(want: Ticks, orig: Ticks) -> Ticks {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn project_names_that_cannot_name_a_folder_are_refused() {
+        use super::check_project_name as check;
+        assert!(check("My Song 2").is_ok());
+        assert!(check("Café — take 3").is_ok());
+        for bad in ["", ".hidden", "a/b", "a:b", "a\\b", "what?", &"x".repeat(129)] {
+            assert!(check(bad).is_err(), "{bad:?}");
+        }
+    }
+
     use super::*;
 
     #[test]

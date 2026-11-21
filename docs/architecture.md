@@ -26,7 +26,7 @@ Status: milestone 1 (functional audio vertical slice). Decisions marked **ADR** 
 │ Audio engine (C++23)                           engine/ (static library)  │
 │  • non-RT side: asset decode + resample, graph build, retire queue       │
 │  • RT side: audio callback → render graph, transport, meters, stats      │
-│  • platform devices: Core Audio │ WASAPI (ASIO: future) │ PipeWire       │
+│  • platform devices: Core Audio │ WASAPI, ASIO │ PipeWire, ALSA        │
 │  • plugin hosting: VST3 / CLAP (all OSes), AU (macOS), OOP scanner       │
 └──────────────────────────────────────────────────────────────────────────┘
  Optional services (AI, cloud catalog) sit beside the core and talk to it only through Commands.
@@ -54,8 +54,11 @@ Hand-off mechanisms:
    port; the callback routes it to instrument tracks and, while recording, writes what it delivered
    into a capture ring the main thread drains (`engine/README.md` › MIDI input).
 
-The audio callback never sees `Project`, tempo or ticks. All musical-time maths happens in
-`dstudio_core::snapshot`.
+The audio callback never sees `Project` or ticks. All musical-time maths happens in
+`dstudio_core::snapshot`, through the project's tempo map (`dstudio_core::tempo`: tempo changes during a
+song, holds and linear ramps, integrated exactly). The snapshot also carries the map as segments
+(`se_session_publish_v12`) so the metronome and tempo-synced devices and plugins can count beats on it; both
+sides evaluate the same documented formula (`engine/README.md` › Tempo).
 
 ## Command system
 
@@ -80,6 +83,9 @@ the AI assistant:
   (project moved with its media), then the absolute path, and anything missing is reported.
 - Schema migrations: `persist::migrate(from, value)` upgrades step by step. Newer-than-supported files
   are rejected rather than mis-read.
+- A file is written with the oldest schema that holds it (`persist::schema_version_for`): schema 2 adds
+  tempo changes, so a project without them is still schema 1 and opens in 0.2.x builds, while one with them
+  is refused there instead of playing at one tempo.
 - **SQLite** (planned) is for the sample-library index, analysis caches and plugin scan results: data
   that is large, query-heavy and rebuildable. The project document stays JSON so it diffs well, merges
   in VCS, and is easy to inspect and repair.
@@ -111,7 +117,8 @@ Status per platform, what CI covers and what is untested on real hardware:
   - macOS: Core Audio (AUHAL; private aggregate device for duplex).
   - Windows: WASAPI shared mode, event-driven, float32, converted to the engine rate by
     `AUTOCONVERTPCM`; duplex through a separate capture client and a drift-tolerant
-    `FrameRing`. ASIO is future work (separately licensed SDK, not added).
+    `FrameRing`. ASIO drivers through the Steinberg ASIO SDK (GPLv3 option): one driver for
+    output and input, picked by an `asio:` device id (`windows_audio_device.cpp`).
   - Linux: PipeWire playback/capture streams (same `FrameRing` duplex). JACK is future work for
     jackd-only systems (PipeWire already serves JACK clients).
   - Real-time thread priority: Core Audio's IO thread; MMCSS "Pro Audio" on the WASAPI thread;

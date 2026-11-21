@@ -112,7 +112,7 @@ POSIX signal or Windows NTSTATUS exception code).
 
 | | macOS (arm64) | Windows (x64, MSVC) | Linux (x64, GCC) |
 |---|---|---|---|
-| Audio backend | Core Audio (AUHAL; private aggregate for duplex) | WASAPI shared mode, event-driven, float32 (`wasapi_device.cpp`) | PipeWire streams (`pipewire_device.cpp`) or ALSA PCMs (`alsa_device.cpp`), picked by `linux_audio_device.cpp` |
+| Audio backend | Core Audio (AUHAL; private aggregate for duplex) | WASAPI shared mode, event-driven, float32 (`wasapi_device.cpp`), or an ASIO driver (`asio_device.cpp`), picked by `windows_audio_device.cpp` | PipeWire streams (`pipewire_device.cpp`) or ALSA PCMs (`alsa_device.cpp`), picked by `linux_audio_device.cpp` |
 | Duplex input | aggregate device, HAL drift compensation | separate capture client → `FrameRing` | PipeWire: capture stream → `FrameRing`; ALSA: linked capture PCM read in the same cycle |
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
 | Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | X11 top-level window hosting the plugin window (VST3 `kPlatformTypeX11EmbedWindowID`, CLAP `x11`), XWayland on Wayland; see [Plugins on Windows and Linux](#plugins-on-windows-and-linux) |
@@ -214,9 +214,51 @@ elsewhere that test checks determinism and the on/off identities.
   1056 frames (22 ms) by default, 280 frames (5.8 ms) at 128.
 * **Not implemented:** exclusive mode,
   endpoint change notifications (a removed device ends the stream;
-  `is_running()` turns false). **ASIO is future work**: the Steinberg ASIO
-  SDK has its own licence and is deliberately not added; a backend would sit
-  beside WASAPI behind the same `AudioDevice` interface.
+  `is_running()` turns false).
+
+### Windows audio: ASIO
+
+`windows_audio_device.cpp` is the Windows `AudioDevice`: it sends a setup
+whose output id starts with `asio:` to `asio_device.cpp` and everything else
+to WASAPI (`windows_audio.hpp`, `choose_backend`, tested on every OS).
+
+* **SDK.** The `IASIO` interface and its types come from Steinberg's ASIO SDK
+  2.3.4, used under its GPLv3 option (`third_party_licenses.md`). CMake
+  downloads the zip and checks its SHA-256; only the headers are used.
+  `-DDSTUDIO_ENGINE_ASIO=OFF` builds without it (no ASIO devices listed).
+* **Drivers.** Read from `HKLM\SOFTWARE\ASIO` (64-bit view) and loaded with
+  `CoCreateInstance` on the calling thread (COM apartment-threaded, or the
+  thread's existing apartment). `se_device_list` has one entry per driver
+  that loads: `"<name> (ASIO)"`, id `asio:<CLSID>`, its input and output
+  counts and the standard rates `canSampleRate` accepts. Listing loads each
+  driver once; the result is cached for the process and a driver is never
+  loaded twice while one streams.
+* **Stream.** Output and input are one driver: as input, the same id or the
+  default input (empty id) means that driver's inputs; an ASIO driver paired
+  with a WASAPI endpoint is `SE_ERR_INVALID_ARG`. The driver runs at the
+  engine rate (`setSampleRate`; ASIO does not convert, so a driver that cannot
+  is refused). Buffers: the first `channels` outputs and up to 64 inputs,
+  `createBuffers` with the size picked rounded to the driver's granularity
+  (`asio_convert.hpp`, `choose_buffer_size`; 0 = the driver's preferred size,
+  read after the rate is set). `bufferSwitch` / `bufferSwitchTimeInfo`
+  convert the driver's buffers to planar float (16/24/32-bit integer, aligned
+  32-bit containers, 32/64-bit float, little-endian), call the engine, convert
+  back and call `outputReady` when the driver supports it. No locks or
+  allocation on the driver's thread. Status: the driver's buffer size and
+  `getLatencies` input and output latencies.
+* **One stream per process.** The SDK's callbacks carry no context, so the
+  running device is a process-wide pointer; a second ASIO start fails with
+  `SE_ERR_STATE`.
+* **Reset requests.** A driver's `kAsioResetRequest` or rate change (its
+  control panel, for instance) ends the stream: `is_running()` turns false,
+  as for a removed WASAPI device. No automatic restart.
+* **Checked** with FlexASIO 1.10 (its WASAPI backend) on the PC above: every
+  buffer size from 64 to 2048 plays with 0 xruns and the expected callback
+  count, duplex recording at 128, 256 and 512 with 0 overruns, switching
+  between ASIO and WASAPI outputs while playing, and the app starts on the
+  driver from saved preferences. FlexASIO's default DirectSound backend stops
+  calling back after about a second (a FlexASIO issue, dechamps/FlexASIO#176);
+  use its WASAPI backend. No hardware ASIO driver has been tried yet.
 
 ### Linux audio: PipeWire and ALSA
 
@@ -570,7 +612,9 @@ independent of the mix level, does not show on meters, and is never in
 `se_export_wav` (which calls `render_block()` directly). With plugin delay
 compensation (`L > 0`) the clicks go through an `L`-frame mono delay line
 first, so they are heard with the (equally delayed) music; the line rings
-out on pause and is flushed on seek/stop.
+out on pause and is flushed on seek/stop. When the session has a tempo map
+([Tempo](#tempo)), beat `k` sounds at `llround(frame_at(k · click_quarters))`
+on the map instead, and `frames_per_beat` is not used.
 
 ### Built-in instrument (MIDI + `se_synth_params`)
 
@@ -1131,7 +1175,9 @@ destroy queued instances when
   tracked.
 * **Transport info**: tempo = `se_transport_set_tempo` (frames per quarter
   note, independent of the metronome's click grid and of whether it is on;
-  120 BPM if never set), 4/4, playing flag and position: AU host callbacks
+  120 BPM if never set), or with a tempo map the tempo at the block's first
+  frame and the song position from the map ([Tempo](#tempo)), 4/4, playing
+  flag and position: AU host callbacks
   (`beatAndTempoProc`, `transportStateProc2`), VST3 `ProcessContext`
   (tempo, project time in samples and quarter notes, playing), CLAP
   `clap_event_transport`.
@@ -1454,10 +1500,16 @@ sends need only looser validation.
 
 * ordinary track: `send_live = !mute && (!any_track_solo || solo)`; `main_on` = `send_live` when its output is a
   return, else `!mute && ((!any_track_solo && !any_return_solo) || solo)`;
-* return: `main_on = !mute && (!any_return_solo || solo)`.
+* return (any bus: returns and groups): with no bus soloed, `main_on = send_live = !mute`. With a bus soloed,
+  `heard` is the soloed buses plus every bus they reach through unmuted buses' sends, and `feeds` every bus that
+  reaches a soloed one: `main_on = !mute && heard`, `send_live = !mute && (heard || feeds)`;
+* each send (`SendNode::live`): a send into a bus that is heard but neither soloed nor feeding a soloed bus runs
+  only from a heard bus (spec 016).
 
-So soloing ordinary tracks keeps the returns playing (fed by the soloed tracks only), and soloing a return plays
-only the soloed returns, still fed by every live track.
+So soloing ordinary tracks keeps the returns playing (fed by the soloed tracks only, and sending into each other),
+and soloing a return plays it, still fed by every live track and by the buses feeding it, plus the returns it feeds,
+which play only what it sends them. A session without sends between buses renders as before for every mute and
+solo state.
 
 **Delay compensation across buses.** ADR 0004 aligned every track at the master; with buses it aligns every input
 of every bus. With `lat_t` the chain latency of track `t`, a return `r` receives at `in_r = max lat_s` over its
@@ -1473,7 +1525,8 @@ compensated (as for every sidechain).
 numbers on the CI machine class. A session without returns pays nothing (one branch per track).
 
 **Tests:** `tests/test_routing.cpp` (levels pre/post, output to a return, mute/solo, validation, PDC alignment with
-`DStudioTestLatency.clap` on a return, export = live, no allocation on the audio thread);
+`DStudioTestLatency.clap` on a return, export = live, no allocation on the audio thread; return-into-return
+sends, their solo rule and chained delay compensation);
 `crates/dstudio-engine/tests/routing.rs` (end to end through the Rust wrapper).
 
 ## Automation
@@ -1783,14 +1836,51 @@ the timeline, so looped and warped clips fade where they play.
 - Overlapping clips on one track still sum, so a fade-out over a fade-in is a
   linear crossfade. `dstudio_clip_fade_bench` measures the cost.
 
+## Tempo
+
+`se_session_publish_v12` adds the song's tempo map (specs/015-tempo-changes):
+a list of `se_tempo_segment {start_frame, start_quarter, start_bpm,
+end_bpm}` and `click_quarters` (quarter notes per metronome beat). Clips,
+notes, automation and the loop still arrive in frames, converted through the
+map by the core; the engine uses the map only for what counts musical time on
+the audio thread: the metronome ([Metronome](#metronome)), and the tempo
+(`RtTransport::tempo_bpm`, at the first frame of each block) and song position
+(`RtTransport::beats()`, at any position a device or the plugin host asks for)
+that tempo-synced built-in devices and plugins see, live and in offline
+renders. A session without segments behaves exactly as with v11
+(`se_transport_set_tempo` and `frames_per_beat`).
+
+The formula (`src/tempo_map.hpp`; the core's `crates/dstudio-core/src/tempo.rs`
+evaluates the same in seconds). Segment `i` starts at frame `f0` and quarter
+`q0` with tempo `a` BPM and runs to the next segment's `q1`, where a ramp
+reaches `b` (a hold has `b = a`; the last segment holds). With `R` the sample
+rate and `k = (b - a) / (q1 - q0)`, the ramp being linear in BPM over quarters:
+
+| | quarter at frame `f` | frame of quarter `q` | tempo at `f` |
+|---|---|---|---|
+| hold | `q0 + (f - f0) · a / 60R` | `f0 + (q - q0) · 60R / a` | `a` |
+| ramp | `q0 + (a / k) · (exp(k (f - f0) / 60R) - 1)` | `f0 + (60R / k) · ln(1 + k (q - q0) / a)` | `a · exp(k (f - f0) / 60R)` |
+
+Before frame 0 the first segment's tempo holds (the count-in pre-roll).
+Lookups are a binary search over the segments plus one `exp`/`log1p`; the
+map is copied into the render graph when it is built, so the audio thread
+only reads it. `test_tempo.cpp` checks the formula against numeric
+integration, the clicks across a step and a ramp, the song position a synced
+LFO sees per block, validation and that a session without a map renders
+bit-identically; `rt_tempo_map_does_not_allocate` renders a map under the
+allocation guard. `crates/dstudio-engine/tests/tempo.rs` checks the clicks
+land on the frames core computes for each beat.
+
 ## Placeholders and known gaps
 
 * **Windows / Linux audio** (`wasapi_device.cpp`, `pipewire_device.cpp`,
   `alsa_device.cpp`): WASAPI was checked by hand on one Windows sound card
   (inbox HD Audio driver); Linux has never run against real audio hardware
   (CI runners have no devices; ALSA runs there against its null PCM and
-  pipewire-alsa); no ASIO, no WASAPI exclusive mode, no native JACK;
-  device-change notifications are not handled on any platform.
+  pipewire-alsa); ASIO (`asio_device.cpp`) was checked with FlexASIO only, no
+  hardware ASIO driver yet, and has no control panel button, clock source
+  choice or restart after a driver reset; no WASAPI exclusive mode, no native
+  JACK; device-change notifications are not handled on any platform.
 * **Plugin editors:** Windows editors ignore per-monitor DPI. Linux editors
   are X11 only (Wayland desktops run them through XWayland); no HiDPI scale
   is passed to plugins, and plugin timers run at the idle rate (16 ms in the app).
@@ -1815,9 +1905,9 @@ the timeline, so looped and warped clips fade where they play.
   sample-accurate transport commands while the device runs (they apply at
   block boundaries; the loop wrap itself is sample-accurate) are not
   implemented.
-* Loop wraps are hard cuts (no crossfade). Tempo changes are not modelled:
-  the metronome grid is a constant `frames_per_beat` from frame 0, and the
-  song tempo a constant frames per quarter from frame 0.
+* Loop wraps are hard cuts (no crossfade). Within a tempo ramp, devices and
+  plugins see the tempo of each block's first frame (the song position is
+  exact at every frame they ask for).
 * `se_meters_peek` track windows restart at 0 when a snapshot is published
   (same as `se_meters_read`).
 * The resampler is scalar; large imports at a different rate take noticeably
@@ -1889,6 +1979,15 @@ interleaved runs against the pre-automation build (HEAD 4ab2922) gave audio
 1.07 / 3.44 / 12.88 µs vs 1.07 / 3.40 / 12.87 µs, plugins (CLAP + VST3) 10.34
 vs 10.46 µs, PDC N = 4096 off 3.89 vs 3.81 µs, MIDI default patch 8 / 32
 tracks 138.7 / 562 µs vs 138.7 / 557 µs (all within run-to-run noise).
+
+Tempo map (32 audio tracks × 4 clips + CLAP gain + VST3 gain inserts, the
+metronome on; median of three runs, Apple M4): one tempo 12.70 µs/block, a
+64-point map (`se_session_publish_v12`, alternating holds and ramps) 13.37
+µs/block. ≈ 10 ns per song-position lookup (64 plugin calls and the click per
+block), 0.01 % of the deadline. Sessions without a map take the same path as
+before; interleaved runs against the build before tempo changes were within
+run-to-run noise (the second run of each pair was the slower one, whichever
+build it was).
 
 Input (8 armed + monitored tracks, injected 8-channel input, no clips):
 1.33 µs/block with recording off; 5.9 µs/block avg (p99 11 µs, max 32 µs)

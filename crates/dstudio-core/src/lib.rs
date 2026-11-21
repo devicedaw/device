@@ -5,6 +5,7 @@
 //! * [`history`]: undo/redo document wrapper
 //! * [`persist`]: versioned project files with external media references
 //! * [`snapshot`]: derivation of immutable engine session descriptions
+//! * [`tempo`]: the tempo map (tempo changes during a song) and every time conversion
 //! * [`warp`]: audio clip warping (tempo following, speed, markers, transients)
 
 pub mod assistant;
@@ -24,6 +25,7 @@ pub mod midi_record;
 pub mod model;
 pub mod modulation;
 pub mod persist;
+pub mod range;
 pub mod render_plan;
 pub mod scale;
 pub mod section_follow;
@@ -32,6 +34,7 @@ pub mod smart_quantize;
 pub mod smf;
 pub mod snapshot;
 pub mod steps;
+pub mod tempo;
 pub mod warp;
 
 pub use automation::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
@@ -42,4 +45,5 @@ pub use instrument::SynthParams;
 pub use midi::{MidiClip, Note};
 pub use model::*;
 pub use steps::{StepCell, StepLane, StepPattern, StepRate, StepRows};
+pub use tempo::{TempoMap, TempoPoint};
 pub use warp::{ClipWarp, Transient, WarpMarker, WarpMode};

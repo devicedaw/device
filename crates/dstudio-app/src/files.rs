@@ -1,7 +1,7 @@
 //! Browser › Projects and Browser › Files (Folders), and the browser's Back / Forward history.
 //!
 //! Both are the Files section internally (tabs [TAB_PROJECTS] and [TAB_FOLDERS]); the browser
-//! shows them as two of its five section tabs: Search, Library, Projects, Devices, Files.
+//! shows them as two of its three section tabs: Projects, Devices, Files.
 //!
 //! Projects lists the `.dsproj` folders in the projects folder; a project expands to the
 //! tracks, audio files and MIDI clips it held when last saved. Folders lists folders the user
@@ -12,7 +12,7 @@
 
 use crate::controller::{Controller, ImportTarget, JobResult, gain_from_slider, header_meter, slider_from_gain, sync_model};
 use crate::{FileGuide, FileRow, Studio};
-use dstudio_core::{ClipId, ColorIndex, Command, MidiClip, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, persist};
+use dstudio_core::{ClipId, ColorIndex, Command, MidiClip, Project, Ticks, TrackId, TrackKind, db_to_gain, persist};
 use dstudio_engine::AssetInfo;
 use slint::Model;
 use std::collections::{HashMap, HashSet};
@@ -505,7 +505,7 @@ impl Controller {
         self.files.nav.push(loc);
     }
 
-    /// Section tabs: Devices and Files (Search and Library have no content).
+    /// Section tabs: Devices and Files.
     pub fn browser_section(&mut self, section: usize) {
         if section == SECTION_DEVICES || section == SECTION_FILES {
             self.browser_visit(self.browser_loc(section));
@@ -524,8 +524,8 @@ impl Controller {
         }
     }
 
-    /// Top tab `i`: 0 Search, 1 Library, 2 Projects, 3 Devices, 4 Files (Search and Library have no
-    /// content yet).
+    /// Top tab `i`: 2 Projects, 3 Devices, 4 Files (0 and 1 are unused: the Search and Library tabs
+    /// were removed).
     pub fn browser_top(&mut self, i: usize) {
         match i {
             2 => self.files_tab(TAB_PROJECTS),
@@ -653,22 +653,23 @@ impl Controller {
         let Some(c) = src.tracks.iter().flat_map(|t| t.midi_clips.iter()).find(|c| c.id == clip).cloned() else { return };
         let at = at.unwrap_or_else(|| self.playhead_ticks()).max(0);
         let p = self.project();
-        let mut next = p.next_id;
         let mut commands = Vec::new();
+        let mut fallback = None;
         let track = match to.and_then(|t| p.track(t)).filter(|t| t.kind == TrackKind::Instrument) {
             Some(t) => t.id,
             None => {
-                let id = TrackId(next);
-                next += 1;
-                commands.push(Command::AddTrack {
-                    index: None,
-                    track: Track::new(id, TrackKind::Instrument, "Instrument", crate::controller::next_track_color(p)),
-                });
+                // A new track plays the default instrument (Settings › MIDI, spec 013).
+                let id = TrackId(p.next_id);
+                (commands, fallback) = self.new_instrument_track(id);
                 id
             }
         };
-        commands.push(Command::AddMidiClip { track, clip: MidiClip { id: ClipId(next), start: at, ..c } });
+        // Id 0: the clip gets the next free id after the track and its instrument.
+        commands.push(Command::AddMidiClip { track, clip: MidiClip { id: ClipId(0), start: at, ..c } });
         if self.execute(Command::Batch { label: "Add MIDI Clip".into(), commands }) {
+            if let Some(why) = fallback {
+                self.set_status(why, 5);
+            }
             self.select_track(track);
         }
     }
@@ -1102,6 +1103,30 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A MIDI clip dragged from another project onto empty space makes a new instrument track
+    /// playing the default instrument (spec 013), and undoes in one step.
+    #[test]
+    fn a_dropped_midi_clip_gets_the_default_instrument() {
+        let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let mut src = Project::default();
+        let inst = src.tracks.iter_mut().find(|t| t.kind == TrackKind::Instrument).unwrap();
+        inst.midi_clips.push(MidiClip { id: ClipId(500), ..MidiClip::empty(0, dstudio_core::PPQ * 4) });
+        let path = PathBuf::from("/tmp/other.dsproj");
+        c.files.project_cache.insert(path.clone(), Ok(src));
+        c.settings.prefs.midi.default_instrument = Some(crate::prefs::InstrumentChoice::Builtin { id: "drum-rack".into() });
+        let n = c.project().tracks.len();
+        c.files_add_midi(&path, ClipId(500), None, Some(0));
+        let t = c.project().tracks.iter().rev().find(|t| t.kind == TrackKind::Instrument).unwrap();
+        assert_eq!(t.name, "Drum Rack");
+        assert_eq!(t.instrument_plugin.as_ref().map(|d| d.plugin.id.as_str()), Some("drum-rack"));
+        assert_eq!(t.midi_clips.len(), 1);
+        assert_ne!(Some(t.midi_clips[0].id.0), t.instrument_plugin.as_ref().map(|d| d.id.0), "ids are distinct");
+        assert_eq!(c.doc.undo_label(), Some("Add MIDI Clip"));
+        c.undo();
+        assert_eq!(c.project().tracks.len(), n);
+    }
 
     fn loc(section: usize, tab: usize) -> Loc {
         Loc { section, tab }

@@ -13,6 +13,7 @@
 
 #include "../spsc_queue.hpp"
 #include "../synth.hpp" // NoteEvent
+#include "../tempo_map.hpp"
 #include "param_bus.hpp"
 
 #include <atomic>
@@ -63,9 +64,15 @@ struct RtTransport {
     int64_t position = 0;     // timeline frame of the segment's first sample
     bool playing = false;
     double sample_rate = 48000.0;
-    double tempo_bpm = 120.0; // quarter notes per minute (se_transport_set_tempo), else 120
-    // Quarter notes since frame 0 at `position` (constant tempo from 0).
-    double beats() const noexcept { return static_cast<double>(position) / sample_rate * tempo_bpm / 60.0; }
+    double tempo_bpm = 120.0; // quarter notes per minute at the block start (tempo map, se_transport_set_tempo, else 120)
+    // The song's tempo map (se_session_publish_v12), or null for one tempo.
+    const TempoMap* map = nullptr;
+    // Quarter notes from bar 1 at `position`: on the tempo map, else at a
+    // constant tempo from frame 0.
+    double beats() const noexcept {
+        if (map != nullptr) [[unlikely]] return map->quarter_at(static_cast<double>(position));
+        return static_cast<double>(position) / sample_rate * tempo_bpm / 60.0;
+    }
 };
 
 // Converts a track's note list (timeline frames) into sample-accurate MIDI

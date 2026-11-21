@@ -85,6 +85,7 @@ fn low_cutoff_via_command_darkens_the_sound() {
 
 #[test]
 fn every_factory_preset_renders_a_sane_c4() {
+    let mut bad = Vec::new();
     for preset in SYNTH_V2.factory {
         let (mut doc, inst) = doc_with_c4();
         let params: BTreeMap<String, f32> = preset.values.iter().map(|(k, v)| (k.to_string(), *v)).collect();
@@ -96,8 +97,16 @@ fn every_factory_preset_renders_a_sane_c4() {
         let body = rms(&out[2_400..48_000]);
         let name = preset.name;
         eprintln!("{name:>16}: peak {:.3} ({:.1} dBFS), rms during note {body:.4}", peak, 20.0 * peak.log10());
-        assert!(out.iter().all(|v| v.is_finite()), "{name}: non-finite output");
-        assert!(body > 1e-3, "{name}: silent (rms {body})");
-        assert!(peak < 1.0, "{name}: peak {peak} reaches 0 dBFS");
+        if !out.iter().all(|v| v.is_finite()) {
+            bad.push(format!("{name}: non-finite output"));
+        } else if body <= 1e-3 && peak <= 0.02 {
+            // Percussive sounds (the Drums category) are over before the body window: their
+            // attack peak shows they sound.
+            bad.push(format!("{name}: silent (rms {body}, peak {peak})"));
+        } else if peak >= 1.0 {
+            bad.push(format!("{name}: peak {peak} reaches 0 dBFS"));
+        }
     }
+    // Every problem at once: with a hundred sounds, one at a time is slow to fix.
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
 }

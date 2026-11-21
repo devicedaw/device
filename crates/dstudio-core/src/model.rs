@@ -85,9 +85,12 @@ impl TrackSend {
 pub struct ColorIndex(pub u8);
 
 impl ColorIndex {
-    /// Colour of a new project's first track: pink (palette index 4). Later
-    /// tracks follow the cycle from there (orange, then teal, ...).
-    pub const FIRST: ColorIndex = ColorIndex(4);
+    /// Colour of a new project's first track: teal (palette index 6). The default project's
+    /// second track is orange (5); later tracks take the next unused colour after the last
+    /// track's (coral, amber, ...).
+    pub const FIRST: ColorIndex = ColorIndex(6);
+    /// The default project's second (instrument) track: orange.
+    pub const SECOND: ColorIndex = ColorIndex(5);
 }
 
 /// Which device input feeds a track (the "In" selector: "None",
@@ -326,7 +329,12 @@ pub struct TimeSignature {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Transport {
+    /// The song tempo; with tempo changes, the tempo at bar 1 (the first point's).
     pub bpm: f64,
+    /// Tempo changes (spec 015), sorted by time; empty = one tempo for the whole song. A project
+    /// with changes is saved as schema 2 (persist), so builds before them refuse it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tempo: Vec<crate::tempo::TempoPoint>,
     pub time_signature: TimeSignature,
     pub loop_enabled: bool,
     pub loop_start: Ticks,
@@ -377,6 +385,7 @@ impl Default for Project {
             name: "Untitled".into(),
             transport: Transport {
                 bpm: 120.0,
+                tempo: Vec::new(),
                 time_signature: TimeSignature { numerator: 4, denominator: 4 },
                 loop_enabled: false,
                 loop_start: 0,
@@ -395,7 +404,7 @@ impl Default for Project {
         let a = p.alloc_id();
         p.tracks.push(Track::new(TrackId(a), TrackKind::Audio, "Audio", ColorIndex::FIRST));
         let b = p.alloc_id();
-        p.tracks.push(Track::new(TrackId(b), TrackKind::Instrument, "Instrument", ColorIndex(ColorIndex::FIRST.0 + 1)));
+        p.tracks.push(Track::new(TrackId(b), TrackKind::Instrument, "Instrument", ColorIndex::SECOND));
         crate::builtin::synth_v2::upgrade_project(&mut p);
         p
     }
@@ -588,8 +597,44 @@ impl Project {
         self.returns().position(|t| t.id == id)
     }
 
+    /// Track `from` may send into `to` (spec 016): an ordinary or group track into any return
+    /// track, a return track into a return after it. Signal always flows down the return list,
+    /// so return sends can't form a loop.
+    pub fn send_allowed(&self, from: TrackId, to: TrackId) -> bool {
+        let (Some(f), Some(t)) = (self.track_index(from), self.track_index(to)) else { return false };
+        from != to && self.tracks[t].is_return() && (!self.tracks[f].is_return() || t > f)
+    }
+
+    /// The first send from a return into a return before it, as (sender, target). None in a
+    /// valid project.
+    pub fn return_order_conflict(&self) -> Option<(TrackId, TrackId)> {
+        self.upward_return_send(&(0..self.tracks.len()).collect::<Vec<_>>())
+    }
+
+    /// The send from a return into an earlier return that moving `track` to `index` (as
+    /// `Command::MoveTrack` does) would leave, as (sender, target). None when the move keeps every
+    /// return send pointing down the list, or `track` doesn't exist.
+    pub fn return_move_conflict(&self, track: TrackId, index: usize) -> Option<(TrackId, TrackId)> {
+        let from = self.track_index(track)?;
+        let mut order: Vec<usize> = (0..self.tracks.len()).collect();
+        let moved = order.remove(from);
+        order.insert(index.min(order.len()), moved);
+        self.upward_return_send(&order)
+    }
+
+    /// With the tracks in `order` (indices into `tracks`): the first return send whose target
+    /// isn't after its sender.
+    fn upward_return_send(&self, order: &[usize]) -> Option<(TrackId, TrackId)> {
+        let pos = |id: TrackId| order.iter().position(|&k| self.tracks[k].id == id);
+        order.iter().enumerate().filter(|&(_, &k)| self.tracks[k].is_return()).find_map(|(at, &k)| {
+            let r = &self.tracks[k];
+            r.sends.iter().find(|s| pos(s.target).is_some_and(|j| j <= at)).map(|s| (r.id, s.target))
+        })
+    }
+
     /// Repairs routing a hand-edited or damaged file could hold: return tracks move after the
-    /// ordinary tracks (keeping their order) and lose any sends, output, input, arm or monitor.
+    /// ordinary tracks (keeping their order) and lose any output, input, arm or monitor, and any
+    /// send that isn't into a later return (spec 016).
     /// A return holding clips or an instrument, or beyond the first [MAX_RETURNS], loads as an
     /// ordinary track instead, so nothing in the file is lost. Sends and outputs that don't name a
     /// return track and duplicate sends are dropped, levels are clamped. Valid projects are unchanged.
@@ -647,8 +692,18 @@ impl Project {
             }
         }
         self.tracks = ordinary;
-        for mut r in returns {
-            r.sends.clear();
+        for (i, mut r) in returns.into_iter().enumerate() {
+            // A return keeps its sends into later returns (one per target); anything else would
+            // send up the list or into a track that isn't a return.
+            let mut seen = Vec::new();
+            r.sends.retain(|s| {
+                let ok = return_ids[i + 1..].contains(&s.target) && !seen.contains(&s.target);
+                seen.push(s.target);
+                ok
+            });
+            for s in &mut r.sends {
+                s.level = if s.level.is_finite() { s.level.clamp(0.0, TrackSend::MAX_LEVEL) } else { 0.0 };
+            }
             r.output = None;
             self.tracks.push(r);
         }
@@ -715,13 +770,34 @@ impl Project {
         PPQ * 4 * ts.numerator as i64 / ts.denominator as i64
     }
 
-    /// Ticks → seconds at the (currently constant) project tempo.
+    /// The tempo map: every conversion between musical and real time goes through it.
+    pub fn tempo_map(&self) -> crate::tempo::TempoMap {
+        crate::tempo::TempoMap::new(self.transport.bpm, &self.transport.tempo)
+    }
+
+    /// The song has tempo changes.
+    pub fn has_tempo_changes(&self) -> bool {
+        !self.transport.tempo.is_empty()
+    }
+
+    /// Tempo in BPM at tick `t`.
+    pub fn bpm_at(&self, t: Ticks) -> f64 {
+        if self.transport.tempo.is_empty() { self.transport.bpm } else { self.tempo_map().bpm_at(t as f64) }
+    }
+
+    /// Ticks → seconds from bar 1, through the tempo map.
     pub fn ticks_to_seconds(&self, t: Ticks) -> f64 {
-        t as f64 / PPQ as f64 * 60.0 / self.transport.bpm
+        if self.transport.tempo.is_empty() {
+            return t as f64 / PPQ as f64 * 60.0 / self.transport.bpm;
+        }
+        self.tempo_map().ticks_to_seconds(t)
     }
 
     pub fn seconds_to_ticks(&self, s: f64) -> Ticks {
-        (s * self.transport.bpm / 60.0 * PPQ as f64).round() as Ticks
+        if self.transport.tempo.is_empty() {
+            return (s * self.transport.bpm / 60.0 * PPQ as f64).round() as Ticks;
+        }
+        self.tempo_map().seconds_to_ticks(s)
     }
 
     /// Ticks → frames at `rate` (rounded to nearest frame).
@@ -742,13 +818,23 @@ impl Project {
         }
     }
 
-    /// What the clip plays without its loop: the source window at the clip's speed.
+    /// What the clip plays without its loop: the source window at the clip's speed. An unwarped
+    /// clip plays in real time, so its length in ticks depends on the tempo under it.
     pub fn content_length_ticks(&self, clip: &Clip) -> Ticks {
+        self.content_length_ticks_in(&self.tempo_map(), clip)
+    }
+
+    /// [Project::content_length_ticks] with a tempo map built once by the caller.
+    pub fn content_length_ticks_in(&self, map: &crate::tempo::TempoMap, clip: &Clip) -> Ticks {
         if clip.warp.enabled {
             return crate::warp::beats_to_ticks(self.warped_clip_beats(clip));
         }
         let rate = self.asset(clip.asset).map(|a| a.sample_rate).unwrap_or(48_000.0);
-        self.seconds_to_ticks(clip.source_length as f64 / rate / clip.warp.varispeed())
+        let seconds = clip.source_length as f64 / rate / clip.warp.varispeed();
+        if map.is_constant() {
+            return map.seconds_to_ticks(seconds);
+        }
+        map.seconds_to_ticks(map.ticks_to_seconds(clip.start) + seconds) - clip.start
     }
 }
 

@@ -4,10 +4,12 @@
 // while the current thread is inside an RtAllocGuard. We put the guard
 // around se_render_offline, which runs exactly the code the device callback
 // runs (command drain, graph acquire, render_block, meters, stats).
+#include "devices/device_harness.hpp"
 #include "test_harness.hpp"
 #include "test_util.hpp"
 
 #include <atomic>
+#include <cmath>
 #include <memory>
 #include <thread>
 
@@ -154,4 +156,44 @@ TEST_CASE(rt_loop_metronome_peek_do_not_allocate) {
     se_transport_info t{};
     se_transport_get(e, &t);
     CHECK(t.playing == 1);
+}
+
+// A tempo map (se_session_publish_v12): the metronome on the map, a synced LFO
+// asking for the song position every modulation step, seeks into the ramp and
+// a republished map between blocks (publish outside the guard).
+TEST_CASE(rt_tempo_map_does_not_allocate) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = load_asset(e, {sine(48000, 220.0, 48000.0, 0.2)});
+    // 600 BPM for 8 quarters (48 000 frames), then a ramp from 600 to 200 over 8 quarters.
+    const double ramp_len = 60.0 * 48000.0 * 8.0 / (200.0 - 600.0) * std::log(200.0 / 600.0);
+    const std::vector<se_tempo_segment> map = {{0.0, 0.0, 600.0, 600.0}, {48000.0, 8.0, 600.0, 200.0},
+                                               {48000.0 + ramp_len, 16.0, 200.0, 200.0}};
+    devtest::DeviceSession s;
+    auto& t = s.add_track(1, a, 48000);
+    devtest::DeviceSession::add_device_state(t, 40, "lfo", devtest::route_blob({0.f, 1.f, 1.f, 8.f, 100.f, 0.f}, {}));
+    REQUIRE(s.publish(e, map, 0.5) == SE_OK);
+    se_metronome_desc m{};
+    m.enabled = 1;
+    m.gain = 0.5f;
+    m.frames_per_beat = 24000.0;
+    m.beats_per_bar = 4;
+    REQUIRE(se_metronome_set(e, &m) == SE_OK);
+    REQUIRE(se_transport_play(e) == SE_OK);
+    std::vector<float> buf(2 * 8192);
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK); // warm-up
+
+    const long allocs_before = rt_alloc_count();
+    const long frees_before = rt_free_count();
+    const uint32_t sizes[] = {256, 1, 333, 8192, 64, 255, 77};
+    for (int i = 0; i < 800; ++i) {
+        if (i % 100 == 60) se_transport_seek(e, 50000 + i * 31);
+        if (i == 400) REQUIRE(s.publish(e, map, 1.0) == SE_OK);
+        RtAllocGuard g;
+        if (se_render_offline(e, buf.data(), sizes[i % 7]) != SE_OK) {
+            CHECK(false);
+            break;
+        }
+    }
+    CHECK_EQ(rt_alloc_count() - allocs_before, 0);
+    CHECK_EQ(rt_free_count() - frees_before, 0);
 }

@@ -36,6 +36,20 @@ pub enum AssistantAction {
     Edit { command: Command },
     /// Convenience for models: volume in decibels instead of linear gain.
     SetTrackVolumeDb { track: TrackId, db: f32 },
+    /// Add a built-in device by its id (`builtin_devices[].id` in the state) with optional
+    /// parameter values (plain values in each parameter's unit). Effects go into the track's
+    /// chain at `index` (the end when absent); instruments replace the track's instrument.
+    AddBuiltinDevice {
+        track: TrackId,
+        device: String,
+        #[serde(default)]
+        index: Option<usize>,
+        #[serde(default)]
+        params: std::collections::BTreeMap<String, f32>,
+    },
+    /// Put one of the project's audio files (`assets[].id`) into a sample slot of a built-in
+    /// device: slot 0 of the Sampler, or a pad of the Drum Rack (slot = pad index).
+    LoadSample { device: crate::device::DeviceId, slot: u32, asset: AssetId },
     /// Point at a UI element (stable target id from [`UI_TARGETS`], or a
     /// per-track target like `track:<id>:volume`).
     Highlight { target: String, note: String },
@@ -152,8 +166,26 @@ pub fn plan(doc: &Document, mode: Mode, turn: &AssistantTurn) -> Result<Plan, As
                 highlights.push((target.clone(), note.clone()));
             }
             AssistantAction::Explain { text } => explanations.push(text.clone()),
-            AssistantAction::Edit { .. } | AssistantAction::SetTrackVolumeDb { .. } if mode == Mode::Teach => {
+            AssistantAction::Edit { .. }
+            | AssistantAction::SetTrackVolumeDb { .. }
+            | AssistantAction::AddBuiltinDevice { .. }
+            | AssistantAction::LoadSample { .. }
+                if mode == Mode::Teach =>
+            {
                 return Err(AssistantError::EditInTeachMode { index });
+            }
+            AssistantAction::AddBuiltinDevice { track, device, index: at, params } => {
+                edits
+                    .push((index, add_builtin(*track, device, *at, params).map_err(|error| AssistantError::InvalidEdit { index, error })?));
+            }
+            AssistantAction::LoadSample { device, slot, asset } => {
+                let name = doc
+                    .project()
+                    .asset(*asset)
+                    .and_then(|a| std::path::Path::new(&a.absolute_path).file_stem().map(|s| s.to_string_lossy().into_owned()))
+                    .unwrap_or_else(|| format!("Sample {}", asset.0));
+                let sample = crate::device::DeviceSample { slot: *slot, asset: *asset, name, slices: Vec::new() };
+                edits.push((index, Command::SetDeviceSample { device: *device, slot: *slot, sample: Some(sample) }));
             }
             AssistantAction::Edit { command } => edits.push((index, command.clone())),
             AssistantAction::SetTrackVolumeDb { track, db } => {
@@ -178,6 +210,68 @@ pub fn plan(doc: &Document, mode: Mode, turn: &AssistantTurn) -> Result<Plan, As
     Ok(Plan { batch, highlights, explanations, summary })
 }
 
+/// The edit behind [`AssistantAction::AddBuiltinDevice`].
+fn add_builtin(
+    track: TrackId,
+    id: &str,
+    index: Option<usize>,
+    params: &std::collections::BTreeMap<String, f32>,
+) -> Result<Command, EditError> {
+    let def = crate::builtin::find(id)
+        .ok_or_else(|| EditError::InvalidValue { field: "device", reason: format!("no built-in device {id:?}") })?;
+    let mut device = def.instantiate();
+    for (k, v) in params {
+        let p = def
+            .param(k)
+            .ok_or_else(|| EditError::InvalidValue { field: "params", reason: format!("{} has no parameter {k:?}", def.name) })?;
+        device.params.insert(k.clone(), p.snap(v.clamp(p.min.min(p.max), p.max.max(p.min))));
+    }
+    Ok(match def.kind {
+        crate::device::PluginKind::Instrument => Command::SetInstrumentPlugin { track, device: Some(device) },
+        crate::device::PluginKind::Effect => Command::AddDevice { track, index, device },
+    })
+}
+
+/// A device as the model sees it: its id, what it is, on or off, and its parameter values.
+fn device_json(d: &crate::device::Device) -> Value {
+    match crate::builtin::def_of(d) {
+        Some(def) => json!({
+            "id": d.id.0,
+            "builtin": def.id,
+            "name": d.label.clone().unwrap_or_else(|| def.name.to_string()),
+            "enabled": d.enabled,
+            "preset": d.preset,
+            "chain": d.chain.map(|c| c.0),
+            // Only what differs from the defaults (the catalogue has every parameter and its default).
+            "params": def
+                .params
+                .iter()
+                .filter(|p| (def.value(d, p) - p.default).abs() > f32::EPSILON)
+                .map(|p| (p.id.to_string(), json!(def.value(d, p))))
+                .collect::<serde_json::Map<_, _>>(),
+            "samples": d.samples.iter().map(|s| json!({"slot": s.slot, "asset": s.asset.0, "name": s.name})).collect::<Vec<_>>(),
+        }),
+        None => json!({"id": d.id.0, "plugin": d.plugin.name, "format": d.plugin.format, "enabled": d.enabled}),
+    }
+}
+
+/// The built-in devices the model may add: id, name, kind, category and each parameter as
+/// `[id, min, max, default, unit]`.
+pub fn builtin_catalog() -> Value {
+    crate::builtin::all()
+        .iter()
+        .map(|d| {
+            json!({
+                "id": d.id,
+                "name": d.name,
+                "kind": d.kind,
+                "category": d.category,
+                "params": d.params.iter().map(|p| json!([p.id, p.min, p.max, p.default, p.unit])).collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
 /// Execute a validated plan as a single undo step.
 pub fn commit(doc: &mut Document, plan: &Plan) -> Result<(), EditError> {
     match &plan.batch {
@@ -194,6 +288,12 @@ pub fn describe_state(p: &Project) -> Value {
         "ppq": PPQ,
         "note_format": "midi_clips[].notes entries are [id, pitch, start_ticks, length_ticks, velocity]",
         "master_volume_db": round1(gain_to_db(p.master_gain)),
+        "assets": p.assets.iter().map(|a| json!({
+            "id": a.id.0,
+            "name": std::path::Path::new(&a.absolute_path).file_stem().map(|s| s.to_string_lossy().into_owned()),
+            "seconds": (a.frames as f64 / a.sample_rate * 100.0).round() / 100.0,
+            "frames": a.frames,
+        })).collect::<Vec<_>>(),
         "tracks": p.tracks.iter().enumerate().map(|(i, t)| json!({
             "id": t.id.0,
             "number": i + 1,
@@ -203,6 +303,11 @@ pub fn describe_state(p: &Project) -> Value {
             "pan": t.pan,
             "mute": t.mute,
             "solo": t.solo,
+            "output": t.output.map(|o| o.0),
+            "sends": t.sends.iter().map(|s| json!({"target": s.target.0, "level": s.level})).collect::<Vec<_>>(),
+            "instrument": t.instrument_plugin.as_ref().map(device_json),
+            "devices": t.devices.iter().map(device_json).collect::<Vec<_>>(),
+            "automation": t.automation.iter().map(|l| json!({"target": l.target, "enabled": l.enabled, "points": l.points.len()})).collect::<Vec<_>>(),
             "clips": t.clips.iter().map(|c| json!({
                 "id": c.id.0,
                 "name": c.name,
@@ -246,10 +351,26 @@ pub fn tool_schema() -> Value {
                      move_midi_clip{clip,track,start}, resize_midi_clip{clip,start,length}, \
                      set_midi_notes{clip,notes:[{id,pitch 0..127 (60=C4),start(ticks, clip-relative),length,velocity 1..127}]} (replaces all notes). \
                      set_synth_params{track(instrument),params(full SynthParams object; start from describe_state's synth and change fields)}. \
+                     Devices (ids from tracks[].devices / instrument): set_device_param{device,param,value(plain value in the param's unit)}, \
+                     set_device_params{device,params{param:value},preset?}, set_device_enabled{device,enabled}, remove_device{device}, \
+                     move_device{device,track,index}. Sends and routing: set_sends{track,sends:[{target(return track id),level 0..1}]} \
+                     (replaces all), set_track_output{track,output(return/group track id or null)}. \
+                     Automation: set_automation_lane{track(or null for master),target,lane{target,enabled,points:[{time(ticks),value,curve(0)}]} or null}; \
+                     targets: \"volume\" (dB -60..6), \"pan\", {\"builtin\":{device,device_type,param}} (plain value). \
+                     Audio clips: add_clip{track(audio),clip{id:0,asset(assets[].id),name,start(ticks),source_offset(frames),source_length(frames),gain:1}}. \
                      Positions are ticks (PPQ 960)."}
             }},
             {"type": "object", "required": ["type", "track", "db"], "properties": {
                 "type": {"const": "set_track_volume_db"}, "track": id, "db": {"type": "number", "maximum": 12}}},
+            {"type": "object", "required": ["type", "track", "device"], "description":
+                "Add a built-in device (builtin_devices[].id): effects go into the track's chain at index (end when absent); \
+                 instruments (synth, sampler, drum rack...) replace an instrument track's instrument. params: {param_id: value}.",
+             "properties": {
+                "type": {"const": "add_builtin_device"}, "track": id, "device": {"type": "string"},
+                "index": {"type": "integer", "minimum": 0}, "params": {"type": "object", "additionalProperties": {"type": "number"}}}},
+            {"type": "object", "required": ["type", "device", "slot", "asset"], "description":
+                "Load a project audio file (assets[].id) into a sample slot: the Sampler's slot 0, or a Drum Rack pad (slot = pad).",
+             "properties": {"type": {"const": "load_sample"}, "device": id, "slot": {"type": "integer", "minimum": 0}, "asset": id}},
             {"type": "object", "required": ["type", "target", "note"], "properties": {
                 "type": {"const": "highlight"},
                 "target": {"type": "string", "description": "One of UI_TARGETS or track:<id>:<header|mute|solo|arm|pan|volume|lane>",
@@ -302,7 +423,7 @@ fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
         Command::SetTrackSolo { track, solo } => format!("{} {}.", if *solo { "Soloed" } else { "Unsoloed" }, track_name(after, *track)),
         Command::SetMasterGain { gain } => format!("Set master volume to {:.1} dB.", gain_to_db(*gain)),
         Command::SetMasterMute { mute } => format!("{} the master.", if *mute { "Muted" } else { "Unmuted" }),
-        Command::SetTempo { bpm } => format!("Changed tempo to {bpm} BPM."),
+        Command::SetTempo { bpm, .. } => format!("Changed tempo to {bpm} BPM."),
         Command::SetTimeSignature { numerator, denominator } => format!("Changed time signature to {numerator}/{denominator}."),
         Command::MoveClip { clip, track, start } => format!(
             "Moved {} to bar {:.2} on {}.",
@@ -310,6 +431,25 @@ fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
             1.0 + *start as f64 / after.ticks_per_bar() as f64,
             track_name(after, *track)
         ),
+        Command::AddDevice { track, device, .. } => format!("Added {} to {}.", device_name(device), track_name(after, *track)),
+        Command::SetInstrumentPlugin { track, device: Some(device) } => {
+            format!("Set the instrument of {} to {}.", track_name(after, *track), device_name(device))
+        }
+        Command::SetDeviceParam { device, param, value } => {
+            let d = after.device(*device);
+            let name = d.map_or_else(|| "a device".to_string(), device_name);
+            let label = d.and_then(crate::builtin::def_of).and_then(|def| def.param(param)).map_or(param.as_str(), |p| p.name);
+            format!("Set {name} {label} to {value}.")
+        }
+        Command::SetDeviceSample { sample: Some(s), .. } => format!("Loaded {} into a sample slot.", s.name),
+        Command::SetSends { track, .. } => format!("Changed the sends of {}.", track_name(after, *track)),
+        Command::SetAutomationLane { track: Some(track), lane: Some(_), .. } => {
+            format!("Wrote automation on {}.", track_name(after, *track))
+        }
         other => format!("{}.", other.label()),
     }
+}
+
+fn device_name(d: &crate::device::Device) -> String {
+    d.label.clone().unwrap_or_else(|| crate::builtin::def_of(d).map_or_else(|| d.plugin.name.clone(), |def| def.name.to_string()))
 }

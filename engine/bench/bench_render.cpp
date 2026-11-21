@@ -28,6 +28,11 @@
 // (se_midi_inject) to none, the focus track, or every track.
 // A note preview table renders 32 CLAP instrument tracks with piano-roll
 // preview notes (se_preview_note) queued between blocks, against none.
+// A tempo map table renders the 32 tracks with the CLAP + VST3 gain inserts
+// (the plugin host asks for the song position every block) and the
+// metronome, with one tempo against a 64-point map (se_session_publish_v12;
+// a point every quarter note, alternating holds and ramps between 90 and
+// 150 BPM).
 #include "platform/os.hpp"
 #include "dstudio_engine.h"
 
@@ -87,12 +92,14 @@ struct Result {
 // `pdc` on/off. routing (se_session_publish_v9, plugins 0): 1 = two return
 // tracks, every track sending to both (one post-, one pre-fader); 2 = the
 // same with a DStudioTestLatency (N = `latency`) on the first return, so every
-// track's output also runs through an edge delay line. strip
+// track's output also runs through an edge delay line; 3 = routing 1 plus a
+// send from the first return into the second (spec 016). strip
 // (se_session_publish_v10, plugins 0, routing 0): 1 = trim and width on every
 // track; 2 = trim and mono on every track.
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
            bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, int automation = 0,
-           float preview_rate = 0.0f, const std::string& preview_file = {}, int routing = 0, int strip = 0) {
+           float preview_rate = 0.0f, const std::string& preview_file = {}, int routing = 0, int strip = 0,
+           bool tempo = false) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
     if (!e) {
@@ -260,6 +267,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
             r6.push_back(d);
             routes.push_back({id, 0, 1, {}});
         }
+        if (routing == 3) sends.push_back({9001, 9002, 0.5f, 0, {}}); // Return A into Return B
         sd9.v8.v7.v6 = se_session_desc_v6{r6.data(), static_cast<uint32_t>(r6.size()), 0.5f, nullptr, 0, 0};
         sd9.routes = routes.data();
         sd9.route_count = static_cast<uint32_t>(routes.size());
@@ -269,7 +277,29 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
         sd10.strips = strips.data();
         sd10.strip_count = static_cast<uint32_t>(strips.size());
     }
-    const int32_t published = strip != 0    ? se_session_publish_v10(e, &sd10)
+    // Tempo map: 64 points a quarter note apart, alternately holding and
+    // ramping between 90 and 150 BPM (segment frames from the formula).
+    std::vector<se_tempo_segment> segs;
+    se_session_desc_v12 sd12{};
+    if (tempo) {
+        double frame = 0.0;
+        for (int i = 0; i < 64; ++i) {
+            const double a = i % 4 < 2 ? 90.0 : 150.0;
+            const double b = i == 63 || i % 2 == 0 ? a : (i % 4 == 1 ? 150.0 : 90.0);
+            segs.push_back({frame, static_cast<double>(i), a, b});
+            frame += a == b ? 60.0 * kRate / a : 60.0 * kRate / (b - a) * std::log(b / a);
+        }
+        for (uint32_t t = 0; t < tracks; ++t) {
+            t6[t] = se_track_desc_v6{};
+            std::memcpy(&t6[t], &t5[t], sizeof(se_track_desc_v5));
+        }
+        sd12.v11.v10.v9.v8.v7.v6 = sd6;
+        sd12.tempo = segs.data();
+        sd12.tempo_count = static_cast<uint32_t>(segs.size());
+        sd12.click_quarters = 1.0;
+    }
+    const int32_t published = tempo         ? se_session_publish_v12(e, &sd12)
+                              : strip != 0    ? se_session_publish_v10(e, &sd10)
                               : routing != 0 ? se_session_publish_v9(e, &sd9)
                               : automation    ? se_session_publish_v6(e, &sd6)
                               : plugins == 0 ? se_session_publish(e, &sd)
@@ -765,9 +795,12 @@ int main(int argc, char** argv) {
                 clips_per_track);
     std::printf("%22s %14s %14s %14s %16s\n", "routing", "avg us/block", "p99 us/block", "max us/block",
                 "realtime ratio");
-    for (const int routing : {0, 1, 2}) {
+    for (const int routing : {0, 1, 3, 2}) {
         const Result r = run(32, clips_per_track, blocks, files, features, 0, 1024, true, false, 0.0f, {}, routing);
-        const char* name = routing == 0 ? "none (same tracks)" : routing == 1 ? "2 returns, 64 sends" : "+ 1024-frame return";
+        const char* name = routing == 0   ? "none (same tracks)"
+                           : routing == 1 ? "2 returns, 64 sends"
+                           : routing == 3 ? "+ A into B"
+                                          : "+ 1024-frame return";
         std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
                     r.us_per_block_max, r.rt_ratio);
     }
@@ -780,6 +813,14 @@ int main(int argc, char** argv) {
         const char* name = strip == 0 ? "none (same tracks)" : strip == 1 ? "trim + width" : "trim + mono";
         std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
                     r.us_per_block_max, r.rt_ratio);
+    }
+    std::printf("\nTempo map: 32 audio tracks x %u clips + CLAP gain + VST3 gain, metronome on\n", clips_per_track);
+    std::printf("%22s %14s %14s %14s %16s\n", "tempo", "avg us/block", "p99 us/block", "max us/block",
+                "realtime ratio");
+    for (const bool tempo : {false, true}) {
+        const Result r = run(32, clips_per_track, blocks, files, true, 1, 0, true, 0, 0.0f, {}, 0, 0, tempo);
+        std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", tempo ? "64-point map" : "one tempo (same)", r.us_per_block_avg,
+                    r.us_per_block_p99, r.us_per_block_max, r.rt_ratio);
     }
     std::printf("\nBrowser preview voice: 32 audio tracks x %u clips, plus one stereo preview sounding in every block\n",
                 clips_per_track);

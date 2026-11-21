@@ -701,7 +701,7 @@ impl Controller {
             |it| match it {
                 Item::Builtin(def) => cur.format == PluginFormat::Builtin && cur.id == def.id,
                 Item::Plugin(p) => cur.format == p.format && cur.id == p.id,
-                Item::BuiltinSynth | Item::Chain(_) => false,
+                Item::BuiltinSynth(_) | Item::Chain(_) => false,
             },
         );
         rows.push(("Modulation".to_string(), String::new(), None, true));
@@ -714,7 +714,7 @@ impl Controller {
         let mut with = match item {
             Item::Builtin(def) => def.instantiate(),
             Item::Plugin(p) => Device::new(p),
-            Item::BuiltinSynth | Item::Chain(_) => return,
+            Item::BuiltinSynth(_) | Item::Chain(_) => return,
         };
         let Some(d) = self.project().device(id) else {
             return;
@@ -1214,7 +1214,7 @@ impl Controller {
         let mut device = match item {
             Item::Builtin(def) => def.instantiate(),
             Item::Plugin(p) => Device::new(p),
-            Item::BuiltinSynth | Item::Chain(_) => return,
+            Item::BuiltinSynth(_) | Item::Chain(_) => return,
         };
         device.chain = Some(head);
         self.execute(Command::AddDevice { track, index: Some(index), device });

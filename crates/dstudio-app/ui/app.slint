@@ -16,7 +16,7 @@ import "fonts/Inter-Medium.ttf";
 import "fonts/Inter-SemiBold.ttf";
 import "fonts/Inter-Bold.ttf";
 import { Tokens } from "tokens.slint";
-import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switch, Label, Raised, Field, Inset } from "widgets.slint";
+import { Panel, Icon, Icons, Pill, IconButton, ZoomSlider, SmallButton, HSlider, Knob, Switch, Label, Raised, Field, Inset } from "widgets.slint";
 
 export { Tokens }
 
@@ -45,12 +45,62 @@ component Header inherits Rectangle {
     // Root-relative coordinates (header panel sits at 5,5).
     Panel { x: 5px; y: 5px; width: root.width - 10px; height: 68px; }
 
-    // Title (centred). AX: 695,11,50,18
-    Text {
+    // Title (centred). AX: 695,11,50,18. Click it to rename the project: Return renames,
+    // Escape cancels (src/controller.rs `rename_project`).
+    title := Text {
         x: 0; y: 11px; width: root.width; height: 18px;
         text: Studio.project-name; color: Tokens.text-title; font-size: 10px; font-weight: 600;
         horizontal-alignment: center; vertical-alignment: center;
-        accessible-role: text;
+        visible: !Studio.title-editing;
+        accessible-role: button; accessible-label: "Project name"; accessible-value: Studio.project-name;
+        accessible-action-default => { Studio.title-editing = true; }
+    }
+    title-ta := TouchArea {
+        x: (root.width - min(root.width - 480px, max(60px, title-w.preferred-width + 16px))) / 2; y: 9px;
+        width: min(root.width - 480px, max(60px, title-w.preferred-width + 16px)); height: 22px;
+        clicked => { Studio.title-editing = true; }
+    }
+    title-w := Text { visible: false; text: Studio.project-name; font-size: 10px; font-weight: 500; }
+    // The field: a narrow box with an accent rim, the name left-aligned and selected.
+    if Studio.title-editing: Rectangle {
+        x: (root.width - self.width) / 2; y: 10.2px; width: max(91px, title-w.preferred-width + 13.6px); height: 17px; border-radius: 4.25px;
+        background: #2a2b2e; border-width: 0.85px; border-color: #628bf7;
+        TextInput {
+            accessible-label: "Project name";
+            x: 5.1px; width: parent.width - 10.2px; height: parent.height;
+            text: Studio.project-name; color: #e5e5e8; font-size: 10px; font-weight: 500;
+            vertical-alignment: center; single-line: true;
+            selection-background-color: #263a7d; selection-foreground-color: #e5e5e8;
+            init => { self.focus(); self.select-all(); Studio.title-focused = true; }
+            accepted => { Studio.title-editing = false; Studio.title-focused = false; Studio.project-rename(self.text); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) { Studio.title-editing = false; Studio.title-focused = false; return accept; }
+                reject
+            }
+            changed has-focus => {
+                if (!self.has-focus && Studio.title-editing) { Studio.title-editing = false; Studio.title-focused = false; Studio.project-rename(self.text); }
+            }
+        }
+    }
+    // "Update available" with the new version, left of Report a bug, when a newer release exists
+    // (src/updates.rs); a click opens Check for Updates with it.
+    if Studio.update-version != "": Raised {
+        x: root.width - 220px - 7px - self.width; y: 9.45px; height: 22.1px;
+        width: update-row.preferred-width + 22px;
+        border-radius: self.height / 2;
+        fill: update-ta.has-hover ? Tokens.raised-rim-accent : Tokens.accent;
+        rim: Tokens.raised-rim-accent;
+        accessible-role: button;
+        accessible-label: "Update available";
+        accessible-description: "Device \{Studio.update-version} is available";
+        accessible-action-default => { Studio.update-pill-clicked(); }
+        update-row := HorizontalLayout {
+            x: 11px; width: self.preferred-width;
+            spacing: 5px;
+            Text { text: "Update available"; color: Tokens.on-accent; font-size: 10.2px; font-weight: 600; letter-spacing: -0.41px; vertical-alignment: center; }
+            Text { text: "v\{Studio.update-version}"; color: Tokens.on-accent; opacity: 0.72; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: center; }
+        }
+        update-ta := TouchArea { mouse-cursor: pointer; clicked => { Studio.update-pill-clicked(); } }
     }
     Pill { x: root.width - 220px; y: 9.45px; width: 82px; height: 22.1px; text: "Report a bug"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.report-bug(); } }
     Pill { x: root.width - 131px; y: 9.45px; width: 118px; height: 22.1px; text: "Share your feedback"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.feedback(); } }
@@ -62,12 +112,12 @@ component Header inherits Rectangle {
         border-radius: 4px; border-width: 0.75px; border-color: #6a6b6f;
         Text { text: "Beta"; color: #ffffff; font-size: 6.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     }
-    // Sounds toggle (shows/hides the browser panel). AX 67,39,62,25
+    // Browser toggle (shows/hides the browser panel). AX 67,39,62,25
     Rectangle {
         x: 67px; y: 39px; width: 62px; height: 25px;
-        accessible-role: checkbox; accessible-label: "Sounds"; accessible-checked: Studio.sounds-visible;
+        accessible-role: checkbox; accessible-label: "Browser"; accessible-checked: Studio.sounds-visible;
         Icon { x: 6px; width: 14px; height: 14px; d: Icons.library; ink: Studio.sounds-visible ? #c9c9cc : Tokens.icon; }
-        Text { x: 22px; y: 1.5px; height: parent.height; text: "Sounds"; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
+        Text { x: 22px; y: 1.5px; height: parent.height; text: "Browser"; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
         TouchArea { clicked => { Studio.sounds-visible = !Studio.sounds-visible; } }
     }
 
@@ -302,22 +352,22 @@ component FilesPane inherits Rectangle {
 
 
 // ------------------------------------------------------------------ browser
-// Sections Projects, Devices and Files are real (src/files.rs, src/devices.rs); Search and Library
-// have no content (PLACEHOLDER: no sample catalog). The preview bar plays the file last clicked in Files
+// Sections Projects, Devices and Files (src/files.rs, src/devices.rs). The preview bar plays the file last clicked in Files
 // (Link: PLACEHOLDER, it ties catalog loops to the arrangement).
 // Devices › Chains lists saved and factory chains (src/chain_presets.rs). Back / Forward step through visited sections and tabs.
 component Browser inherits Panel {
     // Section tabs: 12 px weight 700, -0.04 em, 8 px apart from 12 px in; rest #63656d, active white.
     HorizontalLayout {
         x: 10.2px; y: 0; width: self.preferred-width; height: 27.2px; spacing: 6.8px;
-        for t[i] in ["Search", "Library", "Projects", "Devices", "Files"]: Rectangle {
+        // Top-tab indices 0 and 1 (Search, Library) are not shown; the tabs here are 2, 3 and 4.
+        for t[i] in ["Projects", "Devices", "Files"]: Rectangle {
             width: section-label.preferred-width;
-            accessible-role: tab; accessible-label: t; accessible-checked: Studio.browser-top == i;
+            accessible-role: tab; accessible-label: t; accessible-checked: Studio.browser-top == i + 2;
             section-label := Text {
-                x: 0; height: parent.height; text: t; color: Studio.browser-top == i ? #ffffff : #63656d;
+                x: 0; height: parent.height; text: t; color: Studio.browser-top == i + 2 ? #ffffff : #63656d;
                 font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center;
             }
-            TouchArea { clicked => { Studio.browser-top-select(i); } }
+            TouchArea { clicked => { Studio.browser-top-select(i + 2); } }
         }
     }
     // Back / Forward: white when there is somewhere to go, else #63656d.
@@ -385,7 +435,7 @@ component Browser inherits Panel {
             }
             Icon {
                 x: 24px + parent.indent; width: 14.5px; height: 14.5px;
-                d: row.icon == 1 ? Icons.keys : row.icon == 2 ? Icons.effect : Icons.folder; ink: #d0d0d3; stroke-width: 1.3px;
+                d: row.icon == 1 ? Icons.keys : row.icon == 2 ? Icons.effect : row.icon == 3 ? Icons.presets : Icons.folder; ink: #d0d0d3; stroke-width: 1.3px;
             }
             Text { x: 42.5px + parent.indent; width: parent.width - 42.5px - parent.indent - 44px; text: row.label; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; vertical-alignment: center; overflow: elide; }
             Text { x: parent.width - 60px; width: 52px; text: row.count; color: #8a8b8e; font-size: 9px; horizontal-alignment: right; vertical-alignment: center; }
@@ -625,22 +675,37 @@ component Timeline inherits Panel {
                 TouchArea { x: -3px; y: -2px; width: 19px; height: 18px; clicked => { Studio.auto-toggle-draw(); } }
             }
         }
+        // Edit tool: the active tool's icon; the button opens the tool menu (src/tools.rs).
         Rectangle {
             width: 25px + 1.7px;
-            Icon { x: 0; y: 7px; width: 13px; height: 13px; d: Icons.cursor; ink: #e5e5e8; filled: true; }
-            Icon { x: 14px; y: 8px; width: 11px; height: 11px; d: Icons.chevron-down; ink: #8e8f93; }
+            Icon {
+                x: 0; y: 7px; width: 13px; height: 13px; ink: #e5e5e8; filled: Studio.tool == 0;
+                d: Studio.tool == 1 ? Icons.plus : Studio.tool == 2 ? Icons.scissors : Icons.cursor;
+            }
+            Icon { x: 14px; y: 8px; width: 11px; height: 11px; d: Icons.chevron-down; ink: Studio.tool-menu-open ? #ffffff : #8e8f93; }
+            TouchArea {
+                x: -3px; width: parent.width + 3px;
+                accessible-role: button; accessible-label: "Edit tool";
+                clicked => { Studio.tool-menu-toggle(parent.absolute-position.x, (parent.absolute-position.y - Studio.menu-dy) + parent.height); }
+            }
         }
-        // vertical zoom (placeholder), horizontal zoom (mirrors the real zoom level)
+        // Zoom sliders: track heights and time (src/fit.rs); double-click resets.
         if !root.zoom-hidden: Rectangle {
             width: 172px;
             Icon { x: 0; y: 7px; width: 13px; height: 13px; d: Icons.v-resize; ink: #727377; }
-            Rectangle { x: 18.4px; y: 13px; width: 68px; height: 2px; border-radius: 1px; background: #2f3036; }
-            Rectangle { x: 18.4px; y: 13px; width: 8px; height: 2px; background: #e5e5e8; }
-            Rectangle { x: 24.5px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
+            ZoomSlider {
+                x: 18.4px; y: 4px; width: 68px; value: Studio.tl-vzoom; fill: true;
+                accessible-label: "Track height";
+                changed(z) => { Studio.tl-zoom(0, z); }
+                reset => { Studio.tl-zoom-reset(0); }
+            }
             Icon { x: 91.4px; y: 7px; width: 13px; height: 13px; d: Icons.h-resize; ink: #727377; }
-            Rectangle { x: 110.2px; y: 13px; width: 68px; height: 2px; border-radius: 1px; background: #2f3036; }
-            Rectangle { x: 110.2px; y: 13px; width: 8px; height: 2px; background: #e5e5e8; }
-            Rectangle { x: 116px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
+            ZoomSlider {
+                x: 110.2px; y: 4px; width: 68px; value: Studio.tl-hzoom; fill: true;
+                accessible-label: "Timeline zoom";
+                changed(z) => { Studio.tl-zoom(1, z); }
+                reset => { Studio.tl-zoom-reset(1); }
+            }
         }
         // Snap: the readout toggles snapping, the chevron opens the grid-size menu (S76).
         Rectangle {
@@ -661,6 +726,14 @@ component Timeline inherits Panel {
         for l in Studio.ruler-labels: Text {
             x: l.x + 4.5px; y: 0px; height: 11px; text: l.text; color: #bdbdbd; font-size: 7.75px; font-weight: 600; vertical-alignment: center;
         }
+        // Tempo changes (spec 015): a mark standing on the bar-number band's rule, and the BPM.
+        for m in Studio.tempo-marks: Rectangle {
+            Rectangle { x: m.x - 1px; y: 9px; width: 2px; height: 7.5px; border-radius: 1px; background: Studio.tempo-mark-color; }
+            Text {
+                x: m.text-x; y: 0px; height: 11px; text: m.text; color: Studio.tempo-mark-color;
+                font-size: 7.75px; font-weight: 600; vertical-alignment: center;
+            }
+        }
         Icon { x: Studio.section-add-x - 5.5px; y: 26.5px; width: 11px; height: 11px; d: Icons.plus; ink: Tokens.text-tertiary; }
         // Section names: 10 px weight 600, -0.04 em, in a dark shade of the block's hue.
         for l in Studio.section-labels: Text {
@@ -675,6 +748,15 @@ component Timeline inherits Panel {
         for l in Studio.auto-labels: Text {
             x: l.x; y: l.y + 0.75px; height: 13px; text: l.text; font-size: 9.25px; font-weight: 600; vertical-alignment: center;
             color: l.state == 1 ? l.accent : l.state == 2 ? #6a6b6f : l.dim;
+        }
+        // Marquee tool range and the Scissors cut line (src/tools.rs).
+        if Studio.range-on: Rectangle {
+            x: Studio.range-x; y: Studio.range-y; width: Studio.range-w; height: Studio.range-h;
+            background: #ffffff85;
+        }
+        if Studio.cut-on: Rectangle {
+            x: Studio.cut-x - 0.5px; y: Studio.cut-y; width: 1px; height: Studio.cut-h;
+            background: #ffffff;
         }
         if Studio.marquee-on: Rectangle {
             x: Studio.marquee-x; y: Studio.marquee-y; width: Studio.marquee-w; height: Studio.marquee-h;
@@ -790,6 +872,7 @@ component Timeline inherits Panel {
         x: 0; y: root.height - Studio.master-h; width: Tokens.lane-x - 0.5px; height: Studio.master-h;
         automation: Studio.auto-shown; volume-pos: Studio.master-pos; vol-auto: Studio.master-vol-auto;
         level: Studio.master-level; auto-state: Studio.master-auto-state; muted: Studio.master-mute;
+        auto-cat: Studio.master-auto-cat; auto-param: Studio.master-auto-param; auto-accent: Studio.master-auto-accent;
     }
 }
 
@@ -856,7 +939,8 @@ component Inspector inherits Rectangle {
     // chip above (once the send is stored), the level knob, its dB value and the return's name.
     // A silent slot (nothing sent yet, or all the way down) is dim; moving its knob sends.
     // Double-clicking a knob sets 0 dB. With no return tracks, a dim "Return A" placeholder
-    // creates the return and sends to it at 0 dB.
+    // creates the return and sends to it at 0 dB. A return track has a knob for each return
+    // after it (spec 016); the last return says so.
     if root.tab == 1: sends-list := Rectangle {
         x: 0; y: 128 * StripMetrics.u; width: 170px; height: 324 * StripMetrics.u - self.y - 4px;
         clip: true;
@@ -866,8 +950,8 @@ component Inspector inherits Rectangle {
         property <length> max-scroll: max(0px, self.rows * self.cell-h + 6px - self.height);
         property <length> scroll: min(self.scroll-raw, self.max-scroll);
         property <length> scroll-raw: 0px;
-        if !Studio.sel-can-send: Text {
-            x: 10px; y: 10px; width: 150px; text: Studio.has-selection ? "Return tracks have no sends." : ""; color: #63656d; font-size: 9.5px; font-weight: 600; wrap: word-wrap;
+        if Studio.sel-return && Studio.sel-sends.length == 0: Text {
+            x: 10px; y: 10px; width: 150px; text: "A return sends into the returns after it. This is the last one."; color: #63656d; font-size: 9.5px; font-weight: 600; wrap: word-wrap;
         }
         TouchArea {
             scroll-event(e) => {
@@ -876,7 +960,7 @@ component Inspector inherits Rectangle {
                 accept
             }
         // Placeholder: no return tracks yet.
-        if Studio.sel-can-send && Studio.sel-sends.length == 0: Rectangle {
+        if Studio.sel-can-send && !Studio.sel-return && Studio.sel-sends.length == 0: Rectangle {
             x: 10px; y: 6px; width: 74px; height: sends-list.cell-h;
             Knob { x: 18px; y: 14px; width: 38px; height: 38px; body: 20.5px; groove: true; show-arc: false; value-angle: -135; tick-color: #63656d; arc-color: #63656d; }
             Text { x: 0; y: 50px; width: parent.width; height: 13px; text: "−∞"; color: #4a4b50; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
@@ -1149,6 +1233,34 @@ export struct LayoutAnchors {
     settings-x: length, settings-y: length, settings-w: length,
 }
 
+// The timeline's edit tool menu: three rows with the tool's icon and a check on the active one.
+component ToolMenu inherits Rectangle {
+    width: 117.3px; height: 3.4px * 2 + 20.4px * 3;
+    border-radius: 6px;
+    background: Tokens.bg-raised;
+    border-width: 0.5px;
+    border-color: @linear-gradient(180deg, Tokens.popup-border-top 0%, Tokens.popup-border 8%);
+    drop-shadow-blur: 10px;
+    drop-shadow-color: #00000070;
+    drop-shadow-offset-y: 2px;
+    accessible-role: list;
+    for row[i] in [
+        { label: "Selector", icon: Icons.cursor, filled: true },
+        { label: "Marquee tool", icon: Icons.plus, filled: false },
+        { label: "Scissors", icon: Icons.scissors, filled: false },
+    ]: Rectangle {
+        x: 3.4px; y: 3.4px + i * 20.4px; width: root.width - 6.8px; height: 20.4px;
+        border-radius: 4px;
+        background: ta.has-hover ? #ffffff14 : transparent;
+        accessible-role: button; accessible-label: row.label; accessible-checked: Studio.tool == i;
+        accessible-action-default => { Studio.tool-pick(i); }
+        Icon { x: 6.8px; y: 4.7px; width: 11px; height: 11px; d: row.icon; filled: row.filled; ink: #ffffff; }
+        Text { x: 25.5px; text: row.label; color: #ffffff; font-size: 9.35px; font-weight: 600; vertical-alignment: center; }
+        if Studio.tool == i: Icon { x: parent.width - 18.7px; y: 4.7px; width: 11px; height: 11px; d: Icons.check; ink: #ffffff; stroke-width: 1.6px; }
+        ta := TouchArea { clicked => { Studio.tool-pick(i); } }
+    }
+}
+
 export component AppWindow inherits Window {
     title: Studio.project-name + (Studio.project-edited ? " — Edited" : "") + " — Device";
     preferred-width: 1440px;
@@ -1249,6 +1361,11 @@ export component AppWindow inherits Window {
     property <length> top-y: 78.2px;
     property <length> chat-x: root.width - 5px - root.chat-w;
     property <length> bottom-y: root.height - 5px - root.bottom-h;
+    // Full-height assistant: it runs down to the window's bottom edge and the bottom panel
+    // (or the mixer) ends where it begins.
+    property <bool> chat-full: Studio.assistant-open && Studio.assistant-full;
+    property <length> bottom-w: root.width - 10px - (root.chat-full ? root.chat-w + 5px : 0px);
+    property <length> chat-h: root.chat-full ? root.height - 5px - root.top-y : root.top-h;
     property <length> settings-x: max(0px, min(216.75px, root.width - 816px));
     property <length> settings-y: 5.5px;
     property <length> settings-w: min(816px, root.width);
@@ -1268,7 +1385,7 @@ export component AppWindow inherits Window {
         tracks-x: timeline.x, tracks-y: timeline.y + timeline.tracks-y,
         browser-x: 5px, browser-y: root.top-y,
         chat-x: root.chat-x, chat-y: root.top-y, chat-w: root.chat-w, chat-h: root.top-h,
-        bottom-x: 5px, bottom-y: root.bottom-y, bottom-w: root.width - 10px,
+        bottom-x: 5px, bottom-y: root.bottom-y, bottom-w: root.bottom-w,
         settings-x: root.settings-x, settings-y: root.settings-y, settings-w: root.settings-w,
     };
 
@@ -1290,6 +1407,10 @@ export component AppWindow inherits Window {
             fs.focus();
         }
     }
+    // Closing Settings gives the key handler the focus back, so a settings search field that
+    // had the cursor doesn't keep the keyboard after the panel is gone.
+    property <bool> settings-open: Studio.settings-open;
+    changed settings-open => { if (!self.settings-open) { fs.focus(); } }
     fs := FocusScope {
         init => { self.focus(); }
         key-pressed(e) => {
@@ -1315,13 +1436,13 @@ export component AppWindow inherits Window {
         }
         // Assistant panel: right-docked beside the timeline (nothing overlaps).
         if Studio.assistant-open: AssistantPanel {
-            x: root.chat-x; y: root.top-y; width: root.chat-w; height: root.top-h;
+            x: root.chat-x; y: root.top-y; width: root.chat-w; height: root.chat-h;
             focus-main => { fs.focus(); }
         }
         // Width splitter between timeline and assistant: 13 px hit strip over the 6 px gap,
         // col-resize cursor, double-click restores the default width.
         if Studio.assistant-open: TouchArea {
-            x: root.width - 5px - root.chat-w - 7.55px; y: 78.2px; width: 11.05px; height: root.top-h;
+            x: root.width - 5px - root.chat-w - 7.55px; y: 78.2px; width: 11.05px; height: root.chat-h;
             mouse-cursor: col-resize;
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.chat-resize(0, self.absolute-position.x + self.mouse-x); }
@@ -1331,12 +1452,12 @@ export component AppWindow inherits Window {
             double-clicked => { Studio.chat-resize-reset(); }
         }
         // Bottom panel: inspector + devices, or the mixer (taller; the row above shrinks).
-        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; focus-main => { fs.focus(); } }
-        if Studio.mixer-open: MixerPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; }
+        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.bottom-y; width: root.bottom-w; height: root.bottom-h; focus-main => { fs.focus(); } }
+        if Studio.mixer-open: MixerPanel { x: 5px; y: root.bottom-y; width: root.bottom-w; height: root.bottom-h; }
         // Timeline / bottom-panel splitter: an invisible 14 px strip across the gap, 8 px of it
         // above the panel's top edge (the resize handle).
         TouchArea {
-            x: 5px; y: root.height - 5px - root.bottom-h - 6.8px; width: root.width - 10px; height: 11.9px;
+            x: 5px; y: root.height - 5px - root.bottom-h - 6.8px; width: root.bottom-w; height: 11.9px;
             mouse-cursor: row-resize;
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.bottom-resize(0, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
@@ -1406,6 +1527,12 @@ export component AppWindow inherits Window {
                 items: Studio.synth-menu-items;
                 picked(i) => { Studio.synth-menu-pick(i); }
             }
+        }
+        // Edit tool menu (src/tools.rs): Selector, Marquee tool, Scissors, the active one ticked.
+        if Studio.tool-menu-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.tool-menu-dismiss(); } } }
+            ToolMenu { x: Studio.tool-menu-x - 3.4px; y: Studio.tool-menu-y + 5.1px; }
         }
         // Timeline snap menu: Off, then Auto and the grid sizes, a rule before the triplets (S76).
         if Studio.snap-menu-open: Rectangle {

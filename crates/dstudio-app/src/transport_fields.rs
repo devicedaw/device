@@ -191,9 +191,10 @@ impl Controller {
     }
 
     /// Set the tempo as part of the current gesture: replaces the gesture's previous edit when
-    /// nothing else happened since, so the gesture is one undo step.
+    /// nothing else happened since, so the gesture is one undo step. With tempo changes it sets
+    /// the point in effect at the playhead (spec 015).
     fn tempo_gesture_set(&mut self, bpm: f64) {
-        if (self.project().transport.bpm - bpm).abs() < 1e-9 {
+        if (self.bpm_now() - bpm).abs() < 1e-9 {
             return;
         }
         if self.tf.merge_rev == Some(self.doc.revision()) {
@@ -201,7 +202,8 @@ impl Controller {
             let _ = self.doc.undo();
         }
         self.doc.seal_coalescing();
-        if self.execute(Command::SetTempo { bpm }) {
+        let at = self.tempo_edit_at();
+        if self.execute(Command::SetTempo { bpm, at }) {
             self.doc.seal_coalescing();
             self.tf.merge_rev = Some(self.doc.revision());
         }
@@ -212,7 +214,7 @@ impl Controller {
     pub fn tempo_drag(&mut self, phase: i32, dx: f32, dy: f32) {
         match phase {
             0 => {
-                self.tf.drag = Some((self.project().transport.bpm, false));
+                self.tf.drag = Some((self.bpm_now(), false));
                 self.tf.merge_rev = None;
                 self.tf.taps.clear();
             }
@@ -239,7 +241,7 @@ impl Controller {
     /// One BPM up or down (the tempo field's accessible increment and decrement), its own undo
     /// step.
     pub fn tempo_step(&mut self, delta: i32) {
-        let bpm = (self.project().transport.bpm + delta as f64).clamp(MIN_BPM, MAX_BPM);
+        let bpm = (self.bpm_now() + delta as f64).clamp(MIN_BPM, MAX_BPM);
         self.tempo_text(&bpm.to_string());
     }
 
@@ -249,9 +251,10 @@ impl Controller {
             Some(bpm) => {
                 self.tf.merge_rev = None;
                 self.tf.taps.clear();
-                if (self.project().transport.bpm - bpm).abs() > 1e-9 {
+                if (self.bpm_now() - bpm).abs() > 1e-9 {
                     self.doc.seal_coalescing();
-                    self.execute(Command::SetTempo { bpm });
+                    let at = self.tempo_edit_at();
+                    self.execute(Command::SetTempo { bpm, at });
                     self.doc.seal_coalescing();
                 }
             }
@@ -426,7 +429,8 @@ impl Controller {
 
     pub(crate) fn push_transport_fields(&mut self, s: &Studio) {
         let p = self.project();
-        let (bpm, key) = (fmt_bpm(p.transport.bpm), p.transport.key);
+        // The tempo at the playhead: it follows the playhead through tempo changes.
+        let (bpm, key) = (fmt_bpm(self.bpm_now()), p.transport.key);
         let cur = self.current_sig();
         if s.get_bpm_text() != bpm.as_str() {
             s.set_bpm_text(bpm.into());

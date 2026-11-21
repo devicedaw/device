@@ -74,6 +74,8 @@ impl MenuAction {
             MenuAction::InsertMidiClip => "Insert MIDI clip",
             MenuAction::AutoLaneDelete => "Delete automation",
             MenuAction::AutoLaneClose => "Close lane",
+            MenuAction::TempoRamp => "Ramp to Next Point",
+            MenuAction::TempoHold => "Hold Until Next Point",
             MenuAction::SectionRename => "Rename…",
             MenuAction::SectionColor => "Color",
             MenuAction::SectionInsert => "Insert",
@@ -147,10 +149,9 @@ fn take_rows(clip: Option<&dstudio_core::Clip>) -> Vec<(String, String, bool)> {
     (0..c.takes.len()).map(|i| (format!("Take {}", i + 1), if cur == Some(i) { "✓".into() } else { String::new() }, true)).collect()
 }
 
-/// Bounce submenu: (label, shortcut text, enabled). Two entries;
-/// DStudio builds Bounce to new track. Bounce track in place needs a track that changes kind (MIDI to
-/// audio, its instrument and devices removed), which the model cannot do yet, so it stays greyed.
-const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true), ("Bounce track in place", "", false)];
+/// Bounce submenu: (label, shortcut text, enabled): Bounce to new track, Bounce track in place
+/// (the clip's whole track, src/clip_render.rs).
+const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true), ("Bounce track in place", "", true)];
 
 /// Transpose submenu: (label, shortcut text, semitones).
 const TRANSPOSE: [(&str, &str, i32); 4] =
@@ -480,6 +481,8 @@ impl Controller {
     pub fn copy_clip(&mut self) -> bool {
         let mut items = self.copy_items().into_iter();
         let Some(first) = items.next() else { return false };
+        // The newest copy is what ⌘V pastes: a copied range gives way to these clips.
+        self.tools.clipboard = None;
         self.clipboard = Some(first);
         self.clipboard_rest = items.collect();
         true
@@ -593,7 +596,7 @@ impl Controller {
     /// Right-click on the lanes (lane-local x/y for hit-testing, window wx/wy for placement).
     pub fn lane_context(&mut self, x: f32, y: f32, wx: f32, wy: f32, win: (f32, f32)) {
         use crate::timeline::{Hit, hit_test};
-        if self.section_context(x, y, wx, wy, win) {
+        if self.section_context(x, y, wx, wy, win) || self.tempo_point_context(x, y, wx, wy, win) {
             return;
         }
         let hit = hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y);
@@ -657,12 +660,11 @@ impl Controller {
             items.push(if pattern { ToMidi } else { ToPattern });
         }
         items.push(Ask);
-        // PLACEHOLDER entry (disabled): Ask.
         self.menu.items = items
             .iter()
             .map(|&a| {
                 let enabled = match a {
-                    Cut | Copy | Duplicate | Delete | Rename | Disable | Enable | Takes => true,
+                    Cut | Copy | Duplicate | Delete | Rename | Disable | Enable | Takes | Ask => true,
                     Split => splittable,
                     ShowInFinder => !midi,
                     Consolidate => self.can_render_clip(id, false),
@@ -694,6 +696,7 @@ impl Controller {
         self.menu.track = None;
         self.menu.count_in = false;
         self.menu.auto_lane = None;
+        self.menu.tempo_point = None;
         self.ui_dirty = true;
     }
 
@@ -718,6 +721,7 @@ impl Controller {
             self.menu.track = None;
             self.menu.count_in = false;
             self.menu.auto_lane = None;
+            self.menu.tempo_point = None;
             self.ui_dirty = true;
         }
     }
@@ -737,6 +741,11 @@ impl Controller {
         }
         if self.menu.count_in {
             self.count_in_menu_activate(action);
+            return;
+        }
+        if let Some(i) = self.menu.tempo_point {
+            self.menu_close();
+            self.tempo_set_ramp(i, action == MenuAction::TempoRamp);
             return;
         }
         if let Some((track, i)) = self.menu.auto_lane {
@@ -780,6 +789,7 @@ impl Controller {
             MenuAction::Delete => self.delete_selection(),
             MenuAction::Split => self.split_clip(),
             MenuAction::Consolidate => self.consolidate_clip(id),
+            MenuAction::Ask => self.ask_about_clip(id),
             MenuAction::Resample => self.bounce_clip(id),
             MenuAction::SendToSampler => {
                 self.send_to_sampler(id);
@@ -851,7 +861,10 @@ impl Controller {
             if BOUNCE.get(index).is_some_and(|b| b.2) {
                 self.menu_close();
                 self.selected_clip = Some(id);
-                self.bounce_clip(id);
+                match (index, self.clip_track(id)) {
+                    (1, Some(track)) => self.bounce_track_in_place(track),
+                    _ => self.bounce_clip(id),
+                }
             }
             return;
         }

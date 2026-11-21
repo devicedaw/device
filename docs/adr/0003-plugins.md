@@ -8,7 +8,7 @@ and CLAP. The development Mac has Apple's built-in AUs plus third-party commerci
 and CLAP) installed; the automated tests only rely on Apple's AUs and our own test plugins.
 
 ## Licensing
-- VST 3 SDK: MIT since VST 3.8 (Steinberg, 2025-10-29). The ASIO SDK is separate (GPLv3/proprietary) and not used here.
+- VST 3 SDK: MIT since VST 3.8 (Steinberg, 2025-10-29). The ASIO SDK is separate (GPLv3/proprietary); it is used, under GPLv3, only for the Windows ASIO audio backend, not for plugins.
 - CLAP: MIT (free-audio/clap).
 - Audio Units: Apple system frameworks.
 SDKs are fetched at a pinned tag at configure time (CMake FetchContent) and never vendored into git.

@@ -12,7 +12,7 @@
 /// the target OS: system frameworks on macOS, libstdc++ and libdl on Linux
 /// (libpipewire and libasound, for audio and MIDI, and libX11, when a plugin
 /// editor opens, are loaded at run time, so the app starts on systems without
-/// PipeWire), and the COM, shell, MMCSS, user32 and winmm libraries on Windows.
+/// PipeWire), and the COM, shell, MMCSS, user32, winmm and advapi32 (ASIO driver registry) libraries on Windows.
 fn main() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let engine = manifest.join("../../engine");
@@ -98,7 +98,7 @@ fn main() {
         }
         "windows" => {
             // COM (WASAPI / MMDevice), CommandLineToArgvW, MMCSS, MIDI input.
-            for lib in ["ole32", "shell32", "avrt", "user32", "winmm"] {
+            for lib in ["ole32", "shell32", "avrt", "user32", "winmm", "advapi32"] {
                 println!("cargo:rustc-link-lib={lib}");
             }
         }

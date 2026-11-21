@@ -448,7 +448,8 @@ export component TrackHeaderRow inherits Rectangle {
             x: 55.25px; y: root.bottom-y + 1.7px; text: "R"; label: root.t.arm ? "Disarm track for recording" : "Arm track for recording";
             on: root.t.arm; on-color: Tokens.track-arm-on; pressed => { Studio.track-arm(root.t.id); }
         }
-        if root.t.instrument && !root.minimal: TrackButton {
+        // Every recordable track has input monitoring, audio and instrument alike.
+        if !root.minimal && !root.t.is-return && !root.t.is-group: TrackButton {
             x: 68.85px; y: root.bottom-y + 1.7px; text: "I"; label: root.t.monitor ? "Disable input monitoring" : "Enable input monitoring";
             on: root.t.monitor; on-color: Tokens.track-monitor-on; on-text: #1a1a1a; pressed => { Studio.track-monitor(root.t.id); }
         }
@@ -496,6 +497,9 @@ export component MasterHeaderRow inherits Rectangle {
     in property <TrackLevel> level;
     in property <bool> vol-auto;
     in property <int> auto-state;
+    in property <string> auto-cat: "Master";
+    in property <string> auto-param: "Volume";
+    in property <color> auto-accent: #ebc542;
     /// Master muted from the mixer: the colour tab and name dim so a silent mix is visible here too.
     in property <bool> muted;
     property <length> top-c: root.automation ? 20.4px : 15.3px;
@@ -523,7 +527,7 @@ export component MasterHeaderRow inherits Rectangle {
     }
     if root.automation: AutoPill {
         x: 40.8px; y: 42.5px; width: root.width - 34px - 13.6px;
-        cat: "Track"; param: "Volume"; state: root.auto-state;
+        cat: root.auto-cat; param: root.auto-param; state: root.auto-state; accent: root.auto-accent;
         power => { Studio.auto-power(-1, -1); }
         open(x, y) => { Studio.auto-open-picker(-1, x, y); }
     }

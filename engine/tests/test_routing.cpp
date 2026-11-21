@@ -410,3 +410,162 @@ TEST_CASE(routing_export_matches_the_live_render_and_does_not_allocate) {
     for (float v : live) peak = std::max(peak, std::fabs(v));
     CHECK(peak > 0.1f);
 }
+
+// Spec 016: a return sends into a later return, pre- or post-fader; a muted
+// return sends nothing.
+TEST_CASE(routing_return_into_return_pre_and_post_fader) {
+    EngineHandle e;
+    RSession s;
+    s.audio(1, steady(e, 1)); // 0.5 left, straight to the master
+    s.ret(2, 0.5f);           // Return A
+    s.ret(4);                 // Return B
+    s.send(1, 2, 1.0f);       // 0.5 into A, which plays 0.25
+    s.send(2, 4, 0.5f);       // post-fader: A's 0.25 x 0.5 into B
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK_NEAR(play_left(e, 1024)[100], 0.5f + 0.25f + 0.125f, 1e-6f);
+    s.sends.back().pre_fader = 1; // pre-fader: A's 0.5 x 0.5, before its volume
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK_NEAR(play_left(e, 1024)[100], 0.5f + 0.25f + 0.25f, 1e-6f);
+    s.tracks[1].d.mute = 1; // a muted A plays and sends nothing
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK_NEAR(play_left(e, 1024)[100], 0.5f, 1e-6f);
+}
+
+// Spec 016 R7: one solo rule for every bus.
+TEST_CASE(routing_return_into_return_solo) {
+    EngineHandle e;
+    RSession s;
+    s.audio(1, steady(e, 1)); // 0.5 left
+    s.ret(2);                 // A
+    s.ret(4);                 // B
+    s.send(1, 2, 1.0f);       // 0.5 into A
+    s.send(1, 4, 1.0f);       // 0.5 straight into B
+    s.send(2, 4, 0.5f);       // A's 0.5 x 0.5 into B
+    const auto mix = [&] {
+        REQUIRE(s.publish(e) == SE_OK);
+        return play_left(e, 1024)[100];
+    };
+    CHECK_NEAR(mix(), 0.5f + 0.5f + 0.75f, 1e-6f);
+    // A soloed: A, and B fed through A only (not the track's own send into B).
+    s.tracks[1].d.solo = 1;
+    CHECK_NEAR(mix(), 0.5f + 0.25f, 1e-6f);
+    // B soloed: B alone, fed by the track and by A, which isn't heard.
+    s.tracks[1].d.solo = 0;
+    s.tracks[2].d.solo = 1;
+    CHECK_NEAR(mix(), 0.75f, 1e-6f);
+    // Only the track soloed: the returns stay solo-safe and A keeps sending into B.
+    s.tracks[2].d.solo = 0;
+    s.tracks[0].d.solo = 1;
+    CHECK_NEAR(mix(), 1.75f, 1e-6f);
+    s.tracks[0].d.solo = 0;
+    // A soloed but muted: nothing plays.
+    s.tracks[1].d.solo = 1;
+    s.tracks[1].d.mute = 1;
+    CHECK_NEAR(mix(), 0.0f, 1e-7f);
+}
+
+// The same rule with a group (published as a return) feeding a return.
+TEST_CASE(routing_group_into_return_solo) {
+    EngineHandle e;
+    RSession s;
+    s.audio(1, steady(e, 1)); // 0.5 left, into the group
+    s.ret(2);                 // the group
+    s.ret(4);                 // a return
+    s.audio(5, steady(e, 5)); // 0.5 left, to the master and into the return
+    s.out(1, 2);
+    s.send(2, 4, 0.5f); // the group's 0.5 x 0.5 into the return
+    s.send(5, 4, 1.0f);
+    const auto mix = [&] {
+        REQUIRE(s.publish(e) == SE_OK);
+        return play_left(e, 1024)[100];
+    };
+    CHECK_NEAR(mix(), 0.5f + 0.5f + (0.25f + 0.5f), 1e-6f);
+    // The return soloed: the group keeps feeding it without being heard.
+    s.tracks[2].d.solo = 1;
+    CHECK_NEAR(mix(), 0.25f + 0.5f, 1e-6f);
+    // The group soloed: the group and its reverb, fed by the group alone.
+    s.tracks[2].d.solo = 0;
+    s.tracks[1].d.solo = 1;
+    CHECK_NEAR(mix(), 0.5f + 0.25f, 1e-6f);
+}
+
+// Spec 016 A5: latent plugins on A and B. An impulse heard directly, through
+// A and through A then B reaches the master on the same frame.
+TEST_CASE(routing_delay_compensation_through_chained_returns) {
+    EngineHandle e;
+    std::vector<float> imp(8000, 0.0f);
+    imp[0] = 0.5f;
+    const uint64_t a = load_asset(e, {imp});
+    RSession s;
+    s.audio(1, {clip(1, a, 2000, 0, 8000)});
+    s.ret(2).devices = {clap_latency(20, 300)}; // A
+    s.ret(4).devices = {clap_latency(40, 200)}; // B
+    s.send(1, 2, 1.0f);
+    s.send(2, 4, 1.0f);
+    REQUIRE(s.publish(e) == SE_OK);
+    se_pdc_report r{};
+    std::vector<se_pdc_track> tr(8);
+    std::size_t n = 0;
+    REQUIRE(se_pdc_report_get(e, &r, tr.data(), tr.size(), &n) == SE_OK);
+    CHECK_EQ(r.total_frames, 500u); // the chain: 300 then 200
+    const auto l = play_left(e, 6000);
+    std::vector<std::size_t> nz;
+    for (std::size_t i = 0; i < l.size(); ++i)
+        if (l[i] != 0.0f) nz.push_back(i);
+    REQUIRE(nz.size() == 1u);
+    CHECK_EQ(nz[0], std::size_t{2500});
+    CHECK_NEAR(l[2500], 1.5f, 1e-6f);
+    // Off: nothing is delayed.
+    REQUIRE(se_pdc_set_enabled(e, 0) == SE_OK);
+    const auto off = play_left(e, 6000);
+    CHECK_NEAR(off[2000], 0.5f, 1e-6f);
+    CHECK_NEAR(off[2300], 0.5f, 1e-6f);
+    CHECK_NEAR(off[2500], 0.5f, 1e-6f);
+}
+
+// Spec 016 A4 / A6: chained returns export like they play, without allocating.
+TEST_CASE(routing_chained_returns_export_matches_the_live_render_and_does_not_allocate) {
+    EngineHandle e;
+    const uint64_t a = load_asset(e, {sine(48000, 220.0, 48000.0), sine(48000, 330.0, 48000.0)});
+    RSession s;
+    s.audio(1, {clip(1, a, 0, 0, 48000)}, 0.7f).d.pan = 0.3f;
+    s.ret(2, 0.8f).devices = {clap_latency(20, 333)};
+    s.ret(4, 0.6f);
+    s.ret(6, 0.9f).devices = {clap_latency(60, 111)};
+    s.send(1, 2, 0.5f);
+    s.send(2, 4, 0.7f);
+    s.send(2, 6, 0.4f, true);
+    s.send(4, 6, 0.3f);
+    REQUIRE(s.publish(e) == SE_OK);
+    TempFile f("routing_chain_export.wav");
+    REQUIRE(se_export_wav(e, f.path.c_str(), 0, 20000) == SE_OK);
+    dstudio::DecodedAudio d;
+    std::string err;
+    REQUIRE(dstudio::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
+    REQUIRE(d.frames == uint64_t{20000});
+    se_transport_seek(e, 0);
+    se_transport_play(e);
+    std::vector<float> buf(2 * 256);
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK); // warm-up
+    se_transport_seek(e, 0);
+    constexpr std::size_t kL = 444; // through A (333) then the last return (111)
+    std::vector<float> live;
+    const long before = rt_alloc_count();
+    for (int i = 0; i < 20500 / 250; ++i) {
+        {
+            RtAllocGuard g;
+            REQUIRE(se_render_offline(e, buf.data(), 250) == SE_OK);
+        }
+        live.insert(live.end(), buf.begin(), buf.begin() + 500);
+    }
+    CHECK_EQ(rt_alloc_count() - before, 0L);
+    double worst = 0.0;
+    for (std::size_t i = 0; i < 20000; ++i) {
+        worst = std::max(worst, static_cast<double>(std::fabs(live[2 * (i + kL)] - d.planar[0][i])));
+        worst = std::max(worst, static_cast<double>(std::fabs(live[2 * (i + kL) + 1] - d.planar[1][i])));
+    }
+    CHECK(worst < 1e-6);
+    float peak = 0.0f;
+    for (float v : live) peak = std::max(peak, std::fabs(v));
+    CHECK(peak > 0.1f);
+}

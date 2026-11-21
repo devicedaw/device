@@ -44,6 +44,10 @@ pub const DEFAULT_SCROLL: f32 = GRID_Y + 67.0 * ROW_H - 106.5;
 const DOUBLE_CLICK: Duration = Duration::from_millis(350);
 /// Velocity of a key preview: 0.8 of full scale.
 pub const KEY_VELOCITY: u8 = 102;
+/// Longest a clicked, drawn or dragged note sounds after the mouse is let go (seconds).
+pub const AUDITION_CAP_S: f64 = 1.0;
+/// Shortest a click on the keyboard sounds, so a quick click is heard (seconds).
+pub const KEY_AUDITION_MIN_S: f64 = 0.25;
 /// One zoom command step on the toolbar sliders' 0..1 range (the clip-editor zoom command).
 pub const ZOOM_STEP: f32 = 0.1;
 /// Velocity lane (toolbar toggle): its height under the note grid (less when the panel is too
@@ -359,6 +363,10 @@ pub struct PrState {
     pub vel_lane: bool,
     /// Note-offs the engine rejected while its live queue was full, sent again once it drains.
     pub preview_offs: Vec<(u64, u8)>,
+    /// The previewed note: when it started and how long it should sound (seconds, capped).
+    pub preview_len: Option<(std::time::Instant, f64)>,
+    /// The mouse was let go: the preview stops at this instant.
+    pub preview_off_at: Option<std::time::Instant>,
 }
 
 impl Default for PrState {
@@ -390,6 +398,8 @@ impl Default for PrState {
             preview: None,
             vel_lane: false,
             preview_offs: Vec::new(),
+            preview_len: None,
+            preview_off_at: None,
         }
     }
 }
@@ -684,7 +694,8 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     for (y, hh) in [(27.0, 0.5), (40.5, 1.0), (54.0, 0.5)] {
         o.push(px.rect(gx, y, w - gx, hh, rgba(rgb(0x292b2e), 1.0)));
     }
-    let bar = mix(sc.color, rgb(0x86a6ff), 0.5);
+    // The track colour at full strength, as the clip header on the timeline.
+    let bar = sc.color;
     let (bar, (bx0, bx1)) = match sc.clip_loop {
         Some((s, e, on)) => (if on { bar } else { rgb(0x4a4b50) }, (v.x_of(s), v.x_of(e))),
         None => (bar, (cx0, cx1)),
@@ -841,6 +852,10 @@ impl Controller {
     /// Preview `note` (pitch, velocity) through the clip's track instrument, releasing the one
     /// sounding before; `None` releases it. One note at a time.
     pub fn pr_preview(&mut self, note: Option<(u8, u8)>) {
+        self.pr.preview_off_at = None;
+        if note.is_none() {
+            self.pr.preview_len = None;
+        }
         let want = note.zip(self.pr_device()).map(|((pitch, vel), d)| (d, pitch, vel));
         if self.pr.preview == want.map(|(d, pitch, _)| (d, pitch)) {
             return;
@@ -853,6 +868,40 @@ impl Controller {
             && self.engine.preview_note(d, pitch, vel).is_ok()
         {
             self.pr.preview = Some((d, pitch));
+            self.pr.preview_len = Some((std::time::Instant::now(), KEY_AUDITION_MIN_S));
+        }
+    }
+
+    /// Preview a note of `length` ticks: it sounds while the mouse is down and, once let go,
+    /// until it has played its length (at most [AUDITION_CAP_S]).
+    fn pr_audition(&mut self, pitch: u8, velocity: u8, length: Ticks) {
+        let started = self.pr.preview.is_some_and(|(_, p)| p == pitch);
+        self.pr_preview(Some((pitch, velocity)));
+        if self.pr.preview.is_some() && !started {
+            let secs = self.project().ticks_to_seconds(length.max(1)).min(AUDITION_CAP_S);
+            self.pr.preview_len = Some((std::time::Instant::now(), secs.max(0.05)));
+        }
+    }
+
+    /// The mouse was let go: stop the preview once it has sounded its length.
+    fn pr_preview_release(&mut self) {
+        match self.pr.preview_len.filter(|_| self.pr.preview.is_some()) {
+            Some((at, secs)) => {
+                let off = at + std::time::Duration::from_secs_f64(secs);
+                if off <= std::time::Instant::now() {
+                    self.pr_preview(None);
+                } else {
+                    self.pr.preview_off_at = Some(off);
+                }
+            }
+            None => self.pr_preview(None),
+        }
+    }
+
+    /// The poll timer: end a released preview whose time is up.
+    pub fn pr_preview_tick(&mut self) {
+        if self.pr.preview_off_at.is_some_and(|t| t <= std::time::Instant::now()) {
+            self.pr_preview(None);
         }
     }
 
@@ -1000,6 +1049,18 @@ impl Controller {
         } else {
             self.pr.hstart = v.start;
             self.pr.hzoom = z;
+        }
+        self.ui_dirty = true;
+    }
+
+    /// Double-click on a clip editor zoom slider: rows back to their automatic height (axis 0),
+    /// or the whole clip in view (axis 1).
+    pub fn pr_zoom_reset(&mut self, axis: i32) {
+        if axis == 0 {
+            self.pr.vzoom = None;
+        } else {
+            self.pr.hstart = 0.0;
+            self.pr.hzoom = 0.0;
         }
         self.ui_dirty = true;
     }
@@ -1292,6 +1353,10 @@ impl Controller {
                     } else if !self.pr.selected.contains(&n.id) {
                         self.pr.selected = [n.id].into();
                     }
+                    // A click on a note plays it (not a resize, which only changes its length).
+                    if !edge {
+                        self.pr_audition(n.pitch, n.velocity, n.length);
+                    }
                     let ids = self.pr.selected.iter().copied().collect();
                     self.pr.drag = Some(PrDrag::Notes {
                         resize: edge,
@@ -1308,7 +1373,7 @@ impl Controller {
                     let id = clip.next_note_id();
                     let mut preview = notes;
                     preview.push(Note { id, pitch, start, length: g, velocity: self.pr.velocity });
-                    self.pr_preview(Some((pitch, self.pr.velocity)));
+                    self.pr_audition(pitch, self.pr.velocity, g);
                     self.pr.selected = [id].into();
                     self.pr.drag = Some(PrDrag::Draw { id, preview });
                 } else {
@@ -1337,7 +1402,7 @@ impl Controller {
                             let (lo, hi) = moving.iter().fold((127, 0), |(lo, hi), n| (lo.min(n.pitch as i32), hi.max(n.pitch as i32)));
                             dp = dp.clamp(-lo, 127 - hi);
                             if dp != 0 || self.pr.preview.is_some() {
-                                self.pr_preview(Some(((anchor.pitch as i32 + dp) as u8, anchor.velocity)));
+                                self.pr_audition((anchor.pitch as i32 + dp) as u8, anchor.velocity, anchor.length);
                             }
                             moving.iter().map(|n| Note { start: n.start + dt, pitch: (n.pitch as i32 + dp) as u8, ..*n }).collect()
                         };
@@ -1387,7 +1452,7 @@ impl Controller {
                     PrDrag::Velocity { .. } => {}
                 }
             }
-            _ => match self.pr.drag.take().inspect(|_| self.pr_preview(None)) {
+            _ => match self.pr.drag.take().inspect(|_| self.pr_preview_release()) {
                 Some(PrDrag::Notes { preview, .. } | PrDrag::Draw { preview, .. }) => {
                     self.commit_notes(clip.id, preview, None);
                 }
@@ -1597,7 +1662,7 @@ impl Controller {
             "reverse" => ("Reverse Notes", Self::replace_notes(&clip, &midi::reverse(&target))),
             "legato" => ("Legato", Self::replace_notes(&clip, &midi::legato(&target, clip.length))),
             "smart_quantize" => {
-                let done = dstudio_core::smart_quantize::smart_quantize(&target, self.project().transport.bpm);
+                let done = dstudio_core::smart_quantize::smart_quantize(&target, self.project().bpm_at(clip.start));
                 let mut notes: Vec<Note> = clip.notes.iter().filter(|n| !target.iter().any(|t| t.id == n.id)).copied().collect();
                 notes.extend(done.notes);
                 if !self.commit_notes(clip.id, notes, Some("Smart Quantize")) {
