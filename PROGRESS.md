@@ -826,3 +826,13 @@ header's preset menu show as headings; the header arrows step through all 100. T
 `every_factory_preset_renders_a_sane_c4` now lists every sound that is silent, clips or goes non-finite, instead of
 stopping at the first. Review state `review-synth-presets`.
 
+
+### 2026-11-21: The Synth's sounds in the Instruments browser
+
+Devices › Instruments › Built-in shows the Synth as a folder with its sound count. It opens into the ten
+categories (each with its count) and then the sounds (`Item::BuiltinSynth(Option<u16>)`, the factory index).
+Dropping or double-clicking a sound adds the Synth with that sound (`devices::synth_with`). On a track that
+already plays the Synth, the sound loads into it as one `SetDeviceParams` step. Dragging the Synth folder still
+adds the plain Synth. A search lists the sounds whose name matches, inside their category. Review state
+`review-instrument-sounds`; unit test `synth_folder_opens_into_categories_and_sounds`; self-test step "synth: a
+browser sound loads into the track's Synth". Clicking a sound to preview it is G40.

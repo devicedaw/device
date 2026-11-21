@@ -58,8 +58,9 @@ const DRAG_SLOP: f32 = 4.0;
 /// Something the browser / Add device card can add.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
-    /// Our built-in Synth (selecting it sets `instrument_plugin` to None).
-    BuiltinSynth,
+    /// Our built-in Synth, plain or with one of its factory sounds (index into
+    /// `SYNTH_V2.factory`; the browser's Synth folder).
+    BuiltinSynth(Option<u16>),
     /// A built-in device (dstudio_core::builtin), added as an insert.
     Builtin(&'static DeviceDef),
     Plugin(PluginRef),
@@ -70,7 +71,7 @@ pub enum Item {
 impl Item {
     pub fn name(&self) -> &str {
         match self {
-            Item::BuiltinSynth => "Synth",
+            Item::BuiltinSynth(_) => "Synth",
             Item::Builtin(d) => d.name,
             Item::Plugin(p) => &p.name,
             Item::Chain(c) => &c.name,
@@ -78,12 +79,23 @@ impl Item {
     }
     pub fn kind(&self) -> PluginKind {
         match self {
-            Item::BuiltinSynth => PluginKind::Instrument,
+            Item::BuiltinSynth(_) => PluginKind::Instrument,
             Item::Builtin(d) => d.kind,
             Item::Plugin(p) => p.kind,
             Item::Chain(_) => PluginKind::Effect,
         }
     }
+}
+
+/// A new Synth device, with factory sound `preset` loaded when given.
+pub fn synth_with(preset: Option<u16>) -> Device {
+    let def = &dstudio_core::builtin::synth_v2::SYNTH_V2;
+    let mut d = def.instantiate();
+    if let Some(f) = preset.and_then(|i| def.factory.get(i as usize)) {
+        d.params = def.factory_values(f);
+        d.preset = Some(f.name.into());
+    }
+    d
 }
 
 /// The built-in Synth (synth-v2): an instrument device with its own card (src/synth.rs).
@@ -578,7 +590,10 @@ pub fn build_tree(
             }
         }
     }
-    let synth = q.is_empty() || "synth".contains(&q) || "built-in".contains(&q);
+    // A search lists the Synth's sounds whose name matches (and the Synth for its own name).
+    let sound = |name: &str| q.is_empty() || name.to_lowercase().contains(&q);
+    let sounds = dstudio_core::builtin::synth_v2::SYNTH_V2.factory.iter().any(|f| !q.is_empty() && sound(f.name));
+    let synth = q.is_empty() || "synth".contains(&q) || "built-in".contains(&q) || sounds;
     if kind == PluginKind::Instrument && (synth || !builtins.is_empty()) {
         let key = format!("{tp}/builtin");
         let o = open(&key);
@@ -587,10 +602,38 @@ pub fn build_tree(
             row(0, "Built-in", count_text(usize::from(synth) + builtins.len()), 0, if o { 2 } else { 1 }, false),
         );
         if o && synth {
+            // The Synth opens into its sound categories, each into its factory sounds; the row
+            // itself still adds the plain Synth when dragged.
+            let def = &dstudio_core::builtin::synth_v2::SYNTH_V2;
+            let skey = format!("{tp}/b/synth");
+            let so = if q.is_empty() { expanded.contains(&skey) } else { sounds };
             push(
-                TreeEntry { key: format!("{tp}/b/synth"), item: Some(Item::BuiltinSynth), folder: false },
-                row(1, "Synth", String::new(), 1, 0, true),
+                TreeEntry { key: skey.clone(), item: Some(Item::BuiltinSynth(None)), folder: true },
+                row(1, "Synth", count_text(def.factory.len()), 1, if so { 2 } else { 1 }, true),
             );
+            if so {
+                for (cat, names) in dstudio_core::builtin::synth_v2::CATEGORIES {
+                    let names: Vec<&str> = names.iter().copied().filter(|n| sound(n)).collect();
+                    if names.is_empty() {
+                        continue;
+                    }
+                    let ckey = format!("{skey}/{cat}");
+                    let co = open(&ckey);
+                    push(
+                        TreeEntry { key: ckey.clone(), item: None, folder: true },
+                        row(2, cat, count_text(names.len()), 0, if co { 2 } else { 1 }, false),
+                    );
+                    if co {
+                        for name in names {
+                            let Some(i) = def.factory.iter().position(|f| f.name == name) else { continue };
+                            push(
+                                TreeEntry { key: format!("{ckey}/{name}"), item: Some(Item::BuiltinSynth(Some(i as u16))), folder: false },
+                                row(3, name, String::new(), 3, 0, true),
+                            );
+                        }
+                    }
+                }
+            }
         }
         if o {
             for d in &builtins {
@@ -899,7 +942,7 @@ impl Controller {
     /// named after the instrument.
     pub fn add_item_as_new_track(&mut self, item: &Item) -> bool {
         let device = match item {
-            Item::BuiltinSynth => dstudio_core::builtin::synth_v2::SYNTH_V2.instantiate(),
+            Item::BuiltinSynth(preset) => synth_with(*preset),
             Item::Plugin(p) if p.kind == PluginKind::Instrument => Device::new(p.clone()),
             Item::Builtin(d) if d.kind == PluginKind::Instrument => d.instantiate(),
             _ => return false,
@@ -929,16 +972,24 @@ impl Controller {
                 self.set_status(format!("{} is an instrument: choose an instrument track", item.name()), 4);
                 false
             }
-            (PluginKind::Instrument, Item::BuiltinSynth) => {
+            (PluginKind::Instrument, Item::BuiltinSynth(Some(i))) if has_synth => {
+                // A factory sound on a track that plays the Synth: load it there.
+                let def = &dstudio_core::builtin::synth_v2::SYNTH_V2;
+                let device = self.project().track(track).and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.id);
+                match (device, def.factory.get(*i as usize)) {
+                    (Some(device), Some(f)) => {
+                        self.execute(Command::SetDeviceParams { device, params: def.factory_values(f), preset: Some(f.name.into()) })
+                    }
+                    _ => false,
+                }
+            }
+            (PluginKind::Instrument, Item::BuiltinSynth(preset)) => {
                 if has_synth {
                     self.set_status("The built-in Synth is already this track's instrument", 3);
                     false
                 } else {
                     self.close_instrument_editor(track);
-                    self.execute(Command::SetInstrumentPlugin {
-                        track,
-                        device: Some(dstudio_core::builtin::synth_v2::SYNTH_V2.instantiate()),
-                    })
+                    self.execute(Command::SetInstrumentPlugin { track, device: Some(synth_with(*preset)) })
                 }
             }
             (PluginKind::Instrument, Item::Plugin(p)) => {
@@ -949,7 +1000,7 @@ impl Controller {
                 self.close_instrument_editor(track);
                 self.execute(Command::SetInstrumentPlugin { track, device: Some(d.instantiate()) })
             }
-            (PluginKind::Effect, Item::BuiltinSynth) | (PluginKind::Instrument, Item::Chain(_)) => false,
+            (PluginKind::Effect, Item::BuiltinSynth(_)) | (PluginKind::Instrument, Item::Chain(_)) => false,
         };
         if ok {
             self.select_track(track);
@@ -968,7 +1019,7 @@ impl Controller {
         let show = match item {
             Item::Plugin(_) => g.show_plugin_windows && EDITORS_SUPPORTED && !self.settings.headless,
             Item::Builtin(_) => g.show_builtin_windows,
-            Item::BuiltinSynth | Item::Chain(_) => false,
+            Item::BuiltinSynth(_) | Item::Chain(_) => false,
         };
         if !show || item.kind() != PluginKind::Effect {
             return;
@@ -1037,7 +1088,8 @@ impl Controller {
     /// Double-click: add the device to the selected track. An instrument replaces the selected
     /// instrument track's instrument; with no instrument track selected it gets a new track.
     pub fn tree_activate(&mut self, i: usize) {
-        let Some(item) = self.devices.entries.get(i).and_then(|e| e.item.clone()) else { return };
+        // A folder row (the Synth's) opens and closes on its clicks; dragging it adds it.
+        let Some(item) = self.devices.entries.get(i).filter(|e| !e.folder).and_then(|e| e.item.clone()) else { return };
         let selected = self.selected_track.filter(|t| self.project().track(*t).is_some());
         if item.kind() == PluginKind::Instrument
             && !selected.and_then(|t| self.project().track(t)).is_some_and(|t| t.kind == TrackKind::Instrument)
@@ -1379,7 +1431,7 @@ impl Controller {
     pub fn device_use_synth(&mut self) {
         let Some(t) = self.selected_track else { return };
         if self.project().track(t).is_some_and(|t| !t.instrument_plugin.as_ref().is_some_and(is_builtin_synth)) {
-            self.add_item_to_track(&Item::BuiltinSynth, t, None);
+            self.add_item_to_track(&Item::BuiltinSynth(None), t, None);
         }
     }
 
@@ -1423,7 +1475,7 @@ impl Controller {
         let q = q.trim().to_lowercase();
         let mut v = Vec::new();
         if inst_track && fmt.is_none() && (q.is_empty() || "synth".contains(&q) || "built-in".contains(&q)) {
-            v.push(Item::BuiltinSynth);
+            v.push(Item::BuiltinSynth(None));
         }
         let kinds: &[PluginKind] = if inst_track { &[PluginKind::Instrument, PluginKind::Effect] } else { &[PluginKind::Effect] };
         if fmt.is_none() {
@@ -1460,7 +1512,7 @@ impl Controller {
         let (label, items): (&str, Vec<Item>) = match row {
             0 => (
                 "built-in devices",
-                self.offered(None, "").into_iter().filter(|i| matches!(i, Item::BuiltinSynth | Item::Builtin(_))).collect(),
+                self.offered(None, "").into_iter().filter(|i| matches!(i, Item::BuiltinSynth(_) | Item::Builtin(_))).collect(),
             ),
             1 => ("Audio Units", self.offered(Some(PluginFormat::AudioUnit), "")),
             2 => ("VST3 plugins", self.offered(Some(PluginFormat::Vst3), "")),
@@ -1482,7 +1534,7 @@ impl Controller {
                 ));
             }
             let right = match &it {
-                Item::BuiltinSynth => "Built-in".to_string(),
+                Item::BuiltinSynth(_) => "Built-in".to_string(),
                 Item::Builtin(d) => d.category.to_string(),
                 Item::Plugin(p) => p.vendor.clone(),
                 Item::Chain(_) => "Chain".to_string(),
@@ -1507,7 +1559,7 @@ impl Controller {
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)).filter(|t| t.kind == TrackKind::Instrument) else { return };
         let cur = t.instrument_plugin.as_ref().filter(|d| !is_builtin_synth(d)).map(|d| (d.plugin.format, d.plugin.id.clone()));
         let check = |on: bool, s: &str| if on { "✓".to_string() } else { s.to_string() };
-        let mut rows = vec![("Synth".to_string(), check(cur.is_none(), "Built-in"), Some(MenuPick::Add(Item::BuiltinSynth)), false)];
+        let mut rows = vec![("Synth".to_string(), check(cur.is_none(), "Built-in"), Some(MenuPick::Add(Item::BuiltinSynth(None))), false)];
         for d in dstudio_core::builtin::all()
             .iter()
             .filter(|d| d.kind == PluginKind::Instrument && d.id != dstudio_core::builtin::synth_v2::SYNTH_V2.id)
@@ -1580,7 +1632,7 @@ impl Controller {
         let cur_inst =
             self.project().track(t).and_then(|t| t.instrument_plugin.as_ref()).filter(|d| !is_builtin_synth(d)).map(|d| d.plugin.clone());
         let same = match (&item, &cur_inst) {
-            (Item::BuiltinSynth, None) => {
+            (Item::BuiltinSynth(_), None) => {
                 item.kind() == PluginKind::Instrument && self.project().track(t).is_some_and(|t| t.kind == TrackKind::Instrument)
             }
             (Item::Plugin(p), Some(c)) => p.kind == PluginKind::Instrument && p.format == c.format && p.id == c.id,
@@ -1797,7 +1849,7 @@ impl Controller {
                 swatch: Default::default(),
                 label: it.name().into(),
                 shortcut: match it {
-                    Item::BuiltinSynth | Item::Builtin(_) => "Built-in".into(),
+                    Item::BuiltinSynth(_) | Item::Builtin(_) => "Built-in".into(),
                     Item::Plugin(p) => format_badge(p.format).into(),
                     Item::Chain(_) => "Chain".into(),
                 },
@@ -2032,12 +2084,27 @@ mod tests {
         let open: HashSet<String> = ["i/builtin", "i/au", "i/au/Apple"].iter().map(|s| s.to_string()).collect();
         let (entries, rows) = build_tree(&c, &Default::default(), 0, "", &open);
         assert_eq!(rows[0].label, "Built-in");
-        assert_eq!(entries[1].item, Some(Item::BuiltinSynth));
+        assert_eq!(entries[1].item, Some(Item::BuiltinSynth(None)));
         assert_eq!(rows[0].count, "4");
+        assert_eq!((rows[1].label.as_str(), rows[1].count.as_str(), rows[1].expander), ("Synth", "100", 1));
         assert_eq!([rows[2].label.as_str(), rows[3].label.as_str(), rows[4].label.as_str()], ["Sampler", "Drum Rack", "Pad Sampler"]);
         assert!(matches!(&entries[3].item, Some(Item::Builtin(d)) if d.id == "drum-rack"));
         assert_eq!(rows[5].label, "Audio Units");
         assert_eq!(rows[7].label, "DLSMusicDevice");
+    }
+
+    #[test]
+    fn synth_folder_opens_into_categories_and_sounds() {
+        let c = catalog();
+        let open: HashSet<String> = ["i/builtin", "i/b/synth", "i/b/synth/Bass"].iter().map(|s| s.to_string()).collect();
+        let (entries, rows) = build_tree(&c, &Default::default(), 0, "", &open);
+        assert_eq!((rows[2].label.as_str(), rows[2].count.as_str(), rows[2].depth), ("Bass", "17", 2));
+        assert!(matches!(entries[3].item, Some(Item::BuiltinSynth(Some(_)))) && rows[3].depth == 3);
+        assert_eq!(rows[20].label, "Keys", "Bass holds 17 sounds");
+        // A search finds sounds by name inside their category.
+        let (entries, rows) = build_tree(&c, &Default::default(), 0, "analog kick", &HashSet::new());
+        assert_eq!(labels(&rows).iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), ["Built-in", "Synth", "Drums", "Analog Kick"]);
+        assert!(matches!(entries[3].item, Some(Item::BuiltinSynth(Some(_)))));
     }
 
     #[test]

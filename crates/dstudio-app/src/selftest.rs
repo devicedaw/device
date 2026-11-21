@@ -2049,7 +2049,7 @@ fn synth_steps() -> Vec<Step> {
             Box::new(|_, ctl| {
                 let mut c = ctl.borrow_mut();
                 let t = c.selected_track.expect("selected track");
-                c.add_item_to_track(&crate::devices::Item::BuiltinSynth, t, None);
+                c.add_item_to_track(&crate::devices::Item::BuiltinSynth(None), t, None);
             }),
         ),
         Check(
@@ -2058,11 +2058,29 @@ fn synth_steps() -> Vec<Step> {
                 (c.synth_device().is_some() && a.global::<Studio>().get_synth_visible()).then_some(()).ok_or("no Synth".to_string())
             }),
         ),
+        DoC(
+            "drop the Synth's Analog Kick sound from the browser on the track",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let t = c.selected_track.expect("selected track");
+                let i =
+                    dstudio_core::builtin::synth_v2::SYNTH_V2.factory.iter().position(|f| f.name == "Analog Kick").expect("Analog Kick");
+                c.add_item_to_track(&crate::devices::Item::BuiltinSynth(Some(i as u16)), t, None);
+            }),
+        ),
+        Check(
+            "synth: a browser sound loads into the track's Synth",
+            Box::new(|c, _| {
+                let p = inst_synth(c).and_then(|p| p.1);
+                (p.as_deref() == Some("Analog Kick")).then_some(()).ok_or(format!("preset {p:?}"))
+            }),
+        ),
         Do(
-            "Cmd+Z x2 (add, remove)",
+            "Cmd+Z x3 (sound, add, remove)",
             Box::new(|a| {
-                key(a, "z", true, false);
-                key(a, "z", true, false);
+                for _ in 0..3 {
+                    key(a, "z", true, false);
+                }
             }),
         ),
         Check(
