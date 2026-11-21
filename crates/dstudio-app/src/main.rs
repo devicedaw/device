@@ -773,6 +773,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.clip_selection_review = true;
                 }
+                st @ ("review-add-track-menu" | "review-lane-menu") => {
+                    a.reference_default = true;
+                    a.track_menu_review = if st == "review-add-track-menu" { 3 } else { 4 };
+                }
                 st @ ("review-track-menu" | "review-track-drag") => {
                     a.reference_default = true;
                     a.track_menu_review = if st.ends_with("menu") { 1 } else { 2 };
@@ -886,7 +890,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-add-track-menu, review-lane-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
                     ));
                 }
             },
@@ -2604,9 +2608,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let top = 78.2 + 66.5;
         if args.track_menu_review == 1 {
             c.open_track_menu(id, 120.0, top + 30.0);
-            if let Some(i) = c.menu.items.iter().position(|(a, _)| *a == controller::MenuAction::TrackColor) {
-                c.menu_activate(i);
-            }
+        } else if args.track_menu_review == 3 {
+            // Under the timeline's Add track button.
+            c.open_add_track_menu(20.0, 78.2 + 27.5 + 30.0);
+        } else if args.track_menu_review == 4 {
+            // An empty spot on the instrument track's lane, at bar 5.
+            let row = c.project().tracks.iter().position(|t| t.kind == dstudio_core::TrackKind::Instrument).unwrap_or(1);
+            let x = c.view.x_of(16.0);
+            let y = c.view.track_top(row) + c.view.pitch(row) * 0.6;
+            c.lane_context(x, y, 262.65 + 191.0 + x, 78.2 + 27.5 + y, (1440.0, 820.0));
         } else {
             let (y0, y1) = (top + c.view.pitch(0) / 2.0, top + c.view.track_offset(1) + c.view.pitch(1) * 0.8);
             c.track_drag(id, 0, y0);
@@ -3637,6 +3647,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_shape_brush_pick, |c, brush: i32| c.shape_brush(brush));
     on!(on_shape_reset, |c| c.shape_reset());
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
+    on!(on_menu_swatch_pick, |c, i: i32| c.menu_swatch_pick(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());
     on!(on_rename_commit, |c, t: slint::SharedString| {
         if let Some(id) = c.rename_section {

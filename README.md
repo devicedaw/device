@@ -43,8 +43,10 @@ wgpu.
 
 - **Timeline.** Double-click an empty spot on an instrument track to make a MIDI clip there (or right-click it, or
   use Create › MIDI Clip), import audio, move and trim clips, loop a range, and play against a metronome.
-  Right-click a track header to rename, recolour, delete or duplicate the track (with or without its clips), and
-  drag headers up and down to reorder the tracks. Shift-click clips, or drag a box over empty lane space, to select
+  Right-click a track header to rename, recolour, delete, group, bounce in place or duplicate the track (with or without
+  its clips), show its automation, or add an audio, instrument, Sampler, Drum or return track right below it; the same
+  rows end the menu of an empty lane, which starts with Open <instrument> and Insert empty MIDI clip. Drag headers up
+  and down to reorder the tracks. Shift-click clips, or drag a box over empty lane space, to select
   several and move, duplicate, copy, paste, disable or delete them together. Drag the square handles at an audio
   clip's top corners to fade it in and out. Set the tempo in the
   transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.

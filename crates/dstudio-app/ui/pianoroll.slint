@@ -6,7 +6,7 @@
 // coordinates; the panel is as tall as the Devices tab's (306 pt by default).
 import { Tokens } from "tokens.slint";
 import { Icon, Icons, Label, ZoomSlider } from "widgets.slint";
-import { Studio, MenuItem } from "studio.slint";
+import { Studio, MenuSwatch, MenuItem } from "studio.slint";
 import { TrackName } from "track_header.slint";
 
 // Track title row at the top of the left column ("2 ‖ Instrument").
@@ -596,7 +596,11 @@ export component ClipEmpty inherits Rectangle {
 // Right-click clip menu: 209 pt wide, 20.5 pt rows.
 export component ContextMenu inherits Rectangle {
     in property <[MenuItem]> items;
+    // The track menu's colour grid: 14 a row under a separator at `swatch-y`.
+    in property <[MenuSwatch]> swatches;
+    in property <length> swatch-y;
     callback activated(int);
+    callback swatch-picked(int);
     width: 209px;
     border-radius: 6.8px;
     background: #212227;
@@ -619,5 +623,16 @@ export component ContextMenu inherits Rectangle {
             if it.submenu: Icon { x: parent.width - 10.2px - 11.8px; y: 5.2px; width: 10px; height: 10px; d: Icons.chevron-right; ink: #ffffff80; }
         }
         ta := TouchArea { clicked => { if (it.enabled) { root.activated(i); } } }
+    }
+    if root.swatches.length > 0: Rectangle { x: 0; y: root.swatch-y - 7.65px - 0.2125px; width: root.width; height: 0.425px; background: #ffffff1f; }
+    for sw[i] in root.swatches: Rectangle {
+        x: 11.9px + mod(i, 14) * 15.24px; y: root.swatch-y + floor(i / 14) * 15.3px;
+        width: 11.9px; height: 11.9px; border-radius: 2.1px;
+        background: sw.color;
+        border-width: sw.selected ? 1.7px : 0px; border-color: #ffffff;
+        accessible-role: button; accessible-label: "Track colour " + (i + 1); accessible-checked: sw.selected;
+        accessible-action-default => { root.swatch-picked(i); }
+        if sw-ta.has-hover && !sw.selected: Rectangle { border-radius: 2.1px; border-width: 0.85px; border-color: #ffffffa0; }
+        sw-ta := TouchArea { clicked => { root.swatch-picked(i); } }
     }
 }

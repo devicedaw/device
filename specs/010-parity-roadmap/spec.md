@@ -46,7 +46,7 @@ target behaviour.
   next to the tool button are painted rectangles (`ui/app.slint`, "vertical zoom (placeholder)"). Both must drag:
   horizontal zoom follows and sets the real zoom level (`src/zoom.rs`), vertical sets every track's height
   (same steps as ⌥-scroll). Double-click resets. The clip editor's pair works the same way.
-- [ ] **G3. Track header menu, complete** (`src/track_menu.rs`). Today: Rename, Duplicate track, Duplicate track
+- [x] **G3. Track header menu, complete** (#141) (`src/track_menu.rs`). Today: Rename, Duplicate track, Duplicate track
   with clips, Color, Group or Ungroup, Delete track. It must be, in order, with separators between groups:
   Rename… / Duplicate track (⌘D) / Duplicate with clips (⇧⌘D) / Bounce track in place / Show automation (Hide
   automation when shown) / Group track (⌘G) / Delete track (Del) / Audio track (⌘T) / Instrument track (⇧⌘T) /
@@ -57,15 +57,15 @@ target behaviour.
   the rendered audio, and turns an instrument track into an audio track, keeping name, colour, sends, output
   and automation of volume and pan; the instrument and effects are kept but switched off so the change can be
   undone and redone as one step ("Bounce Track in Place").
-- [ ] **G5. Track colours: a full palette shown inline.** The track menu has a 13-colour submenu. It must show a
+- [x] **G5. Track colours: a full palette shown inline** (#141; the target's grid has 43 colours, 14 a row). The track menu has a 13-colour submenu. It must show a
   grid of 40 colours (13 per row, 3 full rows and one) directly at the bottom of the menu, with a check on the
   current one, and new tracks cycle through the same palette. Saved projects keep their colour index, and old
   indexes map to the same colour.
-- [ ] **G6. Empty lane menu** (`open_lane_menu` in `src/clipedit.rs`). Right-clicking empty space in a lane
+- [x] **G6. Empty lane menu** (#141) (`open_lane_menu` in `src/clipedit.rs`). Right-clicking empty space in a lane
   only offers Insert MIDI clip and Paste. It must start with "Open <instrument name>" on instrument tracks
   (opens the Devices view on that instrument), then "Insert empty MIDI clip (⇧⌘M)" and Paste when there is
   something to paste, then the whole track menu from G3.
-- [ ] **G7. Add track menu** (`open_add_track_menu` in `src/routing.rs`, timeline and mixer). Today: Audio,
+- [x] **G7. Add track menu** (#141) (`open_add_track_menu` in `src/routing.rs`, timeline and mixer). Today: Audio,
   Instrument, Return, Group. It must list Audio track (⌘T), Instrument track (⇧⌘T), Sampler track, Drum track,
   Return track, with the keys shown. Sampler track and Drum track are instrument tracks that start with the
   Sampler or the Drum Rack instead of the default instrument. Groups are made from selected tracks with ⌘G or
@@ -167,6 +167,10 @@ next to the target on the same window size.
   (with the preset count on the right) that opens into category folders (with counts) and then presets;
   clicking a preset previews it, dragging or double-clicking adds the instrument with that preset. Depends on
   G25 for the Synth's content.
+
+- [x] **G38. Copy effects in the track menu** (#141). The target's track menu has a Copy effects row (between
+  Group track and Delete track) that the list above missed. Device copies the track's effect chain; a Paste effects
+  row then appears in the track menu and adds copies of them to another track's chain.
 
 ## P2: content and polish
 

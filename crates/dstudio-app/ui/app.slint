@@ -1509,7 +1509,12 @@ export component AppWindow inherits Window {
         if Studio.menu-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.menu-dismiss(); } } }
-            ContextMenu { x: Studio.menu-x; y: Studio.menu-y; height: Studio.menu-h; items: Studio.menu-items; activated(i) => { Studio.menu-activate(i); } }
+            ContextMenu {
+                x: Studio.menu-x; y: Studio.menu-y; width: Studio.menu-w; height: Studio.menu-h; items: Studio.menu-items;
+                swatches: Studio.menu-swatches; swatch-y: Studio.menu-swatch-y;
+                activated(i) => { Studio.menu-activate(i); }
+                swatch-picked(i) => { Studio.menu-swatch-pick(i); }
+            }
             if Studio.sub-open: ContextMenu {
                 x: Studio.menu-x + 209px - 4px; y: Studio.menu-y + Studio.sub-y; height: Studio.sub-h;
                 items: Studio.sub-items; activated(i) => { Studio.sub-activate(i); }
