@@ -11,13 +11,62 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-21
+
 ### Added
 
+- Tempo changes. A song can change tempo, in steps or smooth ramps: pick Song › Tempo in the master track's lane
+  picker to draw them, the ruler marks each change, and the transport shows the tempo at the playhead. Tempo changes
+  carry into MIDI file and Live set exports.
+- Use your own AI app with Device. Turn on Settings › General › Let AI apps control Device and press Copy setup, and
+  an AI app on this computer that supports MCP can read the open project and make edits, each one undoable. Device
+  asks once per app before it may make changes.
+- 85 ready-made chains (up from 27), ten or eleven in each folder. The FX folder is now called FX & Glitch.
+- Timeline edit tools: the tool button in the timeline header switches between Selector, Marquee (select a time
+  range across tracks) and Scissors (click to split). T toggles Scissors.
+- Smart Fill: with the Smart Fill pill on, drag over empty space on a track to fill that range with a part from the
+  pattern library, or record into it.
+- Bounce Track in Place (clip menu › Bounce) renders a whole track through its effects into one audio clip.
+- The Synth has 100 factory sounds in ten categories, including synth drums. Devices › Instruments opens the Synth
+  into its categories, a click plays a sound in the preview bar, and dropping a sound adds the Synth with it.
+- Effects in a chain have level meters between them and a + in front of each one to insert a device at that spot.
+  Click an effect's header to select it (Shift or ⌘ for more): ⌘D duplicates, ⌘G groups into a new chain and ⌘⇧G
+  unpacks a chain.
+- Return tracks can send into later return tracks.
+- Windows: ASIO drivers are listed in Settings › Audio, marked "(ASIO)", and play and record at the driver's own
+  buffer sizes.
+- Settings › Audio › Recording offset: nudge recordings from each input earlier or later, in milliseconds, if takes
+  land slightly off the beat.
+- Settings: search at the top of the sidebar finds any setting, every setting has an (i) with a one-line
+  explanation, Settings › MIDI › Default instrument picks what new instrument tracks play, and Settings › Privacy
+  has crash reports (on by default, nothing personal sent) and confirms that Device collects no usage data.
+- Rename a project by clicking its name in the title bar; its folder and file are renamed to match.
+- The assistant can keep your Anthropic API key in the system keychain, work with built-in effects and their
+  settings, be asked about a clip from its menu or with ⌘K, and stretch to the full window height.
+- The track header menu has Bounce, Automation, Copy and Paste effects and a grid of track colours; right-clicking an
+  empty lane offers the track's actions.
+- Exported Live sets can keep Compressor, Utility and Channel EQ as Live's own devices instead of rendering them
+  (Export › Project › Effects › Convert to Live devices).
 - **Report a bug** and **Share your feedback** (top right) now open a form that sends your report straight to the
   developer. Your email is optional and never shown publicly, and system info is only included if you leave it on.
 - Device tells you when a new version is out. It checks once at launch and from Options › Check for Updates…, and a
   blue **Update available** pill at the top right shows the new version and what changed, with a link to download
   it. Only the app's version is sent; Settings › General › Check for updates at launch turns the check off.
+
+### Changed
+
+- The browser's empty Search and Library tabs are gone, and the toolbar button that shows it is now called Browser.
+- Clicking a note in the piano roll plays it for its length (up to a second).
+- Audio track headers have the input monitoring button, new tracks start on the default colours, and the piano
+  roll's loop bar takes the clip's colour.
+- Settings › Downloads says there is nothing to download yet instead of "Not available yet".
+
+### Fixed
+
+- Windows: the Buffer setting now works below 10 ms, so 64 to 256 samples give low latency instead of about 22 ms.
+- Knobs in expanded device windows keep dragging instead of stopping after the first move.
+- The timeline header's zoom sliders change the track height and zoom.
+- The assistant no longer throws away good replies that name a colour or a setting in an unexpected way.
 
 ## [0.2.0] - 2026-11-18
 
