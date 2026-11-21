@@ -156,3 +156,26 @@ fn a_real_reply_that_colours_and_points_at_a_new_track_is_accepted() {
     let t = parse_turn(r#"{"actions":[{"type":"edit","command":{"op":"set_section_color","section":1,"color":16711680}}]}"#).unwrap();
     assert!(matches!(&t.actions[0], AssistantAction::Edit { command: Command::SetSectionColor { color: 16711680, .. } }));
 }
+
+#[test]
+fn notes_sent_with_id_zero_get_their_own_ids() {
+    // A real reply (Nov 2026, through an AI app) gave every note of a new bassline id 0, which
+    // failed the whole edit as "duplicate note id 0".
+    let d = doc();
+    let next = d.project().next_id;
+    let raw = format!(
+        r#"{{"actions":[{{"type":"edit","command":{{"op":"add_track","track":{{"id":{next},"kind":"instrument","name":"Bass","color":0,"gain":1.0,"pan":0.0,"mute":false,"solo":false,"clips":[]}}}}}},
+            {{"type":"edit","command":{{"op":"add_midi_clip","track":{next},"clip":{{"id":{clip},"name":"Bassline","start":0,"length":3840,"notes":[
+                {{"id":0,"pitch":36,"start":0,"length":400,"velocity":100}},
+                {{"id":7,"pitch":43,"start":480,"length":400,"velocity":100}},
+                {{"pitch":41,"start":960,"length":400,"velocity":100}},
+                {{"id":0,"pitch":39,"start":1440,"length":400,"velocity":100}}]}}}}}}]}}"#,
+        clip = next + 1
+    );
+    let turn = parse_turn(&raw).unwrap();
+    let AssistantAction::Edit { command: Command::AddMidiClip { clip, .. } } = &turn.actions[1] else { panic!("{:?}", turn.actions[1]) };
+    let ids: Vec<u32> = clip.notes.iter().map(|n| n.id).collect();
+    assert_eq!(ids, [8, 7, 9, 10], "new notes are numbered after the largest id sent; sent ids are kept");
+    let p = plan(&d, Mode::Assist, &turn).unwrap();
+    assert!(p.batch.is_some());
+}

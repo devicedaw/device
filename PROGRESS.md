@@ -953,3 +953,13 @@ The factory chains grow from 27 to 85, ten or eleven in each of the eight folder
 effects with their own settings and macros (`dstudio_core::chains::FACTORY`); the "FX" folder is now "FX & Glitch".
 Saved chains are unaffected: they live in My chains, and factory chains are found by name, which none changed.
 
+### 2026-11-21: AI apps, first real run
+
+Claude Code on the Mac mini, connected through `device-studio mcp`, added a Bass track with a 32-note C minor bassline,
+a Reverb and 96 BPM as one AI App Edit (52 s). It showed two rough edges, both fixed: `get_builtin_devices` returned
+the whole catalogue with every parameter (76 KB on one line, more than an AI app takes as one tool result), so it now
+lists id, name, kind and category, narrows with `query`, and gives parameters only for the `ids` asked for; and the
+model sent every new note with id 0, which failed as "duplicate note id 0", so `parse_turn` now numbers notes sent with
+id 0 (or none) after the largest id in their list. Tests: `builtin_devices_are_a_short_list_until_asked_for_parameters`
+and core `notes_sent_with_id_zero_get_their_own_ids`.
+

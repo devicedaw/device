@@ -43,6 +43,24 @@ pub fn discovery_path() -> Option<PathBuf> {
     Some(crate::prefs::support_dir()?.join("mcp.json"))
 }
 
+/// `get_builtin_devices`: the whole catalogue with every parameter is far larger than an AI app
+/// will take as one tool result, so by default it is a short list, and parameters come on request.
+pub fn builtin_devices(args: &Value) -> Value {
+    let all = assistant::builtin_catalog();
+    let all = all.as_array().cloned().unwrap_or_default();
+    if let Some(ids) = args.get("ids").and_then(Value::as_array) {
+        let ids: Vec<&str> = ids.iter().filter_map(Value::as_str).collect();
+        return all.into_iter().filter(|d| d["id"].as_str().is_some_and(|id| ids.contains(&id))).collect();
+    }
+    let q = args.get("query").and_then(Value::as_str).unwrap_or("").to_lowercase();
+    all.iter()
+        .filter(|d| {
+            q.is_empty() || ["id", "name", "kind", "category"].iter().any(|k| d[*k].as_str().is_some_and(|v| v.to_lowercase().contains(&q)))
+        })
+        .map(|d| json!({"id": d["id"], "name": d["name"], "kind": d["kind"], "category": d["category"]}))
+        .collect()
+}
+
 /// The tools an AI app sees (`tools/list`).
 pub fn tools() -> Value {
     let actions = assistant::tool_schema()["properties"]["actions"].clone();
@@ -59,9 +77,18 @@ pub fn tools() -> Value {
         },
         {
             "name": "get_builtin_devices",
-            "description": "Every built-in effect and instrument you can add with an `add_builtin_device` action, \
-                with each parameter as [id, min, max, default, unit].",
-            "inputSchema": empty,
+            "description": "The built-in effects and instruments you can add with an `add_builtin_device` action. \
+                Without `ids` it lists each device's id, name, kind and category (narrow it with `query`, e.g. \
+                \"reverb\" or \"Dynamics\"). Pass `ids` to get those devices' parameters as \
+                [id, min, max, default, unit] before setting them.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Only devices whose id, name, kind or category contains this (any case)."},
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "Device ids to return in full, with parameters."},
+                },
+                "additionalProperties": false,
+            },
             "annotations": {"readOnlyHint": true},
         },
         {
@@ -443,7 +470,7 @@ impl Controller {
                 state["next_id_hint"] = json!(self.project().next_id);
                 Ok(state)
             }
-            "get_builtin_devices" => Ok(assistant::builtin_catalog()),
+            "get_builtin_devices" => Ok(builtin_devices(args)),
             "apply_actions" => {
                 if self.midi_in.pass.is_some() || self.rec.recording {
                     return Err("Device is recording; try again when it stops.".into());
@@ -523,6 +550,20 @@ mod tests {
         assert_eq!(names, ["get_project", "get_builtin_devices", "apply_actions", "undo", "redo", "transport"]);
         let bad = relay_message(&rpc(3, "resources/list", json!({})), &mut client, &mut never).unwrap();
         assert_eq!(bad["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn builtin_devices_are_a_short_list_until_asked_for_parameters() {
+        let list = builtin_devices(&json!({}));
+        let list = list.as_array().unwrap();
+        assert!(list.len() > 10 && list.iter().all(|d| d.get("params").is_none()));
+        assert!(list.to_vec().iter().map(|d| d.to_string().len()).sum::<usize>() < 8_000, "the list stays small");
+        let reverb = builtin_devices(&json!({"query": "REVERB"}));
+        assert!(!reverb.as_array().unwrap().is_empty());
+        assert!(reverb.as_array().unwrap().iter().all(|d| d.to_string().to_lowercase().contains("reverb")));
+        let full = builtin_devices(&json!({"ids": ["compressor"]}));
+        assert_eq!(full.as_array().unwrap().len(), 1);
+        assert!(full[0]["params"].as_array().is_some_and(|p| !p.is_empty()));
     }
 
     #[test]

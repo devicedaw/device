@@ -253,7 +253,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Export | ✅ | |
 | Tempo changes | ✅ | |
 | Assistant | ✅ | Passes a live test against the Anthropic API (tracks, MIDI, built-in effects and their settings, tempo and volume, Point mode); needs your own Anthropic API key |
-| AI apps (MCP) | 🚧 | Tested with a scripted MCP client against the running app on Linux; not yet tried with Claude Desktop or another real AI app. ChatGPT can't connect (it only supports MCP servers on the internet) |
+| AI apps (MCP) | ✅ | Claude Code on macOS wrote a bassline, added a Reverb and set the tempo through it in one undo step; not yet tried in Claude Desktop or Cursor. ChatGPT can't connect (it only supports MCP servers on the internet) |
 | Windows and Linux audio | 🚧 | Windows: playback, recording, buffer sizes down to 128 samples and switching outputs checked on one PC's built-in sound card (WASAPI shared mode); ASIO drivers play and record, checked with FlexASIO only (no hardware ASIO driver yet); no exclusive mode. Linux plays through PipeWire or straight through ALSA in CI on a headless PipeWire server, but has not run on a physical sound card |
 | Releases and branding | 🚧 | 0.3.0 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is signed and notarised, the Windows packages are not signed yet |
 
