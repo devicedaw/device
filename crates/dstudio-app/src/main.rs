@@ -43,6 +43,7 @@ mod appmenu;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;
+mod chain_gaps;
 mod chain_presets;
 mod clip_bench;
 mod clip_render;
@@ -105,6 +106,7 @@ mod shortcut_presets;
 mod shortcuts;
 mod showcase;
 mod snap;
+mod sound_preview;
 mod splitters;
 mod stepseq;
 mod synth;
@@ -243,6 +245,8 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect.
     device_chain_review: bool,
+    /// review-chain-gaps (1: instrument track, 2: audio track): meters and "+" between cards.
+    chain_gaps_review: u8,
     /// review-devices-minimap: Instrument track with the Synth and a long chain of built-in effects (the Devices minimap shows).
     devices_minimap_review: bool,
     /// review-tool-menu (1): the timeline's edit tool menu open; review-marquee-range (2): two
@@ -331,6 +335,9 @@ struct Args {
     /// review-instrument-sounds: reference-synth with the Instruments browser open on the Synth's
     /// Bass sounds.
     instrument_sounds_review: bool,
+    /// review-sound-preview: review-instrument-sounds with Analog Kick clicked (Drums open): its
+    /// note plays in the preview bar.
+    sound_preview_review: bool,
     clip_menu: Option<i32>,
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
     ac_edit: Option<i32>,
@@ -514,6 +521,12 @@ fn parse_args() -> Result<Args, String> {
                     a.synth_state = true;
                     a.synth_presets_review = true;
                 }
+                "review-sound-preview" => {
+                    a.reference_default = true;
+                    a.synth_state = true;
+                    a.instrument_sounds_review = true;
+                    a.sound_preview_review = true;
+                }
                 "review-instrument-sounds" => {
                     a.reference_default = true;
                     a.synth_state = true;
@@ -683,6 +696,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.devices_effects_state = true;
                 }
+                st @ ("review-chain-gaps" | "review-chain-gaps-audio") => {
+                    a.reference_default = true;
+                    a.chain_gaps_review = if st.ends_with("audio") { 2 } else { 1 };
+                }
                 "review-device-chain" => {
                     a.reference_default = true;
                     a.device_chain_review = true;
@@ -755,6 +772,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-clip-selection" => {
                     a.reference_default = true;
                     a.clip_selection_review = true;
+                }
+                st @ ("review-add-track-menu" | "review-lane-menu") => {
+                    a.reference_default = true;
+                    a.track_menu_review = if st == "review-add-track-menu" { 3 } else { 4 };
                 }
                 st @ ("review-track-menu" | "review-track-drag") => {
                     a.reference_default = true;
@@ -869,7 +890,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-synth-presets, review-instrument-sounds, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-add-track-menu, review-lane-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
                     ));
                 }
             },
@@ -2047,6 +2068,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.devices.expanded.insert(k.into());
             }
             c.devices.selected = Some("i/b/synth/Bass/Rubber Acid".into());
+            if args.sound_preview_review {
+                c.devices.expanded.remove("i/b/synth/Bass");
+                c.devices.expanded.insert("i/b/synth/Drums".into());
+                c.devices.selected = Some("i/b/synth/Drums/Analog Kick".into());
+                // Drums is the tenth category: scroll it to the top of the tree.
+                c.devices.tree_scroll = 11.0 * devices::TREE_ROW;
+                let factory = &dstudio_core::builtin::synth_v2::SYNTH_V2.factory;
+                if let Some(i) = factory.iter().position(|f| f.name == "Analog Kick") {
+                    c.preview_sound(i);
+                }
+            }
         }
     }
     if args.input_menu_state || (args.settings_state && !args.settings_devices_review) {
@@ -2477,6 +2509,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // reference-devices-effects: default project, browser Devices › Effects (the catalogue as scanned).
         ctl.borrow_mut().browser_tab(1);
     }
+    if args.chain_gaps_review > 0 {
+        // Review only: two built-in effects after the instrument track's Synth (1) or on the
+        // audio track (2), with fixed levels on the meters between the cards.
+        let mut c = ctl.borrow_mut();
+        let kind = if args.chain_gaps_review == 1 { dstudio_core::TrackKind::Instrument } else { dstudio_core::TrackKind::Audio };
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == kind).map(|t| t.id) {
+            c.select_track(t);
+            for id in ["channeleq", "compressor"] {
+                if let Some(def) = dstudio_core::builtin::find(id) {
+                    c.add_item_to_track(&devices::Item::Builtin(def), t, None);
+                }
+            }
+        }
+        c.set_bottom_tab(BottomTab::Devices);
+        c.devices.windows.clear();
+        c.review_chain_levels(vec![(0.5, 0.42), (0.32, 0.36), (0.2, 0.18)]);
+    }
     if args.device_chain_review {
         // Review only: Instrument track selected, Devices tab, the built-in
         // Synth followed by one Audio Unit effect (Apple's AULowpass, named by its AU identity).
@@ -2559,9 +2608,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let top = 78.2 + 66.5;
         if args.track_menu_review == 1 {
             c.open_track_menu(id, 120.0, top + 30.0);
-            if let Some(i) = c.menu.items.iter().position(|(a, _)| *a == controller::MenuAction::TrackColor) {
-                c.menu_activate(i);
-            }
+        } else if args.track_menu_review == 3 {
+            // Under the timeline's Add track button.
+            c.open_add_track_menu(20.0, 78.2 + 27.5 + 30.0);
+        } else if args.track_menu_review == 4 {
+            // An empty spot on the instrument track's lane, at bar 5.
+            let row = c.project().tracks.iter().position(|t| t.kind == dstudio_core::TrackKind::Instrument).unwrap_or(1);
+            let x = c.view.x_of(16.0);
+            let y = c.view.track_top(row) + c.view.pitch(row) * 0.6;
+            c.lane_context(x, y, 262.65 + 191.0 + x, 78.2 + 27.5 + y, (1440.0, 820.0));
         } else {
             let (y0, y1) = (top + c.view.pitch(0) / 2.0, top + c.view.track_offset(1) + c.view.pitch(1) * 0.8);
             c.track_drag(id, 0, y0);
@@ -3592,6 +3647,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_shape_brush_pick, |c, brush: i32| c.shape_brush(brush));
     on!(on_shape_reset, |c| c.shape_reset());
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
+    on!(on_menu_swatch_pick, |c, i: i32| c.menu_swatch_pick(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());
     on!(on_rename_commit, |c, t: slint::SharedString| {
         if let Some(id) = c.rename_section {
@@ -3727,6 +3783,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         on!(on_macro_select, |c, d: i32, i: i32| c.macro_select(id(d), i));
         on!(on_macro_rename, |c, d: i32, i: i32, t: slint::SharedString| c.macro_rename(id(d), i, &t));
         on!(on_chain_add_effect, |c, d: i32, x: f32, y: f32| c.chain_add_effect(id(d), x, y));
+        on!(on_chain_insert_menu, |c, g: i32, x: f32, y: f32| c.chain_insert_menu(g.max(0) as usize, x, y));
         on!(on_card_add_menu, |c, d: i32, x: f32, y: f32| c.card_add_menu(id(d), x, y));
         on!(on_card_page, |c, d: i32, dir: i32| c.card_page(id(d), dir));
     }

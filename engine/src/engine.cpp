@@ -2004,6 +2004,27 @@ int32_t Engine::builtin_set_metering(uint64_t device_id, bool on) {
     return SE_OK;
 }
 
+int32_t Engine::device_set_output_metering(uint64_t device_id, bool on) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    if (inst == nullptr) return SE_ERR_NOT_FOUND;
+    inst->set_output_metering(on);
+    return SE_OK;
+}
+
+void Engine::device_output_peaks(const uint64_t* ids, std::size_t count, float* out) {
+    std::lock_guard lock(plugins_.mutex());
+    for (std::size_t i = 0; i < count; ++i) {
+        PluginInstance* inst = plugins_.instance(ids[i]);
+        if (inst != nullptr) {
+            inst->take_output_peaks(out + 2 * i);
+        } else {
+            out[2 * i] = 0.0f;
+            out[2 * i + 1] = 0.0f;
+        }
+    }
+}
+
 int32_t Engine::builtin_levels(uint64_t device_id, float* out) {
     std::lock_guard lock(plugins_.mutex());
     PluginInstance* inst = plugins_.instance(device_id);

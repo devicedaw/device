@@ -795,6 +795,18 @@ A saved project's `Name.dsproj` folder is renamed on disk; media inside it, Open
 An unsaved project keeps the name, and the first Save offers it. A name that is taken, empty, hidden or has a
 character file systems refuse is refused with a reason (`check_project_name`); no undo step, as it is a file
 operation. Review state `review-title-rename`; self-test `rename_project_steps`.
+### 2026-11-21: track, lane and Add track menus
+
+The track header menu is complete: Rename…, Duplicate track (⌘D), Duplicate with clips (⇧⌘D), Bounce track in
+place, Show / Hide automation, Group track (⌘G), Delete track, then Audio, Instrument, Sampler, Drum and Return track,
+which insert the new track right below (`track_menu_items`, `add_track_action`), then the colour grid: 43 colours,
+14 a row, the track's own outlined (`TRACK_COLOR_GRID`); the first 13 palette indexes keep their colours, so saved
+projects look the same. Copy effects (and Paste effects once something is copied) sit between Group track and Delete
+track; group tracks show Group track and Ungroup (⌘⇧G) and no Bounce or effects rows. The empty-lane menu starts with Open <instrument> (the Devices view) and Insert empty MIDI clip on instrument
+tracks, Paste when the copy fits, then the track menu. The Add track menu (timeline and mixer) is the general context
+menu now, with the five add-track rows and their keys; the Group track row is gone (groups come from a selection).
+Sampler and Drum tracks are instrument tracks playing the Sampler or the Drum Rack. A new project closes these menus.
+Review states `review-add-track-menu` and `review-lane-menu`.
 
 
 ### 2026-11-21: help on every setting
@@ -836,6 +848,14 @@ already plays the Synth, the sound loads into it as one `SetDeviceParams` step. 
 adds the plain Synth. A search lists the sounds whose name matches, inside their category. Review state
 `review-instrument-sounds`; unit test `synth_folder_opens_into_categories_and_sounds`; self-test step "synth: a
 browser sound loads into the track's Synth". Clicking a sound to preview it is G40.
+
+### 2026-11-21: Preview the Synth's sounds from the browser
+
+Clicking a sound in Devices › Instruments › Synth plays a C4 note with it in the browser's preview bar
+(`sound_preview.rs`). A worker renders the note on a private offline engine from a one-track project, writes a
+WAV to the temp folder (named by a hash of the sound's settings, so a second click plays at once) and loads it
+like a clicked audio file. Nothing is added to the project. Review state `review-sound-preview`; unit tests in
+`sound_preview`; self-test step "synth: a clicked sound plays in the preview bar, rendered to a file".
 
 ### 2026-11-21: The assistant against the real API
 

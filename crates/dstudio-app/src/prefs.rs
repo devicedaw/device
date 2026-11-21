@@ -66,6 +66,9 @@ pub struct Preferences {
     /// Docked assistant width in design units (drag its splitter); 0 = default.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub assistant_width: f32,
+    /// Device chain "+" menu › Recent: effects added lately, newest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_devices: Vec<dstudio_core::PluginRef>,
     /// The docked assistant spans the full window height, over the bottom panel's right end
     /// (its header button), instead of the timeline row only.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -255,6 +258,7 @@ mod tests {
             browser_folders: vec!["/tmp/kit".into()],
             preview_volume: Some(0.5),
             assistant_width: 400.0,
+            recent_devices: vec![dstudio_core::builtin::find("delay").unwrap().plugin_ref()],
             assistant_full: true,
             recent_projects: vec!["/tmp/Song.dsproj".into()],
             recent_resolved: vec!["/private/tmp/Song.dsproj".into()],

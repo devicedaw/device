@@ -43,8 +43,10 @@ wgpu.
 
 - **Timeline.** Double-click an empty spot on an instrument track to make a MIDI clip there (or right-click it, or
   use Create › MIDI Clip), import audio, move and trim clips, loop a range, and play against a metronome.
-  Right-click a track header to rename, recolour, delete or duplicate the track (with or without its clips), and
-  drag headers up and down to reorder the tracks. Shift-click clips, or drag a box over empty lane space, to select
+  Right-click a track header to rename, recolour, delete, group, bounce in place or duplicate the track (with or without
+  its clips), show its automation, or add an audio, instrument, Sampler, Drum or return track right below it; the same
+  rows end the menu of an empty lane, which starts with Open <instrument> and Insert empty MIDI clip. Drag headers up
+  and down to reorder the tracks. Shift-click clips, or drag a box over empty lane space, to select
   several and move, duplicate, copy, paste, disable or delete them together. Drag the square handles at an audio
   clip's top corners to fade it in and out. Set the tempo in the
   transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
@@ -102,6 +104,8 @@ wgpu.
   Settings › MIDI › Default instrument picks what a new instrument track (⇧⌘T) plays: any of them, or an
   instrument plugin.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
+- **Device chain.** A level meter after every device shows what it puts out, and the + between two devices
+  inserts another one right there, from your recent effects or any category.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
   macros. Save a chain to reuse it in any project, or start from one of 27 ready-made chains for vocals, drums, bass,
   guitar, keys, pads, FX and mix bus.
@@ -161,7 +165,8 @@ axes over two cards of controls, Pitch Corrector, whose window draws the correct
 its lane tabs and curve editor across the display, and LFO, whose window draws two cycles of its wave across the
 window. Every effect has its window; the instruments and the Rack keep everything in their card. The Synth comes with
 100 factory sounds in ten categories (bass, keys, plucks, leads, pads, brass, motion, textures, effects and drums);
-Devices › Instruments opens the Synth into those categories, and dropping a sound adds the Synth with it.
+Devices › Instruments opens the Synth into those categories; clicking a sound plays a note with it in the preview
+bar, and dropping it adds the Synth with that sound.
 [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |

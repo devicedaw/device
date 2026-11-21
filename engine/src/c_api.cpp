@@ -834,6 +834,23 @@ int32_t se_builtin_levels(se_engine* engine, uint64_t device_id, float* out) {
     });
 }
 
+int32_t se_device_set_output_metering(se_engine* engine, uint64_t device_id, uint8_t on) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        const int32_t rc = engine->impl->device_set_output_metering(device_id, on != 0);
+        return rc == SE_OK ? rc : fail(rc, "no live device with this id");
+    });
+}
+
+int32_t se_device_output_peaks(se_engine* engine, const uint64_t* device_ids, size_t count, float* out) {
+    SE_REQUIRE_ENGINE(engine);
+    if (count > 0 && (device_ids == nullptr || out == nullptr)) return fail(SE_ERR_INVALID_ARG, "device_ids or out is NULL");
+    return guarded([&]() -> int32_t {
+        engine->impl->device_output_peaks(device_ids, count, out);
+        return SE_OK;
+    });
+}
+
 int32_t se_builtin_correlation(se_engine* engine, uint64_t device_id, float* out) {
     SE_REQUIRE_ENGINE(engine);
     if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");

@@ -413,6 +413,56 @@ TEST_CASE(builtin_metering_reports_in_and_out_peaks_without_allocating) {
     CHECK_EQ(se_builtin_levels(e, 10, nullptr), SE_ERR_INVALID_ARG);
 }
 
+TEST_CASE(chain_output_meters_follow_each_device_without_allocating) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = load_asset(e, {sine(48000, 440.0, 48000.0, 0.5), sine(48000, 220.0, 48000.0, 0.25)});
+    DeviceSession s;
+    auto& tr = s.add_track(1, a, 48000);
+    DeviceSession::add_device(tr, 10, "compressor", kComp);
+    DeviceSession::add_device(tr, 11, "compressor", kComp, /*enabled=*/false);
+    REQUIRE(s.publish(e) == SE_OK);
+    REQUIRE(se_transport_play(e) == SE_OK);
+    std::vector<float> buf(2 * 256);
+    const uint64_t ids[3] = {10, 11, 999};
+    float pk[6] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f};
+
+    // Off by default.
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    REQUIRE(se_device_output_peaks(e, ids, 3, pk) == SE_OK);
+    for (float v : pk) CHECK_EQ(v, 0.0f);
+
+    REQUIRE(se_device_set_output_metering(e, 10, 1) == SE_OK);
+    REQUIRE(se_device_set_output_metering(e, 11, 1) == SE_OK);
+    const long before = rt_alloc_count();
+    for (int i = 0; i < 8; ++i) {
+        RtAllocGuard g;
+        REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    }
+    CHECK_EQ(rt_alloc_count() - before, 0);
+    REQUIRE(se_device_output_peaks(e, ids, 3, pk) == SE_OK);
+    CHECK(pk[0] > 0.0f);
+    CHECK(pk[1] > 0.0f);
+    CHECK(pk[0] > pk[1]); // the louder left side stays louder
+    // The bypassed device passes its input through: its meter shows the same audio.
+    CHECK_EQ(pk[2], pk[0]);
+    CHECK_EQ(pk[3], pk[1]);
+    CHECK_EQ(pk[4], 0.0f); // unknown device
+    CHECK_EQ(pk[5], 0.0f);
+
+    // Reading resets; switching off stops the measuring.
+    REQUIRE(se_device_output_peaks(e, ids, 2, pk) == SE_OK);
+    for (int i = 0; i < 4; ++i) CHECK_EQ(pk[i], 0.0f);
+    REQUIRE(se_device_set_output_metering(e, 10, 0) == SE_OK);
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    REQUIRE(se_device_output_peaks(e, ids, 2, pk) == SE_OK);
+    CHECK_EQ(pk[0], 0.0f);
+    CHECK(pk[2] > 0.0f);
+
+    CHECK_EQ(se_device_set_output_metering(e, 999, 1), SE_ERR_NOT_FOUND);
+    CHECK_EQ(se_device_output_peaks(e, nullptr, 1, pk), SE_ERR_INVALID_ARG);
+    CHECK_EQ(se_device_output_peaks(e, nullptr, 0, nullptr), SE_OK);
+}
+
 TEST_CASE(builtin_metering_reports_stereo_correlation) {
     EngineHandle e(48000, 256);
     // Right is the left inverted: the input cancels in mono.

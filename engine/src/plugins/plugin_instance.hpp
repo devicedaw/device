@@ -276,6 +276,32 @@ public:
         return live_.push(e);
     }
     virtual bool plays_notes() const noexcept { return spec_.instrument; }
+
+    // ---- chain output meter (the level meter after the device's card).
+    // Off by default; while on, the audio thread keeps the peak of the
+    // device's output (or of the audio passing it while bypassed).
+    void set_output_metering(bool on) noexcept {
+        out_metering_.store(on, std::memory_order_relaxed);
+        if (!on) {
+            out_peak_[0].store(0.0f, std::memory_order_relaxed);
+            out_peak_[1].store(0.0f, std::memory_order_relaxed);
+        }
+    }
+    bool output_metering() const noexcept { return out_metering_.load(std::memory_order_relaxed); }
+    // RT: raise the held peaks (linear) to at least l / r.
+    void store_output_peaks(float l, float r) noexcept {
+        for (int c = 0; c < 2; ++c) {
+            const float v = c == 0 ? l : r;
+            float cur = out_peak_[c].load(std::memory_order_relaxed);
+            while (v > cur && !out_peak_[c].compare_exchange_weak(cur, v, std::memory_order_relaxed)) {
+            }
+        }
+    }
+    // Main thread: the held peaks since the previous call (reading resets them).
+    void take_output_peaks(float* out) noexcept {
+        out[0] = out_peak_[0].exchange(0.0f, std::memory_order_relaxed);
+        out[1] = out_peak_[1].exchange(0.0f, std::memory_order_relaxed);
+    }
     // RT: moves queued live notes to `out` (at most `cap`); returns the count.
     uint32_t take_live(MidiEvent* out, uint32_t cap) noexcept {
         uint32_t n = 0;
@@ -320,6 +346,8 @@ private:
     std::atomic<bool> in_process_{false};
     std::atomic<bool> suspended_{false};
     std::atomic<bool> restart_requested_{false};
+    std::atomic<bool> out_metering_{false};
+    std::atomic<float> out_peak_[2]{0.0f, 0.0f};
     uint32_t cached_latency_ = 0;
     std::mutex param_mutex_; // serialises producers (SPSC producer side)
     SpscQueue<ParamChange, 256> params_;

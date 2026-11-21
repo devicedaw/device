@@ -1,18 +1,16 @@
-//! Track header menu (right-click a track header): Rename, Duplicate track, Duplicate track with
-//! clips, Color and Delete track; and dragging a track header up or down to reorder the tracks.
+//! Track header menu (right-click a track header): Rename, Duplicate track, Duplicate with clips,
+//! Bounce track in place, Show automation, Group track, Delete track, the add-track rows (Audio,
+//! Instrument, Sampler, Drum and Return track, inserted below the track) and Color; the Add track
+//! menu with the same add-track rows; and dragging a track header up or down to reorder the tracks.
 
+use crate::Studio;
 use crate::controller::{Controller, MenuAction, slint_color, track_color, track_palette_len};
-use crate::{MenuItem, Studio};
 use dstudio_core::{ColorIndex, Command, TrackId};
 
 /// Pointer travel (px) before a press on a track header becomes a reorder drag.
 const DRAG_START: f32 = 4.0;
 /// Window y of the top of the track header list (the timeline panel at 78.2, rows from 66.5; ui/app.slint).
 const LIST_TOP: f32 = 78.2 + 66.5;
-
-/// Track colour names, in palette order (`controller::TRACK_PALETTE`).
-const COLOR_NAMES: [&str; 13] =
-    ["Sky", "Periwinkle", "Violet", "Purple", "Pink", "Orange", "Teal", "Coral", "Amber", "Lime", "Green", "Mint", "Aqua"];
 
 /// A press on a track header that may become a reorder drag.
 #[derive(Debug, Clone, Copy)]
@@ -32,37 +30,163 @@ pub fn move_target(from: usize, gap: usize) -> usize {
 }
 
 impl Controller {
-    /// Right press on a track header at window (wx, wy).
-    pub fn open_track_menu(&mut self, id: TrackId, wx: f32, wy: f32) {
-        let Some(t) = self.project().track(id) else { return };
-        let is_return = t.is_return();
-        let (is_bus, is_group) = (t.is_bus(), t.is_group());
+    /// The track header menu's rows for track `id`, in order (also the end of the empty-lane menu).
+    pub(crate) fn track_menu_items(&self, id: TrackId) -> Vec<(MenuAction, bool)> {
+        let Some(t) = self.project().track(id) else { return Vec::new() };
+        let (is_return, is_bus, is_group) = (t.is_return(), t.is_bus(), t.is_group());
         let can_copy = !t.is_bus() || self.project().tracks.iter().filter(|t| t.is_bus()).count() < dstudio_core::MAX_RETURNS;
-        self.select_track(id);
+        // Always offered on audio and instrument tracks; it says why when there is nothing to bounce.
+        let can_bounce = !is_bus;
+        let _ = is_group;
         use MenuAction::*;
-        let mut items = vec![(TrackRename, true), (TrackDuplicate, can_copy)];
+        let mut items = vec![(TrackRename, true), (TrackDuplicate, can_copy), (TrackDuplicateClips, true)];
         if !is_bus {
-            items.push((TrackDuplicateClips, true));
+            items.push((TrackBounce, can_bounce));
         }
-        items.push((TrackColor, true));
-        if is_group {
-            items.push((TrackUngroup, true));
-        } else if !is_return {
+        items.push((TrackAutomation, true));
+        if !is_return {
             items.push((TrackGroup, true));
         }
+        if is_group {
+            items.push((TrackUngroup, true));
+        }
+        if !is_bus {
+            items.push((TrackCopyEffects, true));
+            if !self.effects_clipboard.is_empty() {
+                items.push((TrackPasteEffects, true));
+            }
+        }
         items.push((TrackDelete, true));
+        items.extend(Self::add_track_items());
+        items
+    }
+
+    /// The add-track rows: Audio, Instrument, Sampler, Drum and Return track.
+    pub(crate) fn add_track_items() -> [(MenuAction, bool); 5] {
+        use MenuAction::*;
+        [(AddAudioTrack, true), (AddInstrumentTrack, true), (AddSamplerTrack, true), (AddDrumTrack, true), (AddReturnTrack, true)]
+    }
+
+    /// Right press on a track header at window (wx, wy).
+    pub fn open_track_menu(&mut self, id: TrackId, wx: f32, wy: f32) {
+        if self.project().track(id).is_none() {
+            return;
+        }
+        self.select_track(id);
+        let items = self.track_menu_items(id);
         let win = self.devices.win;
         self.open_menu(items, wx, wy, win);
         self.menu.track = Some(id);
     }
 
-    pub fn track_menu_activate(&mut self, id: TrackId, action: MenuAction) {
-        if action == MenuAction::TrackColor {
-            self.menu.sub_open = !(self.menu.sub_open && self.menu.sub_for == Some(action));
-            self.menu.sub_for = Some(action);
-            self.ui_dirty = true;
+    /// An add-track row: the new track goes right below `below` (the clicked track), or at the end
+    /// of the ordinary tracks; a return track always joins the returns. The new track is selected.
+    pub fn add_track_action(&mut self, action: MenuAction, below: Option<TrackId>) {
+        let at = below.and_then(|t| self.project().track_index(t)).map(|i| i + 1).filter(|&i| i <= self.project().ordinary_track_count());
+        match action {
+            MenuAction::AddAudioTrack => {
+                self.add_audio_track_at(at);
+            }
+            MenuAction::AddInstrumentTrack => {
+                self.add_instrument_track_at(at, None);
+            }
+            MenuAction::AddSamplerTrack => {
+                self.add_instrument_track_at(at, dstudio_core::builtin::find("sampler-steam"));
+            }
+            MenuAction::AddDrumTrack => {
+                self.add_instrument_track_at(at, dstudio_core::builtin::find("drum-rack"));
+            }
+            MenuAction::AddReturnTrack => {
+                self.add_return_track(true);
+            }
+            _ => {}
+        }
+    }
+
+    /// Copies of the copied effects at the end of `track`'s chain, with fresh ids (chain members
+    /// keep their head, macro and LFO links their targets among the copies). One undo step.
+    pub fn paste_effects(&mut self, track: TrackId) {
+        let src = self.effects_clipboard.clone();
+        if src.is_empty() || self.project().track(track).is_none_or(|t| t.is_bus()) {
             return;
         }
+        let first = self.project().next_id;
+        let map: std::collections::HashMap<dstudio_core::DeviceId, dstudio_core::DeviceId> =
+            src.iter().enumerate().map(|(i, d)| (d.id, dstudio_core::DeviceId(first + i as u64))).collect();
+        let commands = src
+            .iter()
+            .map(|d| {
+                let mut d = d.clone();
+                d.id = map[&d.id];
+                d.chain = d.chain.and_then(|c| map.get(&c).copied());
+                d.links.retain_mut(|l| match map.get(&l.target) {
+                    Some(t) => {
+                        l.target = *t;
+                        true
+                    }
+                    None => false,
+                });
+                Command::AddDevice { track, index: None, device: d }
+            })
+            .collect();
+        let label = if src.len() == 1 { "Paste Effect" } else { "Paste Effects" };
+        self.execute(Command::Batch { label: label.into(), commands });
+    }
+
+    /// A new audio track at index `at` (the end of the ordinary tracks when None), selected.
+    pub fn add_audio_track_at(&mut self, at: Option<usize>) -> Option<TrackId> {
+        let id = TrackId(self.project().next_id);
+        let track =
+            dstudio_core::Track::new(id, dstudio_core::TrackKind::Audio, "Audio", crate::controller::next_track_color(self.project()));
+        if self.execute(Command::AddTrack { index: at, track }) {
+            self.select_track(id);
+            return Some(id);
+        }
+        None
+    }
+
+    /// A new instrument track at index `at` playing `instrument` (a built-in: the Sampler or the
+    /// Drum Rack), or the default instrument when None; named after its instrument. One undo step.
+    pub fn add_instrument_track_at(
+        &mut self,
+        at: Option<usize>,
+        instrument: Option<&'static dstudio_core::builtin::DeviceDef>,
+    ) -> Option<TrackId> {
+        let id = TrackId(self.project().next_id);
+        let (mut commands, fallback) = match instrument {
+            Some(def) => {
+                let track = dstudio_core::Track::new(
+                    id,
+                    dstudio_core::TrackKind::Instrument,
+                    def.name,
+                    crate::controller::next_track_color(self.project()),
+                );
+                let cmds = vec![
+                    Command::AddTrack { index: None, track },
+                    Command::SetInstrumentPlugin { track: id, device: Some(def.instantiate()) },
+                ];
+                (cmds, None)
+            }
+            None => self.new_instrument_track(id),
+        };
+        if let Some(Command::AddTrack { index, .. }) = commands.first_mut() {
+            *index = at;
+        }
+        let label = match instrument {
+            Some(def) => format!("Add {} Track", def.name),
+            None => "Add Instrument Track".into(),
+        };
+        if !self.execute(Command::Batch { label, commands }) {
+            return None;
+        }
+        if let Some(why) = fallback {
+            self.set_status(why, 5);
+        }
+        self.select_track(id);
+        Some(id)
+    }
+
+    pub fn track_menu_activate(&mut self, id: TrackId, action: MenuAction) {
         self.menu_close();
         match action {
             MenuAction::TrackRename => {
@@ -83,6 +207,19 @@ impl Controller {
                 self.selected_track = Some(id);
                 self.delete_selection();
             }
+            MenuAction::TrackBounce => self.bounce_track_in_place(id),
+            MenuAction::TrackCopyEffects => {
+                self.effects_clipboard = self.project().track(id).map(|t| t.devices.clone()).unwrap_or_default();
+                let n = self.effects_clipboard.len();
+                self.set_status(format!("Copied {n} effect{}", if n == 1 { "" } else { "s" }), 3);
+            }
+            MenuAction::TrackPasteEffects => self.paste_effects(id),
+            MenuAction::TrackAutomation => self.auto_toggle_shown(),
+            a @ (MenuAction::AddAudioTrack
+            | MenuAction::AddInstrumentTrack
+            | MenuAction::AddSamplerTrack
+            | MenuAction::AddDrumTrack
+            | MenuAction::AddReturnTrack) => self.add_track_action(a, Some(id)),
             _ => {}
         }
     }
@@ -101,29 +238,22 @@ impl Controller {
         }
     }
 
-    /// Colour submenu rows: a swatch per palette colour, the track's own ticked.
-    pub fn track_color_rows(&self) -> (Vec<MenuItem>, f32) {
-        let current = self.menu.track.and_then(|t| self.project().track(t)).map(|t| t.color.0 as usize % track_palette_len());
-        let (mut rows, h) = crate::clipedit::layout_items(
-            COLOR_NAMES
-                .iter()
-                .enumerate()
-                .map(|(i, n)| (n.to_string(), if current == Some(i) { "✓".into() } else { String::new() }, true, false, false)),
-        );
-        for (i, r) in rows.iter_mut().enumerate() {
-            r.swatch = slint_color(track_color(ColorIndex(i as u8)));
-        }
-        (rows, h)
+    /// The colour grid under the track menu: each palette colour in grid order, the track's own
+    /// marked (`controller::TRACK_COLOR_GRID`).
+    pub fn track_swatches(&self, track: TrackId) -> Vec<crate::MenuSwatch> {
+        let cur = self.project().track(track).map(|t| t.color.0 as usize % track_palette_len());
+        crate::controller::TRACK_COLOR_GRID
+            .iter()
+            .map(|&i| crate::MenuSwatch { color: slint_color(track_color(ColorIndex(i))), selected: cur == Some(i as usize) })
+            .collect()
     }
 
-    pub fn track_color_pick(&mut self, id: TrackId, index: usize) {
+    /// A swatch of the grid (position `cell`) picked for `track`: its colour, one undo step.
+    pub fn track_swatch_pick(&mut self, track: TrackId, cell: usize) {
         self.menu_close();
-        if index >= COLOR_NAMES.len() {
-            return;
-        }
-        let color = ColorIndex(index as u8);
-        if self.project().track(id).is_some_and(|t| t.color.0 as usize % track_palette_len() != index) {
-            self.execute(Command::SetTrackColor { track: id, color });
+        let Some(&i) = crate::controller::TRACK_COLOR_GRID.get(cell) else { return };
+        if self.project().track(track).is_some_and(|t| t.color.0 as usize % track_palette_len() != i as usize) {
+            self.execute(Command::SetTrackColor { track, color: ColorIndex(i) });
         }
     }
 
@@ -200,10 +330,5 @@ mod tests {
         assert_eq!(move_target(1, 2), 1);
         assert_eq!(move_target(1, 3), 2);
         assert_eq!(move_target(1, 4), 3);
-    }
-
-    #[test]
-    fn every_palette_colour_has_a_name() {
-        assert_eq!(COLOR_NAMES.len(), track_palette_len());
     }
 }
