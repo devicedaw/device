@@ -226,7 +226,8 @@ impl Controller {
 
     /// Settings › General switches, in page order: 0 Always load last session, 1 Auto-show
     /// third-party effect windows, 2 Auto-show built-in effect windows, 3 Keep plugin windows
-    /// on top, 4 Sections move clips, 5 Check for updates at launch. Saved at once.
+    /// on top, 4 Sections move clips, 5 Check for updates at launch, 6 Let AI apps control
+    /// Device (starts or stops the MCP server). Saved at once.
     pub fn general_toggle(&mut self, i: i32) {
         let g = &mut self.settings.prefs.general;
         let flag = match i {
@@ -236,6 +237,7 @@ impl Controller {
             3 => &mut g.plugin_windows_on_top,
             4 => &mut g.sections_move_clips,
             5 => &mut g.check_updates_at_launch,
+            6 => return self.mcp_toggle(),
             _ => return,
         };
         *flag = !*flag;
@@ -737,12 +739,18 @@ impl Controller {
             g.plugin_windows_on_top,
             g.sections_move_clips,
             g.check_updates_at_launch,
+            self.settings.prefs.ai_apps,
         ];
         let shown = s.get_general_on();
         if (0..on.len()).any(|i| slint::Model::row_data(&shown, i) != Some(on[i])) {
             s.set_general_on(slint::ModelRc::new(slint::VecModel::from(on.to_vec())));
         }
         s.set_general_stop_in_place(g.stop_in_place);
+        if s.get_ai_apps_setup().is_empty() {
+            s.set_ai_apps_setup(crate::mcp::setup_snippet().into());
+        }
+        s.set_ai_apps_copied(self.mcp.copied);
+        s.set_ai_apps_status(self.mcp_status_text().into());
         s.set_privacy_crash_reports(!self.settings.prefs.crash_reports_off);
         s.set_general_projects_folder(self.projects_folder_text().into());
         s.set_set_latency_text(self.latency_text().into());

@@ -178,8 +178,8 @@ component GeneralPage inherits Rectangle {
         { t: "Always load last session", y: 88.4px, k: 0 }, { t: "Check for updates at launch", y: 108px, k: 5 },
         { t: "Sections move clips", y: 282.5px, k: 4 }, { t: "Auto-show third-party effect windows", y: 336.9px, k: 1 },
         { t: "Auto-show built-in effect windows", y: 356.5px, k: 2 }, { t: "Keep plugin windows on top", y: 376.7px, k: 3 },
-        { t: "Let the assistant listen to audio", y: 431.8px, k: -1 }, { t: "Hold talk key to record", y: 499.7px, k: -1 },
-        { t: "Auto-send", y: 519.9px, k: -1 },
+        { t: "Let the assistant listen to audio", y: 431.8px, k: -1 }, { t: "Let AI apps control Device", y: 451.4px, k: 6 }, { t: "Hold talk key to record", y: 538.9px, k: -1 },
+        { t: "Auto-send", y: 559.1px, k: -1 },
     ]: Rectangle {
         x: 0; y: r.y; width: root.width; height: 14px;
         SearchHit { y: -5px; width: parent.width - 24px; height: 24px; label: r.t; enabled: r.k >= 0; }
@@ -216,17 +216,31 @@ component GeneralPage inherits Rectangle {
             TouchArea { clicked => { Studio.general-stop-mode(i == 1); } }
         }
     }
-    Icon { x: 20.5px + 1px; y: 455.5px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
-    FieldLabel { x: 20.5px + 17px; y: 454.5px; text: "Voice"; }
-    RowLabel { x: 20.5px; y: 477.1px; text: "Talk key"; dim: true; }
+    // AI apps (spec 023, src/mcp.rs): Copy setup copies the config an AI app needs to start
+    // `device-studio mcp`; the line under it says which app last connected.
+    setup-copy := TextInput { x: 0; y: 0; width: 0; height: 0; text: Studio.ai-apps-setup; read-only: true; color: transparent; }
+    Rectangle {
+        x: root.sw-x - 8.5px - 76px; y: 449.8px; width: 76px; height: 17.25px; border-radius: 8.6px;
+        background: copy-ta.has-hover ? #34353b : #292a2f;
+        accessible-role: button; accessible-label: "Copy setup for AI apps";
+        Text { text: Studio.ai-apps-copied ? "Copied" : "Copy setup"; color: #e5e5e8; font-size: 10px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+        copy-ta := TouchArea { mouse-cursor: pointer; clicked => { setup-copy.select-all(); setup-copy.copy(); Studio.ai-apps-copy(); } }
+    }
+    Text {
+        x: 20.5px; y: 470.4px; width: root.width - 41px; height: 12px; text: Studio.ai-apps-status;
+        color: #8e9096; font-size: 9.35px; font-weight: 500; vertical-alignment: center; overflow: elide;
+    }
+    Icon { x: 20.5px + 1px; y: 494.7px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
+    FieldLabel { x: 20.5px + 17px; y: 493.7px; text: "Voice"; }
+    RowLabel { x: 20.5px; y: 516.3px; text: "Talk key"; dim: true; }
     for k[i] in ["⌃", "⌥"]: Rectangle {
-        x: root.width - 20.5px - 42.75px + i * 21.75px; y: 475.6px; width: 21px; height: 17px; border-radius: 6px; background: #292a2f; opacity: 0.4;
+        x: root.width - 20.5px - 42.75px + i * 21.75px; y: 514.8px; width: 21px; height: 17px; border-radius: 6px; background: #292a2f; opacity: 0.4;
         Text { text: k; color: #e5e5e8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
     }
-    RowLabel { x: 20.5px; y: 542.5px; text: "Input"; dim: true; }
-    SmallSelect { x: root.width - 20.5px - 117.5px; y: 541px; text: "Input 1"; opacity: 0.4; }
-    RowLabel { x: 20.5px; y: 568.2px; text: "Language"; dim: true; }
-    SmallSelect { x: root.width - 20.5px - 117.5px; y: 566.7px; text: "English"; opacity: 0.4; }
+    RowLabel { x: 20.5px; y: 581.7px; text: "Input"; dim: true; }
+    SmallSelect { x: root.width - 20.5px - 117.5px; y: 580.2px; text: "Input 1"; opacity: 0.4; }
+    RowLabel { x: 20.5px; y: 607.4px; text: "Language"; dim: true; }
+    SmallSelect { x: root.width - 20.5px - 117.5px; y: 605.9px; text: "English"; opacity: 0.4; }
 }
 
 // ---------------------------------------------------------------- Shortcuts page

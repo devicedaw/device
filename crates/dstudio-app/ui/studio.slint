@@ -1087,8 +1087,18 @@ export global Studio {
     in property <bool> unsaved-open;
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show
     // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top,
-    // Sections move clips, Check for updates at launch.
-    in property <[bool]> general-on: [false, true, false, true, false, true];
+    // Sections move clips, Check for updates at launch, Let AI apps control Device.
+    in property <[bool]> general-on: [false, true, false, true, false, true, false];
+    // Settings › General › AI apps (src/mcp.rs): the config Copy setup copies, "Copied" after a
+    // press, and the line under the switch (which app last connected).
+    in property <string> ai-apps-setup;
+    in property <bool> ai-apps-copied;
+    in property <string> ai-apps-status;
+    callback ai-apps-copy();
+    // "Allow <app> to change your projects?" the first time an AI app makes a call.
+    in property <bool> mcp-ask-open;
+    in property <string> mcp-ask-app;
+    callback mcp-answer(bool);
     // Settings › General › Projects folder, shown with ~ for the home folder; Choose… picks another.
     in property <string> general-projects-folder: "~/Documents/Device Studio";
     callback general-choose-projects-folder();
