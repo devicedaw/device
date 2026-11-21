@@ -916,3 +916,8 @@ range at once with a MIDI clip from Device's pattern library for the Type and Ge
 Record arms the track, optionally loops the range and records into it, with the Typing and Count-in switches.
 `smart_fill.rs`; review states `review-smart-fill`, `review-smart-fill-type`, `review-smart-fill-record`;
 self-test section `smart_fill_steps`.
+
+### 2026-11-21: Faster CI feedback
+
+- Native benchmark timing runs on eligible main pushes and on demand. The Callgrind PR gate stays required.
+- The full Windows WARP test runs nightly or on demand. Main pushes still build and screenshot the Windows app.
