@@ -435,7 +435,7 @@ component Browser inherits Panel {
             }
             Icon {
                 x: 24px + parent.indent; width: 14.5px; height: 14.5px;
-                d: row.icon == 1 ? Icons.keys : row.icon == 2 ? Icons.effect : row.icon == 3 ? Icons.presets : Icons.folder; ink: #d0d0d3; stroke-width: 1.3px;
+                d: row.icon == 1 ? Icons.keys : row.icon == 2 ? Icons.effect : row.icon == 3 ? Icons.presets : Icons.folder; ink: #d0d0d3; stroke-width: 1.3px; filled: row.icon == 3;
             }
             Text { x: 42.5px + parent.indent; width: parent.width - 42.5px - parent.indent - 44px; text: row.label; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; vertical-alignment: center; overflow: elide; }
             Text { x: parent.width - 60px; width: 52px; text: row.count; color: #8a8b8e; font-size: 9px; horizontal-alignment: right; vertical-alignment: center; }
