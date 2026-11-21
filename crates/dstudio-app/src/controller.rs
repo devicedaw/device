@@ -639,6 +639,7 @@ pub struct Controller {
     pub(crate) input_menu_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) export_tracks_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) export_range_model: Rc<VecModel<ChoiceItem>>,
+    pub(crate) export_fx_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) settings_menu_model: Rc<VecModel<ChoiceItem>>,
     // ---- MIDI input (src/midi_in.rs) ----
     pub midi_in: crate::midi_in::MidiInState,
@@ -801,6 +802,7 @@ impl Controller {
             input_menu_model: Rc::new(VecModel::default()),
             export_tracks_model: Rc::new(VecModel::default()),
             export_range_model: Rc::new(VecModel::default()),
+            export_fx_model: Rc::new(VecModel::default()),
             settings_menu_model: Rc::new(VecModel::default()),
             midi_in: Default::default(),
             midi_inputs_model: Rc::new(VecModel::default()),
@@ -870,6 +872,7 @@ impl Controller {
         s.set_sel_sends(ModelRc::from(self.routing.sel_sends_model.clone()));
         s.set_export_tracks_items(ModelRc::from(self.export_tracks_model.clone()));
         s.set_export_range_items(ModelRc::from(self.export_range_model.clone()));
+        s.set_export_fx_items(ModelRc::from(self.export_fx_model.clone()));
         s.set_undo_history_rows(ModelRc::from(self.undo_history_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_midi_inputs(ModelRc::from(self.midi_inputs_model.clone()));

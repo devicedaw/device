@@ -134,7 +134,7 @@ target behaviour.
   in which selecting an empty time range on a track offers generated material that fits the surrounding clips
   (pattern for drum tracks, notes for instrument tracks, from Device's own pattern library in
   `dstudio-core/src/library.rs`). Needs a decision on scope (Q2).
-- [ ] **G24. Export: convert effects for Live sets.** In File › Export › Project, "Convert effects to Live
+- [x] **G24. Export: convert effects for Live sets** (#PRNUM, spec [019](../019-live-device-conversion/spec.md); Compressor, Utility and Channel EQ first). In File › Export › Project, "Convert effects to Live
   devices" is a placeholder; effects are always rendered. Map the built-in effects that have a close Live
   device (EQ, compressor, delay, reverb, utility…) to that device with matching settings, and render the rest.
 - [x] **G37. Tempo changes during a song** (#131, #133, #135, spec [015](../015-tempo-changes/spec.md)). A

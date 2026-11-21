@@ -104,11 +104,11 @@ export component ExportModal inherits Rectangle {
     if Studio.export-recipe == 2: RowLabel { x: 17px; y: 136px; text: "Effects"; }
     if Studio.export-recipe == 2: Rectangle {
         x: 71.4px; y: 136px; width: fx-text.preferred-width + 11.9px + 22.1px; height: 20.4px; border-radius: 10.2px;
-        background: fx-ta.has-hover ? #2e2f34 : DialogTokens.pill;
-        accessible-role: combobox; accessible-label: "DStudio effects"; accessible-value: "Render";
-        fx-text := Text { x: 11.9px; text: "Render"; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+        background: fx-ta.has-hover || Studio.export-fx-menu-open ? #2e2f34 : DialogTokens.pill;
+        accessible-role: combobox; accessible-label: "DStudio effects"; accessible-value: Studio.export-fx-label;
+        fx-text := Text { x: 11.9px; text: Studio.export-fx-label; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
         Icon { x: parent.width - 18.7px; y: 6.2px; width: 8px; height: 8px; d: Icons.chevron-down; ink: DialogTokens.label; stroke-width: 1.4px; }
-        fx-ta := TouchArea { clicked => { Studio.chat-placeholder("Convert effects to Live devices"); } }
+        fx-ta := TouchArea { clicked => { Studio.export-toggle-fx(); } }
     }
     if Studio.export-recipe != 2: RowLabel { x: 17px; y: 105.4px + root.dy; text: "Range"; }
     if Studio.export-recipe != 2: Rectangle {
@@ -163,6 +163,15 @@ export component ExportModal inherits Rectangle {
             x: 71.4px; y: 105.4px + 20.4px + 3.4px; width: 170px; height: Studio.export-tracks-menu-h;
             items: Studio.export-tracks-items;
             picked(i) => { Studio.export-pick-tracks(i); }
+        }
+    }
+    // Effects menu (Project; click outside closes it): Render, Convert to Live devices.
+    if Studio.export-fx-menu-open: Rectangle {
+        TouchArea { clicked => { Studio.export-toggle-fx(); } }
+        ChoiceList {
+            x: 71.4px; y: 136px + 20.4px + 3.4px; width: 160px; height: Studio.export-fx-menu-h;
+            items: Studio.export-fx-items;
+            picked(i) => { Studio.export-pick-fx(i); }
         }
     }
     // Range menu (click outside closes it): Full project, Loop region (dimmed when there is none).

@@ -18496,6 +18496,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(note_redraw_steps());
     all.extend(header_monitor_steps());
     all.extend(api_key_steps());
+    all.extend(live_convert_steps());
     all.extend(ask_clip_steps());
     all.extend(assistant_full_steps());
     all.extend(rename_project_steps());
@@ -18658,6 +18659,7 @@ fn live_import_steps() -> Vec<Step> {
                                 sample_rate: 48_000,
                                 markers: vec![(0.0, 0.0), (1.0, 2.0), (3.0, 4.0)],
                             }]),
+                            devices: Vec::new(),
                         },
                         SetTrack {
                             name: "Keys".into(),
@@ -18673,6 +18675,7 @@ fn live_import_steps() -> Vec<Step> {
                                 length: 4.0,
                                 notes: vec![SetNote { pitch: 60, time: 0.0, duration: 1.0, velocity: 100 }],
                             }]),
+                            devices: Vec::new(),
                         },
                     ],
                 };
@@ -18872,6 +18875,85 @@ fn effect_select_steps() -> Vec<Step> {
         DoC(
             "effects: undo back to the start",
             Box::new(|_, ctl| {
+                while ctl.borrow().doc.history_labels().len() > START.get() {
+                    crate::run_action(ctl, "edit.undo");
+                }
+            }),
+        ),
+    ]
+}
+
+/// Export › Project with Effects › Convert to Live devices (spec 019): a track whose only effect is
+/// a Compressor gets a Live Compressor and a render without compression.
+fn live_convert_steps() -> Vec<Step> {
+    use Step::*;
+    thread_local! {
+        static TRACK: Cell<u64> = const { Cell::new(0) };
+        static START: Cell<usize> = const { Cell::new(0) };
+    }
+    vec![
+        DoC(
+            "convert: a Compressor on a track with clips and no other effect, export a Project with Convert to Live devices",
+            Box::new(|a, ctl| {
+                key(a, Key::Escape, false, false);
+                let mut c = ctl.borrow_mut();
+                START.set(c.doc.history_labels().len());
+                let pick = c
+                    .project()
+                    .tracks
+                    .iter()
+                    .find(|t| {
+                        !t.is_return()
+                            && (!t.clips.is_empty() || !t.midi_clips.is_empty())
+                            && t.devices.is_empty()
+                            && t.automation.is_empty()
+                    })
+                    .map(|t| t.id);
+                let Some(t) = pick else { return };
+                TRACK.set(t.0);
+                let comp = dstudio_core::builtin::find("compressor").expect("compressor");
+                c.add_item_to_track(&crate::devices::Item::Builtin(comp), t, None);
+                let id = c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id);
+                if let Some(id) = id {
+                    c.execute(dstudio_core::Command::SetDeviceParam { device: id, param: "threshold".into(), value: -30.0 });
+                }
+                c.export_open();
+                c.export_pick_recipe(2);
+                c.export_toggle_fx_menu();
+                c.export_pick_fx(1);
+                c.export.dir = run_dir().join("convert");
+                c.export.name = "conv".into();
+                c.export_run();
+            }),
+        ),
+        Check(
+            "convert: the set has a Live Compressor at -30 dB on that track, the notes list it, the set passes its check",
+            Box::new(|c, _| {
+                let t = c.project().track(dstudio_core::TrackId(TRACK.get())).ok_or("no track with clips and no effects")?;
+                let folder = c.export.dir.join("conv Project");
+                let gz = std::fs::read(folder.join("conv.als")).map_err(|e| format!("conv.als: {e}"))?;
+                let mut xml = String::new();
+                std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&gz[..]), &mut xml).map_err(|e| e.to_string())?;
+                crate::live_set::validate(&xml, Some(&folder))?;
+                let notes = std::fs::read_to_string(folder.join("DStudio Export Notes.txt")).unwrap_or_default();
+                let at = xml.find("<Compressor2 Id=").ok_or("no Compressor in the set")?;
+                let threshold = xml[at..]
+                    .find("<Threshold>")
+                    .map(|i| &xml[at + i..])
+                    .and_then(|x| x.split("Manual Value=\"").nth(1))
+                    .and_then(|x| x.split('"').next());
+                let want = format!("{}", 10f64.powf(-30.0 / 20.0));
+                let _ = std::fs::remove_dir_all(&c.export.dir);
+                (threshold.is_some_and(|v| v.parse::<f64>().is_ok_and(|v| (v - want.parse::<f64>().unwrap()).abs() < 1e-6))
+                    && notes.contains(&format!("{} (Compressor)", t.name)))
+                .then_some(())
+                .ok_or(format!("threshold {threshold:?}, notes: {notes}"))
+            }),
+        ),
+        DoC(
+            "convert: back to Render, undo the Compressor",
+            Box::new(|_, ctl| {
+                ctl.borrow_mut().export.convert_fx = false;
                 while ctl.borrow().doc.history_labels().len() > START.get() {
                     crate::run_action(ctl, "edit.undo");
                 }
