@@ -37,6 +37,8 @@ fn default_project_matches_reference() {
     assert_eq!(p.tracks.len(), 2);
     assert_eq!(p.tracks[0].name, "Audio");
     assert_eq!(p.tracks[1].kind, TrackKind::Instrument);
+    // Teal, then orange (palette 6 and 5).
+    assert_eq!((p.tracks[0].color, p.tracks[1].color), (ColorIndex(6), ColorIndex(5)));
     assert_eq!(p.transport.bpm, 120.0);
     assert_eq!(p.ticks_per_bar(), 4 * PPQ);
 }

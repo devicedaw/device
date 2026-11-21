@@ -781,6 +781,13 @@ composer's context chip and the cursor in the composer (`Controller::ask_about_c
 Ask opens it, so the focus request waits for the next interface update (`AssistantState::focus_pending`) before it
 bumps `chat-focus-epoch`, which the panel's composer follows. Self-test section `ask_clip_steps`.
 ### 2026-11-21: rename the project from the title bar
+### 2026-11-21: main-window details
+
+Audio track headers show I (input monitoring) like instrument headers: every recordable track has M S R I. A new
+project's tracks are teal (audio) and orange (instrument), `ColorIndex::FIRST` / `SECOND`; later tracks keep taking
+the next unused colour (coral, amber, ...). The piano roll's loop bar is the track colour at full strength, like the
+clip header on the timeline. The clip sidebar's Shape tab is selectable on an empty MIDI clip, which still opens on
+Patterns. Self-test: `header_monitor_steps` and a Shape check in the MIDI steps; the core test pins the colours.
 
 Clicking the project name in the title bar opens a field (Return renames, Escape cancels, leaving the field renames).
 A saved project's `Name.dsproj` folder is renamed on disk; media inside it, Open Recent and the window follow
