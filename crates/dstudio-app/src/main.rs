@@ -109,6 +109,7 @@ mod shape_rack;
 mod shortcut_presets;
 mod shortcuts;
 mod showcase;
+mod smart_fill;
 mod snap;
 mod sound_preview;
 mod splitters;
@@ -260,6 +261,9 @@ struct Args {
     /// review-tool-menu (1): the timeline's edit tool menu open; review-marquee-range (2): two
     /// MIDI clips with a Marquee range across both tracks.
     tools_review: u8,
+    /// review-smart-fill (1), review-smart-fill-type (2), review-smart-fill-record (3): Smart Fill on,
+    /// bars 5 to 7 of the Instrument track marked, the box open on Create, its Type menu, or Record.
+    smart_fill_review: u8,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
     key_change_review: bool,
@@ -769,6 +773,14 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.key_change_review = true;
                 }
+                st @ ("review-smart-fill" | "review-smart-fill-type" | "review-smart-fill-record") => {
+                    a.reference_default = true;
+                    a.smart_fill_review = match st {
+                        "review-smart-fill" => 1,
+                        "review-smart-fill-type" => 2,
+                        _ => 3,
+                    };
+                }
                 st @ ("review-tool-menu" | "review-marquee-range") => {
                     a.reference_default = true;
                     a.tools_review = if st == "review-tool-menu" { 1 } else { 2 };
@@ -910,7 +922,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-effect-selection, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-add-track-menu, review-lane-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-effect-selection, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-smart-fill, review-smart-fill-type, review-smart-fill-record, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-add-track-menu, review-lane-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
                     ));
                 }
             },
@@ -1465,6 +1477,9 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.auto_picker_close();
             c.transport_menus_dismiss();
             c.tool_menu_dismiss();
+            if c.smart_close() {
+                return true;
+            }
             c.range_clear();
             c.effect_select_clear();
             c.rename = None;
@@ -2697,6 +2712,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.key_mode(true);
         c.key_pick(2);
     }
+    if args.smart_fill_review > 0 {
+        let mut c = ctl.borrow_mut();
+        let tpb = c.project().ticks_per_bar();
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) {
+            c.smart.on = true;
+            c.tools.range = Some(dstudio_core::range::TimeRange { start: 4 * tpb, end: 6 * tpb, tracks: vec![t] });
+            c.smart.fill = Some(smart_fill::FillBox {
+                track: t,
+                start: 4 * tpb,
+                end: 6 * tpb,
+                tab: if args.smart_fill_review == 3 { 1 } else { 0 },
+                text: String::new(),
+                part: 0,
+                genre: 0,
+                menu: if args.smart_fill_review == 2 { 1 } else { 0 },
+                query: String::new(),
+                looping: false,
+            });
+        }
+    }
     if args.tools_review == 1 {
         // Opened below the tool button of the default 1440 x 820 window (anchors are not measured yet).
         ctl.borrow_mut().tool_menu_toggle(969.0, 98.0);
@@ -3275,6 +3310,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_export_toggle_range, |c| c.export_toggle_range_menu());
     on!(on_export_toggle_fx, |c| c.export_toggle_fx_menu());
     on!(on_export_pick_fx, |c, row: i32| c.export_pick_fx(row));
+    on!(on_smart_toggle, |c| c.smart_fill_toggle());
+    on!(on_smart_close, |c| {
+        c.smart_close();
+    });
+    on!(on_smart_pick_tab, |c, tab: i32| c.smart_tab(tab as u8));
+    on!(on_smart_edited, |c, text: slint::SharedString| c.smart_text(&text));
+    on!(on_smart_open_menu, |c, which: i32| c.smart_menu(which as u8));
+    on!(on_smart_pick, |c, row: i32| {
+        if c.smart.fill.as_ref().is_some_and(|f| f.menu == 2) { c.smart_pick_genre(row as usize) } else { c.smart_pick_type(row as usize) }
+    });
+    on!(on_smart_query, |c, text: slint::SharedString| c.smart_genre_query(&text));
+    on!(on_smart_switch, |c, which: i32| c.smart_switch(which as u8));
+    on!(on_smart_create, |c| c.smart_create());
+    on!(on_smart_record, |c| c.smart_record());
     on!(on_export_pick_range, |c, row: i32| c.export_pick_range(row));
     on!(on_export_pick_tracks, |c, i: i32| c.export_pick_tracks(i));
     on!(on_export_name_edited, |c, t: slint::SharedString| c.export_set_name(t.as_str()));
@@ -3530,7 +3579,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if kind == 0 {
             c.snap.bypass = cmd;
         }
-        if c.tool_pointer(kind, x, y) {
+        if c.smart_pointer(kind, x, y) || c.tool_pointer(kind, x, y) {
             return;
         }
         // A second press that completes a double-click acts on its own, and so do its moves and

@@ -43,6 +43,8 @@ wgpu.
 
 - **Timeline.** Double-click an empty spot on an instrument track to make a MIDI clip there (or right-click it, or
   use Create › MIDI Clip), import audio, move and trim clips, loop a range, and play against a metronome.
+  With Smart Fill on, drag over a gap on a track to fill it with a part from the pattern library (or describe one
+  for the assistant to write), or to record straight into it.
   Right-click a track header to rename, recolour, delete, group, bounce in place or duplicate the track (with or without
   its clips), show its automation, or add an audio, instrument, Sampler, Drum or return track right below it; the same
   rows end the menu of an empty lane, which starts with Open <instrument> and Insert empty MIDI clip. Drag headers up

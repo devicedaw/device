@@ -907,6 +907,15 @@ the schema lists the palette and the state shows each track's colour, and `plan`
 run (core test `a_real_reply_that_colours_and_points_at_a_new_track_is_accepted`). The provider's HTTPS client
 trusts the system's certificates (ureq `platform-verifier`). The second run passed: 28.5 s for the five prompts,
 about 21 s of it the bassline.
+### 2026-11-21: Smart Fill
+
+The timeline header's Smart Fill pill switches a mode (spec 021): dragging over empty space on a track marks a
+range and opens a box under it with the track, Create and Record. Create with an empty description fills the
+range at once with a MIDI clip from Device's pattern library for the Type and Genre, in the project key, as one
+"Smart Fill" undo step; the clip's Patterns tab swaps it. With a description, the assistant writes the part.
+Record arms the track, optionally loops the range and records into it, with the Typing and Count-in switches.
+`smart_fill.rs`; review states `review-smart-fill`, `review-smart-fill-type`, `review-smart-fill-record`;
+self-test section `smart_fill_steps`.
 
 ### 2026-11-21: AI apps can control Device (MCP)
 

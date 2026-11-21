@@ -130,7 +130,7 @@ target behaviour.
   parameters, sends, automation, the Sampler or the Drum Rack, or create audio clips. Add a key field (stored
   in the system keychain), describe chains and devices in the state and tool schema, test against the live API
   once, and update the README status row.
-- [ ] **G23. Smart Fill** (spec). The Smart Fill pill in the timeline header is a placeholder. It toggles a mode
+- [x] **G23. Smart Fill** (#156, spec [021](../021-smart-fill/spec.md)). The Smart Fill pill in the timeline header is a placeholder. It toggles a mode
   in which selecting an empty time range on a track offers generated material that fits the surrounding clips
   (pattern for drum tracks, notes for instrument tracks, from Device's own pattern library in
   `dstudio-core/src/library.rs`). Needs a decision on scope (Q2).

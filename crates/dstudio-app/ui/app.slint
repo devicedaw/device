@@ -653,10 +653,15 @@ component Timeline inherits Panel {
     rgroup := HorizontalLayout {
         x: root.width - self.width - 10.2px; y: 0; width: self.preferred-width; height: 27.2px;
         spacing: 3.4px;
-        // Smart Fill: PLACEHOLDER
+        // Smart Fill (src/smart_fill.rs): lit while the mode is on.
         Rectangle {
             width: 63.75px + 6.8px;
-            Pill { x: 0; y: 5px; width: 63.75px; height: 18px; text: "Smart Fill"; icon: Icons.marquee; font-size: 8.25px; text-color: #a0a1a5; }
+            Pill {
+                x: 0; y: 5px; width: 63.75px; height: 18px; text: "Smart Fill"; icon: Icons.marquee; font-size: 8.25px;
+                active: Studio.smart-on; text-color: Studio.smart-on ? Tokens.on-accent : #a0a1a5;
+                accessible-role: checkbox; accessible-label: "Smart Fill"; accessible-checked: Studio.smart-on;
+                clicked => { Studio.smart-toggle(); }
+            }
         }
         // Show/Hide automation lanes and Draw mode (B) (src/automation.rs).
         Rectangle {
@@ -752,7 +757,10 @@ component Timeline inherits Panel {
         // Marquee tool range and the Scissors cut line (src/tools.rs).
         if Studio.range-on: Rectangle {
             x: Studio.range-x; y: Studio.range-y; width: Studio.range-w; height: Studio.range-h;
-            background: #ffffff85;
+            // Smart Fill marks its range with an outline (src/smart_fill.rs).
+            background: Studio.smart-on ? #ffffff0a : #ffffff85;
+            border-width: Studio.smart-on ? 1px : 0;
+            border-color: #ffffff59;
         }
         if Studio.cut-on: Rectangle {
             x: Studio.cut-x - 0.5px; y: Studio.cut-y; width: 1px; height: Studio.cut-h;
@@ -1234,6 +1242,125 @@ export struct LayoutAnchors {
     settings-x: length, settings-y: length, settings-w: length,
 }
 
+// Smart Fill box (src/smart_fill.rs): the track, Create / Record tabs, and the tab's row.
+component SmartTab inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    callback clicked;
+    width: label.preferred-width + 17px; height: 15.3px; border-radius: self.height / 2;
+    background: root.on ? Tokens.accent : transparent;
+    label := Text {
+        text: root.text; font-size: 9.35px; font-weight: 600; vertical-alignment: center; horizontal-alignment: center;
+        color: root.on ? Tokens.on-accent : root.enabled ? (ta.has-hover ? #e5e5e8 : #a0a1a5) : #55565a;
+    }
+    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+}
+
+component SmartPick inherits Rectangle {
+    in property <string> text;
+    in property <bool> open;
+    in property <bool> lit;
+    callback clicked;
+    width: label.preferred-width + 13px; height: 15px;
+    label := Text {
+        x: 0; text: root.text; font-size: 8.9px; font-weight: 500; vertical-alignment: center;
+        color: root.open || ta.has-hover || root.lit ? #d3d3d6 : #8e8f93;
+    }
+    Icon { x: label.preferred-width + 3.5px; y: 4.5px; width: 7px; height: 7px; d: Icons.chevron-down; ink: label.color; stroke-width: 1.4px; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+component SmartSwitch inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <string> icon: "";
+    callback toggled;
+    width: row.preferred-width; height: 15px;
+    row := HorizontalLayout {
+        spacing: 5px;
+        if root.icon != "": Rectangle { width: 10px; Icon { y: 2.5px; width: 10px; height: 10px; d: root.icon; ink: #a0a1a5; } }
+        Text { text: root.text; font-size: 9.35px; font-weight: 500; vertical-alignment: center; color: root.on ? #e5e5e8 : #a0a1a5; }
+        Rectangle { width: 20px; Switch { y: 2px; on: root.on; toggled => { root.toggled(); } } }
+    }
+}
+
+component SmartFillBox inherits Rectangle {
+    width: 329px; height: Studio.smart-tab == 0 ? 79px : 57px;
+    border-radius: 8.5px;
+    background: Tokens.bg-raised;
+    border-width: 0.5px;
+    border-color: @linear-gradient(180deg, Tokens.popup-border-top 0%, Tokens.popup-border 8%);
+    drop-shadow-blur: 12px; drop-shadow-color: #00000080; drop-shadow-offset-y: 3px;
+    TouchArea { }
+    // The track chip.
+    Rectangle {
+        x: 8.5px; y: 7.6px; width: chip.preferred-width + 30px; height: 18.7px; border-radius: self.height / 2;
+        border-width: 0.75px; border-color: #3b6f5c; background: #1f2a26;
+        Icon { x: 6px; y: 4.35px; width: 10px; height: 10px; d: Studio.smart-audio ? Icons.track-audio : Icons.keys; ink: #6fd3ad; }
+        chip := Text { x: 20px; text: Studio.smart-track; font-size: 8.9px; font-weight: 600; color: #e5e5e8; vertical-alignment: center; }
+    }
+    // Create | Record, and ×.
+    Rectangle {
+        x: parent.width - 132px; y: 7.6px; width: 102px; height: 18.7px; border-radius: self.height / 2; background: #2a2b30;
+        HorizontalLayout {
+            padding: 1.7px; spacing: 0;
+            SmartTab { text: "Create"; on: Studio.smart-tab == 0; enabled: !Studio.smart-audio; clicked => { Studio.smart-pick-tab(0); } }
+            SmartTab { text: "Record"; on: Studio.smart-tab == 1; clicked => { Studio.smart-pick-tab(1); } }
+        }
+    }
+    Icon {
+        x: parent.width - 20px; y: 11.5px; width: 11px; height: 11px; d: Icons.close; ink: close-ta.has-hover ? #e5e5e8 : #8e8f93;
+        accessible-role: button; accessible-label: "Close Smart Fill";
+        close-ta := TouchArea { x: -4px; y: -4px; width: 19px; height: 19px; clicked => { Studio.smart-close(); } }
+    }
+    if Studio.smart-tab == 0: Rectangle {
+        x: 0; y: 33px; width: parent.width; height: 46px;
+        // Describe a musical part… and Create.
+        Rectangle {
+            x: 8.5px; y: 0; width: parent.width - 70px; height: 20.4px; border-radius: self.height / 2; background: #2a2b30;
+            Icon { x: 8px; y: 5.2px; width: 10px; height: 10px; d: Icons.search; ink: #8e8f93; stroke-width: 1.5px; }
+            if field.text == "": Text { x: 24px; height: parent.height; text: "Describe a musical part…"; font-size: 8.9px; color: #8e8f93; vertical-alignment: center; }
+            field := TextInput {
+                x: 24px; width: parent.width - 30px; height: parent.height; text: Studio.smart-text; font-size: 8.9px;
+                color: Tokens.text-primary; vertical-alignment: center; single-line: true; accessible-label: "Describe a musical part";
+                init => { self.focus(); }
+                edited => { Studio.smart-edited(self.text); }
+                accepted => { Studio.smart-create(); }
+            }
+        }
+        Text {
+            x: parent.width - 52px; y: 0; width: 44px; height: 20.4px; text: "Create"; font-size: 9.35px; font-weight: 600;
+            horizontal-alignment: center; vertical-alignment: center;
+            color: create-ta.has-hover ? #ffffff : Studio.smart-text != "" ? #e5e5e8 : #8e8f93;
+            accessible-role: button; accessible-label: "Create";
+            create-ta := TouchArea { clicked => { Studio.smart-create(); } }
+        }
+        HorizontalLayout {
+            x: 14px; y: 24.5px; height: 15px; spacing: 11px; alignment: start;
+            SmartPick { text: Studio.smart-type == "Any" ? "Type" : Studio.smart-type; lit: Studio.smart-type != "Any"; open: Studio.smart-menu == 1; clicked => { Studio.smart-open-menu(1); } }
+            SmartPick { text: Studio.smart-genre; lit: Studio.smart-genre != "Genre"; open: Studio.smart-menu == 2; clicked => { Studio.smart-open-menu(2); } }
+        }
+    }
+    if Studio.smart-tab == 1: HorizontalLayout {
+        x: 14px; y: 33px; width: parent.width - 22px; height: 17px; spacing: 17px;
+        SmartSwitch { text: "Typing"; icon: Icons.keys; on: Studio.smart-typing; toggled => { Studio.smart-switch(0); } }
+        SmartSwitch { text: "Count-in"; on: Studio.smart-count-in; toggled => { Studio.smart-switch(1); } }
+        SmartSwitch { text: "Loop"; on: Studio.smart-loop; toggled => { Studio.smart-switch(2); } }
+        Rectangle { horizontal-stretch: 1; }
+        Rectangle {
+            width: 61px; height: 17px; border-radius: self.height / 2; background: rec-ta.has-hover ? Tokens.record-red.mix(#ffffff, 0.85) : Tokens.record-red;
+            accessible-role: button; accessible-label: "Record";
+            HorizontalLayout {
+                alignment: center; spacing: 4px;
+                Rectangle { width: 6px; Rectangle { y: 5.5px; width: 6px; height: 6px; border-radius: 3px; background: #ffffff; } }
+                Text { text: "Record"; font-size: 9.35px; font-weight: 600; color: #ffffff; vertical-alignment: center; }
+            }
+            rec-ta := TouchArea { clicked => { Studio.smart-record(); } }
+        }
+    }
+}
+
 // The timeline's edit tool menu: three rows with the tool's icon and a check on the active one.
 component ToolMenu inherits Rectangle {
     width: 117.3px; height: 3.4px * 2 + 20.4px * 3;
@@ -1413,6 +1540,9 @@ export component AppWindow inherits Window {
     property <bool> settings-open: Studio.settings-open;
     changed settings-open => { if (!self.settings-open) { fs.focus(); } }
     fs := FocusScope {
+        // The Smart Fill box took the keyboard for its field: give it back when the box closes.
+        property <bool> smart-shown: Studio.smart-open;
+        changed smart-shown => { if (!self.smart-shown) { self.focus(); } }
         init => { self.focus(); }
         key-pressed(e) => {
             if (e.text == Key.Escape) { self.focus(); }
@@ -1532,6 +1662,44 @@ export component AppWindow inherits Window {
                 content-h: Studio.synth-menu-h;
                 items: Studio.synth-menu-items;
                 picked(i) => { Studio.synth-menu-pick(i); }
+            }
+        }
+        // Smart Fill box under the marked range (src/smart_fill.rs); a click outside closes it.
+        if Studio.smart-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.smart-close(); } } }
+            sbox := SmartFillBox {
+                x: max(5px, min(root.width - self.width - 5px, root.anchors.lanes-x + Studio.smart-x - self.width / 2));
+                y: min(root.height - self.height - 5px, root.anchors.lanes-y + Studio.smart-y + 8px);
+            }
+            if Studio.smart-menu == 2: Rectangle {
+                x: sbox.x + 62px; y: sbox.y + sbox.height + 3px; width: 160px; height: min(Studio.smart-menu-h, 200px) + 27px;
+                border-radius: 6px; background: Tokens.bg-raised; border-width: 0.5px; border-color: Tokens.popup-border;
+                drop-shadow-blur: 10px; drop-shadow-color: #00000070; drop-shadow-offset-y: 2px;
+                TouchArea { }
+                Rectangle {
+                    x: 5px; y: 4px; width: parent.width - 10px; height: 18px; border-radius: 9px; background: #2a2b30;
+                    Icon { x: 6px; y: 4px; width: 10px; height: 10px; d: Icons.search; ink: #8e8f93; stroke-width: 1.5px; }
+                    if query.text == "": Text { x: 21px; height: parent.height; text: "Search genre"; font-size: 8.9px; color: #8e8f93; vertical-alignment: center; }
+                    query := TextInput {
+                        x: 21px; width: parent.width - 26px; height: parent.height; font-size: 8.9px; color: Tokens.text-primary;
+                        vertical-alignment: center; single-line: true; accessible-label: "Search genre";
+                        init => { self.focus(); }
+                        edited => { Studio.smart-query(self.text); }
+                        accepted => { Studio.smart-pick(0); }
+                    }
+                }
+                ChoiceList {
+                    x: 0; y: 25px; width: parent.width; height: min(Studio.smart-menu-h, 200px);
+                    content-height: Studio.smart-menu-h > 200px ? Studio.smart-menu-h : 0px;
+                    items: Studio.smart-items; background: transparent; border-width: 0; drop-shadow-blur: 0;
+                    picked(i) => { Studio.smart-pick(i); }
+                }
+            }
+            if Studio.smart-menu == 1: ChoiceList {
+                x: sbox.x + 14px; y: sbox.y + sbox.height + 3px; width: 110px; height: Studio.smart-menu-h;
+                items: Studio.smart-items;
+                picked(i) => { Studio.smart-pick(i); }
             }
         }
         // Edit tool menu (src/tools.rs): Selector, Marquee tool, Scissors, the active one ticked.
