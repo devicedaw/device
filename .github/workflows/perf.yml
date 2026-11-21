@@ -133,8 +133,16 @@ jobs:
   time:
     name: Time (${{ matrix.name }})
     needs: changes
-    # Adding or removing the accept label only matters to the gate above.
-    if: ${{ !cancelled() && needs.changes.outputs.perf != 'false' && github.event.action != 'labeled' && github.event.action != 'unlabeled' }}
+    # Keep routine PRs on the instruction gate. Adding perf-timing requests
+    # the advisory matrix immediately, independent of regression acceptance.
+    if: >-
+      !cancelled() && needs.changes.outputs.perf != 'false' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'perf-timing') &&
+        (github.event.action == 'opened' || github.event.action == 'synchronize' ||
+         github.event.action == 'reopened' ||
+         (github.event.action == 'labeled' && github.event.label.name == 'perf-timing'))))
     strategy:
       fail-fast: false
       matrix:

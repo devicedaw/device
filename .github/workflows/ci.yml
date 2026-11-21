@@ -4,7 +4,7 @@ on:
     branches: [main]
   pull_request:
   # Nightly on main: catches what changes without a commit (a new stable Rust, a runner image
-  # update) and runs the slow Windows self-test even on days without a merge.
+  # update) and runs the full Windows self-test under WARP.
   schedule:
     - cron: '23 4 * * *'
   workflow_dispatch:
@@ -523,14 +523,14 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "the app exited with 0x{0:X8}" -f $p.ExitCode }
       # The full self-test under WARP takes about 30 minutes (the software
       # renderer is capped at two frames in flight so it no longer runs out of
-      # memory), so pull requests skip it unless they carry the
-      # `windows-self-test` label (add the label, then push). Pushes to main,
-      # the nightly run and manual runs always run it, and a failure fails the
-      # job.
+      # memory). Run it nightly, on demand, or on app-affecting pull requests
+      # with the `windows-self-test` label (add the label, then push).
+      # A failure fails the job.
       - name: App — self-test (Windows, WARP)
         if: >-
           runner.os == 'Windows' && steps.changes.outputs.run == 'true' &&
-          (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'windows-self-test'))
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+           (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'windows-self-test')))
         timeout-minutes: 60
         shell: pwsh
         env:
