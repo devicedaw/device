@@ -255,7 +255,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Assistant | ✅ | Passes a live test against the Anthropic API (tracks, MIDI, built-in effects and their settings, tempo and volume, Point mode); needs your own Anthropic API key |
 | AI apps (MCP) | 🚧 | Tested with a scripted MCP client against the running app on Linux; not yet tried with Claude Desktop or another real AI app. ChatGPT can't connect (it only supports MCP servers on the internet) |
 | Windows and Linux audio | 🚧 | Windows: playback, recording, buffer sizes down to 128 samples and switching outputs checked on one PC's built-in sound card (WASAPI shared mode); ASIO drivers play and record, checked with FlexASIO only (no hardware ASIO driver yet); no exclusive mode. Linux plays through PipeWire or straight through ALSA in CI on a headless PipeWire server, but has not run on a physical sound card |
-| Releases and branding | 🚧 | 0.3.0 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is not notarised yet and Windows packages are not signed |
+| Releases and branding | 🚧 | 0.3.0 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is signed and notarised, the Windows packages are not signed yet |
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log. Everything still to build, in priority order, is in the
 [parity roadmap](specs/010-parity-roadmap/spec.md).
@@ -283,8 +283,7 @@ Download the latest release from the [releases page](https://github.com/deviceda
 | Windows x64 | `Device-<version>-windows-x64-setup.exe` (installer) or `-windows-x64.zip` (portable) |
 | Linux x86_64 / aarch64 | `Device-<version>-linux-x86_64.tar.gz` / `-linux-aarch64.tar.gz` |
 
-The macOS app is not notarised yet: the first time you open it, macOS refuses; open System Settings › Privacy &
-Security and choose Open Anyway. The Windows packages are not signed yet, so SmartScreen asks you to confirm
+The macOS app is signed and notarised (from 0.3.0), so it opens like any other app. The Windows packages are not signed yet, so SmartScreen asks you to confirm
 the first run (More info › Run anyway). `SHA256SUMS.txt` on the release lists every package's checksum; see
 [Release packages](docs/building.md#release-packages) for how the packages are made.
 
