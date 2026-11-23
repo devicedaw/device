@@ -155,6 +155,9 @@ pub struct Preferences {
     /// files without it send them.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub crash_reports_off: bool,
+    /// Assistant › Getting started tour: its step, and whether the card was closed.
+    #[serde(default, skip_serializing_if = "crate::tour::TourPrefs::is_default")]
+    pub assistant_tour: crate::tour::TourPrefs,
 }
 
 fn is_zero_u8(v: &u8) -> bool {
@@ -331,6 +334,7 @@ mod tests {
             shortcuts: [("transport.record".to_string(), vec!["primary+shift+r".to_string()])].into_iter().collect(),
             shortcut_preset: "Logic Pro".into(),
             crash_reports_off: true,
+            assistant_tour: crate::tour::TourPrefs { step: 2, closed: false },
         };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));

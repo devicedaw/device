@@ -108,7 +108,7 @@ target behaviour.
 - [x] **G17. Ask from a clip (⌘K)** (#134). The clip menu's Ask row is disabled (`src/clipedit.rs`, "PLACEHOLDER entry
   (disabled): Ask"), and `assistant.ask` (⌘K) is not handled. It must open the assistant panel with the clip
   set as its context chip and the cursor in the composer.
-- [ ] **G18. Assistant: Getting started tour.** On first launch the assistant panel shows a "Getting started"
+- [x] **G18. Assistant: Getting started tour.** (#165) On first launch the assistant panel shows a "Getting started"
   card ("1 of 4", progress bar, Continue, collapse and close) that walks a new user through four steps with a
   coach mark: a highlight ring around the area and a popover with the step's title, one line of help, Back,
   Next and close. Device's steps: find a sound in Files and preview it, drag it to the timeline, add an
