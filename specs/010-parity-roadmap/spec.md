@@ -123,8 +123,8 @@ target behaviour.
 - [x] **G21. Assistant: full-height layout** (#136). The header's panel button is a placeholder ("Full height (not
   implemented)"). It must toggle the panel between the timeline row only and the full window height (over the
   bottom panel).
-- [ ] **G22. Assistant: works for normal users and knows the devices** (#138: key field and keychain, devices in the
-  state and schema; the one live API test is still to do). The key can only come from the
+- [x] **G22. Assistant: works for normal users and knows the devices** (#138: key field and keychain, devices in the
+  state and schema; #153: live API test passed; #161: tool fixes from a real AI-app run). The key can only come from the
   `ANTHROPIC_API_KEY` environment variable, which a Finder-launched app never sees; it has never been run
   against the live API; and the model is not told about device chains, so it cannot add effects or change their
   parameters, sends, automation, the Sampler or the Drum Rack, or create audio clips. Add a key field (stored
@@ -191,7 +191,8 @@ next to the target on the same window size.
 - [x] **G28. Device-chain rows in Settings › Shortcuts.** (#147; with effect selection in the chain.) The Shortcuts page lists every timeline and editor
   key, but not the device-chain ones (move, delete, duplicate, fold, toggle a device). Add them, bindable like
   the others.
-- [ ] **G29. Windows: interface labels render as empty boxes** (issue #115). The last report is that preferring
+- [x] **G29. Windows: interface labels render as empty boxes** (issue #115, fixed by #117 and confirmed on the Windows
+  test PC; the issue is closed). The last report is that preferring
   Direct3D 12 (#117) likely fixes it; confirm on the Windows test PC and close the issue, or fix the font
   loading if it still happens.
 
