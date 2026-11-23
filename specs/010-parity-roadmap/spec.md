@@ -117,7 +117,7 @@ target behaviour.
 - [ ] **G19. Assistant: voice input.** The mic button and the General › Voice rows (Talk key, Hold talk key to
   record, Auto-send, Language) are placeholders, and Settings › Audio has no "Assistant voice input" device row
   (Same as input device by default). Spec needed: a local or provider speech-to-text that respects privacy.
-- [ ] **G20. Assistant: "Let the assistant listen to audio".** Greyed today. When on, a turn may include a short
+- [x] **G20. Assistant: "Let the assistant listen to audio".** (#PR) Greyed today. When on, a turn may include a short
   analysis of the selected clip or the mix (loudness, spectrum summary, key and tempo guess) so answers can refer
   to the sound. Off by default if it sends anything off the machine.
 - [x] **G21. Assistant: full-height layout** (#136). The header's panel button is a placeholder ("Full height (not

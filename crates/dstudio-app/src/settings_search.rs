@@ -69,6 +69,12 @@ pub const ENTRIES: &[Entry] = &[
     e(0, "Keep plugin windows on top", &["float", "front", "editor"], "Keeps plugin windows in front of the main window."),
     e(
         0,
+        "Let the assistant listen to audio",
+        &["assistant", "analysis", "loudness", "key", "tempo", "hear"],
+        "Each assistant message includes a short description of the selection's sound: loudness, tone, key and tempo. The audio itself stays on this computer.",
+    ),
+    e(
+        0,
         "Let AI apps control Device",
         &["mcp", "claude", "chatgpt", "ai", "assistant", "cursor"],
         "Lets AI apps such as Claude Desktop read and edit your project on this computer.",

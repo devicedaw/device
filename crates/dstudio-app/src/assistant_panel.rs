@@ -325,18 +325,20 @@ impl Controller {
         }
         let mut state = assistant::describe_state(self.project());
         state["next_id_hint"] = serde_json::json!(self.project().next_id);
-        let req = crate::assistant_provider::Request {
+        let mut req = crate::assistant_provider::Request {
             mode: self.assistant.mode,
             prompt: prompt.clone(),
             state,
             selection: self.selection_description(),
             history: self.assistant.history(),
+            audio: None,
         };
+        let listen = if self.settings.prefs.general.assistant_listen { self.listen_job() } else { None };
         let point = self.assistant.mode == Mode::Teach;
         self.assistant.push(Entry { kind: EntryKind::User, text: prompt, lines: Vec::new(), secs: 0.0, expanded: false, point });
         self.assistant.entries.push(Entry {
             kind: EntryKind::Pending,
-            text: "Reasoning".into(),
+            text: if listen.is_some() { "Listening".into() } else { "Reasoning".into() },
             lines: Vec::new(),
             secs: 0.0,
             expanded: false,
@@ -350,6 +352,11 @@ impl Controller {
         let mode = self.assistant.mode;
         self.pending_jobs += 1;
         let spawned = std::thread::Builder::new().name("assistant".into()).spawn(move || {
+            // Listening first (render + measure); a failed render only leaves the measurement out.
+            if let Some(job) = listen {
+                req.audio =
+                    Some(crate::assistant_listen::describe(job).unwrap_or_else(|e| format!("Device could not listen this time ({e}).")));
+            }
             let result = provider.complete(&req);
             let _ = tx.send(JobResult::Assistant { started, mode, result });
         });

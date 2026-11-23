@@ -136,6 +136,8 @@ wgpu.
   narrower bottom panel. It uses your own Anthropic API key, pasted into the panel once and kept in the system keychain.
   A Getting started card at the top of the panel walks a new user through four steps (find a sound, drag it in, draw
   notes on an instrument track, play and export), each with a tip pointing at the right part of the window.
+  With Settings › General › Let the assistant listen to audio on, each message also says what the selection sounds like
+  (loudness, peak, tone by band, a key and tempo guess), measured on your computer; the audio itself is never sent.
 - **Use your own AI app.** Turn on Settings › General › Let AI apps control Device and press Copy setup, and an AI app
   that supports MCP on this computer (Claude Desktop, Claude Code, Cursor and others) can read the open project and edit
   it: tracks, MIDI clips and notes, built-in effects and instruments and their settings, tempo, undo and play. Device
