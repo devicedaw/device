@@ -71,7 +71,7 @@ pub const ENTRIES: &[Entry] = &[
         0,
         "Let the assistant listen to audio",
         &["assistant", "analysis", "loudness", "key", "tempo", "hear"],
-        "Each assistant message includes a short description of the selection's sound: loudness, tone, key and tempo. The audio itself stays on this computer.",
+        "Sends the assistant measured loudness, tone, key and tempo of the selection, never the audio itself.",
     ),
     e(
         0,
