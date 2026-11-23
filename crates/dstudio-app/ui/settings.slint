@@ -161,9 +161,9 @@ component SearchHit inherits Rectangle {
     visible: root.enabled && Studio.settings-search != "" && Studio.settings-row-hit(Studio.settings-search, root.label);
 }
 
-// General page. Startup, Projects folder, Playhead on stop, Sections move clips and the three
-// plugin window switches work (prefs.general). The Assistant section is shown off and disabled:
-// DStudio has no audio-listening assistant or voice input. (No sample licensing row: Device has
+// General page. Startup, Projects folder, Playhead on stop, Sections move clips, the three
+// plugin window switches and the Assistant's listen switch work (prefs.general). Voice is
+// shown off and disabled: Device has no voice input yet. (No sample licensing row: Device has
 // no online service, roadmap Q3.)
 component GeneralPage inherits Rectangle {
     property <length> sw-x: root.width - 20.5px - 22.5px;
@@ -178,7 +178,7 @@ component GeneralPage inherits Rectangle {
         { t: "Always load last session", y: 88.4px, k: 0 }, { t: "Check for updates at launch", y: 108px, k: 5 },
         { t: "Sections move clips", y: 282.5px, k: 4 }, { t: "Auto-show third-party effect windows", y: 336.9px, k: 1 },
         { t: "Auto-show built-in effect windows", y: 356.5px, k: 2 }, { t: "Keep plugin windows on top", y: 376.7px, k: 3 },
-        { t: "Let the assistant listen to audio", y: 431.8px, k: -1 }, { t: "Let AI apps control Device", y: 451.4px, k: 6 }, { t: "Hold talk key to record", y: 538.9px, k: -1 },
+        { t: "Let the assistant listen to audio", y: 431.8px, k: 7 }, { t: "Let AI apps control Device", y: 451.4px, k: 6 }, { t: "Hold talk key to record", y: 538.9px, k: -1 },
         { t: "Auto-send", y: 559.1px, k: -1 },
     ]: Rectangle {
         x: 0; y: r.y; width: root.width; height: 14px;

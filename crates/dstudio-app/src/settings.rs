@@ -227,7 +227,7 @@ impl Controller {
     /// Settings › General switches, in page order: 0 Always load last session, 1 Auto-show
     /// third-party effect windows, 2 Auto-show built-in effect windows, 3 Keep plugin windows
     /// on top, 4 Sections move clips, 5 Check for updates at launch, 6 Let AI apps control
-    /// Device (starts or stops the MCP server). Saved at once.
+    /// Device (starts or stops the MCP server), 7 Let the assistant listen to audio. Saved at once.
     pub fn general_toggle(&mut self, i: i32) {
         let g = &mut self.settings.prefs.general;
         let flag = match i {
@@ -238,6 +238,7 @@ impl Controller {
             4 => &mut g.sections_move_clips,
             5 => &mut g.check_updates_at_launch,
             6 => return self.mcp_toggle(),
+            7 => &mut g.assistant_listen,
             _ => return,
         };
         *flag = !*flag;
@@ -740,6 +741,7 @@ impl Controller {
             g.sections_move_clips,
             g.check_updates_at_launch,
             self.settings.prefs.ai_apps,
+            g.assistant_listen,
         ];
         let shown = s.get_general_on();
         if (0..on.len()).any(|i| slint::Model::row_data(&shown, i) != Some(on[i])) {

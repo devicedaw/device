@@ -4001,6 +4001,32 @@ fn steps() -> Vec<Step> {
                     .ok_or(format!("hl {hl} rect {r:?} note {note}"))
             }),
         ),
+        // ---------------- assistant: listen to audio (src/assistant_listen.rs) ----------------
+        DoC(
+            "turn on Let the assistant listen to audio, select the first audio clip, send a prompt",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.general.assistant_listen = true;
+                c.selected_clip = c.project().tracks.iter().find_map(|t| t.clips.first().map(|cl| cl.id));
+                c.assistant_send("how does this sound?");
+            }),
+        ),
+        Check(
+            "the turn carried a measurement of the selected clip (loudness, key, tempo)",
+            Box::new(|c, _| {
+                let heard = c.provider.fixture_heard().unwrap_or_default();
+                (c.assistant.busy.is_none() && heard.starts_with("Device listened to the selected clip") && heard.contains("dBFS"))
+                    .then_some(())
+                    .ok_or(format!("busy {} heard {heard:?}", c.assistant.busy.is_some()))
+            }),
+        ),
+        DoC(
+            "turn listening off again",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.general.assistant_listen = false;
+            }),
+        ),
         // ---------------- mixer ----------------
         Do("click the mixer toggle", Box::new(|a| click(a, win().0 - 119.0 + 12.5, 47.0))),
         Check(
@@ -11537,7 +11563,7 @@ fn general_settings_steps() -> Vec<Step> {
                 let s = a.global::<Studio>();
                 let on: Vec<bool> = s.get_general_on().iter().collect();
                 (s.get_settings_page() == 0
-                    && on == [false, true, false, true, false, true, false]
+                    && on == [false, true, false, true, false, true, false, false]
                     && !s.get_general_stop_in_place()
                     && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
                 .then_some(())
@@ -11556,7 +11582,22 @@ fn general_settings_steps() -> Vec<Step> {
             }),
         ),
         Do(
-            "general: click the disabled assistant listening switch",
+            "general: click Let the assistant listen to audio",
+            Box::new(move |a| {
+                let (x, y) = switch_xy(431.8);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "general: listening is on and shown on",
+            Box::new(|c, a| {
+                (c.settings.prefs.general.assistant_listen && a.global::<Studio>().get_general_on().row_data(7) == Some(true))
+                    .then_some(())
+                    .ok_or(format!("{:?}", c.settings.prefs.general))
+            }),
+        ),
+        Do(
+            "general: click it again (off)",
             Box::new(move |a| {
                 let (x, y) = switch_xy(431.8);
                 click(a, x, y);

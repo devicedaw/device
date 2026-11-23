@@ -21,6 +21,7 @@ pub mod instrument;
 pub mod key_change;
 pub mod keymap;
 pub mod library;
+pub mod listen;
 pub mod midi;
 pub mod midi_record;
 pub mod model;

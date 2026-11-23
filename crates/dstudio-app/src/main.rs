@@ -40,6 +40,7 @@ static ZOOM_FIT_REVIEW: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU
 mod analyzer_views;
 mod api_key;
 mod appmenu;
+mod assistant_listen;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;

@@ -223,6 +223,10 @@ pub struct GeneralPrefs {
     pub sections_move_clips: bool,
     /// Startup: look for a newer release once at launch (updates.rs).
     pub check_updates_at_launch: bool,
+    /// Assistant › Let the assistant listen to audio: each turn includes a short text
+    /// description of the selection's sound (dstudio_core::listen). Off by default, because
+    /// that description is sent to the assistant's provider.
+    pub assistant_listen: bool,
 }
 
 impl Default for GeneralPrefs {
@@ -236,6 +240,7 @@ impl Default for GeneralPrefs {
             projects_folder: None,
             sections_move_clips: false,
             check_updates_at_launch: true,
+            assistant_listen: false,
         }
     }
 }

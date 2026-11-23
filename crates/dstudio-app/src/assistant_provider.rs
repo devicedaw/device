@@ -36,6 +36,8 @@ pub enum Provider {
         turns: Vec<String>,
         next: Mutex<usize>,
         label: String,
+        /// The listening description of the last request (the self-test reads it).
+        heard: Mutex<Option<String>>,
     },
     Unavailable,
 }
@@ -62,6 +64,9 @@ pub struct Request {
     pub selection: Option<String>,
     /// Earlier turns as (user prompt, assistant reply text), oldest first.
     pub history: Vec<(String, String)>,
+    /// Settings › General › Let the assistant listen to audio: what the selection sounds like,
+    /// measured on this machine (src/assistant_listen.rs). Filled in on the worker thread.
+    pub audio: Option<String>,
 }
 
 impl Provider {
@@ -94,11 +99,19 @@ impl Provider {
         if turns.is_empty() {
             return Err(format!("fixture {label}: empty"));
         }
-        Ok(Provider::Fixture { turns, next: Mutex::new(0), label: label.into() })
+        Ok(Provider::Fixture { turns, next: Mutex::new(0), label: label.into(), heard: Mutex::new(None) })
     }
 
     pub fn available(&self) -> bool {
         !matches!(self, Provider::Unavailable)
+    }
+
+    /// TEST seam: what the fixture provider's last request said the audio sounds like.
+    pub fn fixture_heard(&self) -> Option<String> {
+        match self {
+            Provider::Fixture { heard, .. } => heard.lock().ok()?.clone(),
+            _ => None,
+        }
     }
 
     pub fn is_fixture(&self) -> bool {
@@ -109,7 +122,10 @@ impl Provider {
     pub fn complete(&self, req: &Request) -> Result<String, String> {
         match self {
             Provider::Unavailable => Err("Add your Anthropic API key to use the assistant".into()),
-            Provider::Fixture { turns, next, .. } => {
+            Provider::Fixture { turns, next, heard, .. } => {
+                if let Ok(mut h) = heard.lock() {
+                    h.clone_from(&req.audio);
+                }
                 let mut n = next.lock().map_err(|_| "fixture lock poisoned".to_string())?;
                 let t = turns[(*n).min(turns.len() - 1)].clone();
                 *n += 1;
@@ -157,6 +173,10 @@ fn user_content(req: &Request) -> String {
     s.push_str(&req.state.to_string());
     s.push_str("\n\nCurrent selection: ");
     s.push_str(req.selection.as_deref().unwrap_or("nothing selected"));
+    if let Some(a) = &req.audio {
+        s.push_str("\n\nWhat it sounds like (measured by Device, not heard by you): ");
+        s.push_str(a);
+    }
     s.push_str("\n\nRequest: ");
     s.push_str(&req.prompt);
     s
@@ -284,7 +304,18 @@ mod tests {
             state: json!({"tempo_bpm": 120}),
             selection: Some("track 1".into()),
             history: vec![("hi".into(), "Hello.".into())],
+            audio: None,
         }
+    }
+
+    #[test]
+    fn a_listened_turn_carries_the_measurement_and_others_do_not() {
+        let mut r = req(Mode::Assist);
+        assert!(!user_content(&r).contains("What it sounds like"));
+        r.audio = Some("Integrated loudness -9.8 LUFS.".into());
+        let c = user_content(&r);
+        let (sel, audio, ask) = (c.find("Current selection").unwrap(), c.find("-9.8 LUFS").unwrap(), c.find("Request:").unwrap());
+        assert!(sel < audio && audio < ask, "{c}");
     }
 
     #[test]
@@ -366,7 +397,7 @@ mod live_api {
     fn turn(p: &Provider, doc: &mut Document, mode: Mode, prompt: &str) -> Plan {
         let mut state = assistant::describe_state(doc.project());
         state["next_id_hint"] = json!(doc.project().next_id);
-        let req = Request { mode, prompt: prompt.into(), state, selection: None, history: Vec::new() };
+        let req = Request { mode, prompt: prompt.into(), state, selection: None, history: Vec::new(), audio: None };
         let started = Instant::now();
         let raw = p.complete(&req).unwrap_or_else(|e| panic!("{prompt:?}: request failed: {e}"));
         let secs = started.elapsed().as_secs_f32();
