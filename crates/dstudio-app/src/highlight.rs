@@ -105,6 +105,9 @@ pub fn target_rect(l: &Layout, target: &str, track_row: impl Fn(u64) -> Option<(
         "timeline.horizontal_zoom" => (tx + tw - 149.0, 83.0, 94.0, 18.0),
         "timeline.snap" => (tx + tw - 54.4, 83.0, 44.2, 18.0),
         "timeline.add_track" => (tx, 105.5, 184.0, 39.0),
+        // Whole areas (the Getting started tour, src/tour.rs).
+        "browser.panel" if l.sounds => (5.0, 78.0, 252.45, l.top_h()),
+        "timeline.lanes" => (tx + 191.0, 78.0 + 66.5, tw - 191.0, (l.top_h() - 66.5 - MASTER_H).max(0.0)),
         "timeline.ruler" => (tx + 191.0, 105.5, tw - 191.0, 39.0),
         // ---- inspector + devices (bottom panel; hidden while the mixer is open) ----
         "inspector.input" if !l.mixer && !l.clip_tab => (15.0, by + 37.0, 149.0, 19.0),

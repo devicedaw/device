@@ -620,6 +620,7 @@ pub struct Controller {
     pub mixer_open: bool,
     pub assistant_open: bool,
     pub assistant: AssistantState,
+    pub tour: crate::tour::Tour,
     pub provider: Arc<Provider>,
     /// Where the assistant's API key is kept (src/api_key.rs).
     pub key_store: crate::api_key::KeyStore,
@@ -790,6 +791,7 @@ impl Controller {
             mixer_open: false,
             assistant_open: false,
             assistant: AssistantState::default(),
+            tour: crate::tour::Tour::default(),
             provider: Arc::new(Provider::Unavailable),
             key_store: crate::api_key::KeyStore::System,
             mcp: crate::mcp::McpState::default(),
@@ -2523,12 +2525,36 @@ impl Controller {
             }
         }
 
+        // Getting started coach mark: follows its area as the layout changes.
+        if std::mem::take(&mut self.tour.show_browser) {
+            s.set_sounds_visible(true);
+        }
+        let coach = if self.tour.coach && !self.settings.prefs.assistant_tour.closed {
+            let scale = app.window().scale_factor();
+            let size = app.window().size();
+            let layout =
+                self.highlight_layout(size.width as f32 / scale, size.height as f32 / scale - s.get_menu_dy(), s.get_sounds_visible());
+            crate::tour::coach_rect(&layout, &self.settings.prefs.assistant_tour)
+        } else {
+            None
+        };
+        if s.get_coach_visible() != coach.is_some() {
+            s.set_coach_visible(coach.is_some());
+        }
+        if let Some(c) = coach
+            && s.get_coach() != c
+        {
+            s.set_coach(c);
+        }
+
         // Assistant highlights (pulse for HIGHLIGHT_SECS, then expire).
         let highlighting = !self.assistant.highlights.is_empty();
         if highlighting || self.highlights_model.row_count() > 0 {
             let scale = app.window().scale_factor();
             let size = app.window().size();
-            let layout = self.highlight_layout(size.width as f32 / scale, size.height as f32 / scale, s.get_sounds_visible());
+            // The in-window menu bar (Linux, Windows) sits above the layout highlight.rs mirrors.
+            let layout =
+                self.highlight_layout(size.width as f32 / scale, size.height as f32 / scale - s.get_menu_dy(), s.get_sounds_visible());
             let rects = self.highlight_rects(&layout);
             sync_model(&self.highlights_model, rects);
         }
@@ -2721,6 +2747,15 @@ impl Controller {
         s.set_chat_key_saved(self.assistant.key_saved);
         s.set_chat_busy(self.assistant.busy.is_some());
         s.set_chat_notice(self.assistant.notice_visible);
+        // Getting started tour (src/tour.rs).
+        let tp = &self.settings.prefs.assistant_tour;
+        s.set_tour_visible(!tp.closed);
+        s.set_tour_collapsed(self.tour.collapsed);
+        s.set_tour_counter(crate::tour::counter(tp).into());
+        s.set_tour_progress((crate::tour::Tour::step_index(tp) + 1) as f32 / crate::tour::STEPS.len() as f32);
+        s.set_tour_title(crate::tour::STEPS[crate::tour::Tour::step_index(tp)].title.into());
+        s.set_tour_first(crate::tour::Tour::step_index(tp) == 0);
+        s.set_tour_last(crate::tour::Tour::step_index(tp) + 1 == crate::tour::STEPS.len());
         // Ask focuses the composer once the panel exists (an update after it opened).
         if self.assistant.focus_pending && self.assistant.shown && self.assistant_open {
             self.assistant.focus_pending = false;

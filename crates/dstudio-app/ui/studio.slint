@@ -711,6 +711,18 @@ export global Studio {
     in-out property <bool> title-focused;       // the title bar's project name field has the keyboard
     callback project-rename(string);
     in property <[HighlightRect]> highlights;
+    // Getting started tour (src/tour.rs): the card in the assistant panel and the coach mark.
+    in property <bool> tour-visible;
+    in property <bool> tour-collapsed;
+    in property <string> tour-counter: "1 of 4";
+    in property <float> tour-progress: 0.25;
+    in property <string> tour-title;
+    in property <bool> tour-first: true;
+    in property <bool> tour-last;
+    in property <bool> coach-visible;
+    in property <HighlightRect> coach;
+    // "continue", "next", "back", "close-coach", "close", "collapse", "restart"
+    callback tour-action(string);
     callback chat-send(string);
     callback chat-new();
     callback chat-set-mode(bool);          // true = Point (Mode::Teach)

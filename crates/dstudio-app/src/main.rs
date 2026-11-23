@@ -120,6 +120,7 @@ mod tempo_lane;
 mod text_measure;
 mod timeline;
 mod tools;
+mod tour;
 mod track_menu;
 mod transport_fields;
 mod typing;
@@ -3582,6 +3583,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.rename_project(name.as_str());
     });
     on!(on_chat_dismiss_notice, |c| c.assistant_dismiss_notice());
+    on!(on_tour_action, |c, a: slint::SharedString| c.tour_action(a.as_str()));
     on!(on_chat_toggle_entry, |c, i: i32| c.assistant_toggle_entry(i.max(0) as usize));
     on!(on_chat_remove_context, |c| c.assistant_remove_context());
     on!(on_ac_resample, |c| c.resample_open_clip());

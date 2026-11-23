@@ -208,6 +208,40 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// Getting started tour actions: "continue", "next", "back", "close-coach", "close",
+    /// "collapse", "restart" (src/tour.rs).
+    pub fn tour_action(&mut self, action: &str) {
+        let p = &mut self.settings.prefs.assistant_tour;
+        let change = match action {
+            "continue" => self.tour.resume(),
+            "next" => self.tour.next(p),
+            "back" => self.tour.back(p),
+            "close-coach" => self.tour.hide_coach(),
+            "close" => self.tour.finish(p),
+            "collapse" => self.tour.toggle_collapsed(),
+            "restart" => {
+                self.assistant_open = true;
+                self.tour.restart(p)
+            }
+            _ => return,
+        };
+        self.tour_show_step_area();
+        if change == crate::tour::Change::Saved {
+            self.save_prefs();
+        }
+        self.ui_dirty = true;
+    }
+
+    /// The first step is about the browser's Files: show them.
+    fn tour_show_step_area(&mut self) {
+        if self.tour.coach && crate::tour::Tour::step_index(&self.settings.prefs.assistant_tour) == 0 {
+            self.tour.show_browser = true;
+            if self.files.section != crate::files::SECTION_FILES {
+                self.browser_top(4);
+            }
+        }
+    }
+
     pub fn assistant_dismiss_notice(&mut self) {
         self.assistant.notice_visible = false;
         self.ui_dirty = true;
@@ -382,6 +416,25 @@ impl Controller {
     /// TEST seam for the `--state` renders (`--state reference-assistant`,
     /// `review-assistant-<name>`): a canned transcript in one of the panel's states.
     pub fn assistant_demo(&mut self, name: &str) -> Result<(), String> {
+        // review-assistant-tour, -tour-collapsed, -tour-<step>: the Getting started card on an
+        // empty panel, folded, or with step <step>'s coach mark (1-4).
+        if let Some(rest) = name.strip_prefix("tour") {
+            let p = &mut self.settings.prefs.assistant_tour;
+            *p = crate::tour::TourPrefs::default();
+            match rest {
+                "" => {}
+                "-collapsed" => self.tour.collapsed = true,
+                "-closed" => p.closed = true,
+                n => {
+                    let step: u8 = n.trim_start_matches('-').parse().map_err(|_| format!("unknown tour state {name}"))?;
+                    p.step = step.clamp(1, crate::tour::STEPS.len() as u8) - 1;
+                    self.tour.coach = true;
+                }
+            }
+            self.tour_show_step_area();
+            self.ui_dirty = true;
+            return Ok(());
+        }
         let entry = |kind, text: &str, lines: &[&str], secs, expanded, point| Entry {
             kind,
             text: text.into(),

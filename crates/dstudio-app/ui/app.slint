@@ -25,7 +25,7 @@ import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu, DropMenu } from "pianor
 import { StepSequencer } from "stepseq.slint";
 import { MixerPanel } from "mixer.slint";
 import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_strip.slint";
-import { AssistantPanel, HighlightOverlay } from "assistant.slint";
+import { AssistantPanel, HighlightOverlay, CoachMark } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
 import { ExportModal, UnsavedPrompt, UpdatesModal, UndoHistoryModal, KeyChangeModal, FeedbackModal, McpAskModal } from "dialogs.slint";
@@ -1597,6 +1597,7 @@ export component AppWindow inherits Window {
             }
         }
         HighlightOverlay { x: 0; y: 0; width: root.width; height: root.height; }
+        CoachMark { x: 0; y: 0; width: root.width; height: root.height; }
         // Device windows: a built-in device opened from its card's header arrow floats above
         // the arrangement (the card stays in the chain too) and stays up across track changes.
         // Devices with an expanded view (card.win) draw it (ui/device_window.slint); the rest

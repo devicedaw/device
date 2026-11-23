@@ -262,6 +262,68 @@ component Disc inherits Rectangle {
     @children
 }
 
+// Small icon button of the tour card and coach mark (17 px hit box).
+component TourIcon inherits Rectangle {
+    in property <string> d;
+    in property <color> ink;
+    in property <color> ink-hover;
+    in property <string> label;
+    in property <length> size: 10.2px;
+    callback clicked;
+    width: 17px; height: 17px;
+    accessible-role: button;
+    accessible-label: root.label;
+    Icon { width: root.size; height: root.size; d: root.d; ink: ta.has-hover ? root.ink-hover : root.ink; stroke-width: 1.275px; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// Getting started card: title row (counter, collapse, close), progress bar, then the step
+// and Continue (hidden while collapsed).
+component TourCard inherits Rectangle {
+    border-radius: 8.5px; background: Chat.card; clip: true;
+    border-width: 0.425px; border-color: #ffffff0e;
+    Text {
+        x: 10.2px; y: 0; height: 27.2px; text: "Getting started"; color: Chat.menu-text;
+        font-size: Chat.fs; font-weight: 600; letter-spacing: Chat.ls; vertical-alignment: center;
+    }
+    Text {
+        x: parent.width - 10.2px - 17px - 1.7px - 17px - 3.4px - 40px; y: 0; width: 40px; height: 27.2px;
+        text: Studio.tour-counter; color: Chat.text; font-size: 8.5px; font-weight: 600; letter-spacing: -0.34px;
+        horizontal-alignment: right; vertical-alignment: center;
+    }
+    Rectangle {
+        x: parent.width - 6.8px - 17px - 1.7px - 17px; y: 5.1px; width: 17px; height: 17px;
+        accessible-role: button; accessible-label: Studio.tour-collapsed ? "Expand" : "Collapse";
+        Chevron { open: !Studio.tour-collapsed; ink: collapse-ta.has-hover ? Chat.menu-text : Chat.icon-hover; }
+        collapse-ta := TouchArea { clicked => { Studio.tour-action("collapse"); } }
+    }
+    TourIcon {
+        x: parent.width - 6.8px - 17px; y: 5.1px; d: Icons.close; ink: Chat.icon-hover; ink-hover: Chat.menu-text;
+        label: "Close Getting started"; clicked => { Studio.tour-action("close"); }
+    }
+    // Progress: 3 px track, accent fill for the steps reached.
+    Rectangle {
+        x: 10.2px; y: 25.5px; width: parent.width - 20.4px; height: 2.55px; border-radius: 1.275px; background: #ffffff14;
+        Rectangle {
+            x: 0; width: parent.width * Studio.tour-progress; height: parent.height; border-radius: parent.border-radius;
+            background: Chat.accent;
+            animate width { duration: 260ms; easing: ease-out; }
+        }
+    }
+    if !Studio.tour-collapsed: Text {
+        x: 10.2px; y: 37.4px; width: parent.width - 20.4px; height: Chat.line;
+        text: Studio.tour-title; color: Chat.gray-30; font-size: Chat.fs; font-weight: 500; letter-spacing: Chat.ls;
+        vertical-alignment: center; overflow: elide;
+    }
+    if !Studio.tour-collapsed: Rectangle {
+        x: 10.2px; y: parent.height - 10.2px - 23.8px; width: parent.width - 20.4px; height: 23.8px; border-radius: 5.1px;
+        background: continue-ta.has-hover ? #3a6cff : Tokens.accent;
+        accessible-role: button; accessible-label: "Continue";
+        Text { text: "Continue"; color: #ffffff; font-size: 9.35px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        continue-ta := TouchArea { clicked => { Studio.tour-action("continue"); } }
+    }
+}
+
 export component AssistantPanel inherits Panel {
     callback focus-main();   // give keyboard focus back to the window after sending
     // Ask (clip menu, ⌘K) puts the cursor in the composer.
@@ -288,6 +350,10 @@ export component AssistantPanel inherits Panel {
     property <length> text-row-h: 8.5px + 11.9px + root.text-h + 3.4px; // margins 10 / 4, padding 7 / 7
     property <length> card-h: root.notice-h + root.chips-h + root.text-row-h + 27.2px;
     property <bool> can-send: Studio.chat-available && !Studio.chat-busy && Studio.chat-draft != "";
+    // Getting started card (src/tour.rs): the transcript's first item, so it scrolls away with
+    // a long chat. On an empty panel the greeting sits under it.
+    property <length> tour-h: !Studio.tour-visible ? 0px : Studio.tour-collapsed ? 34px : 93.5px;
+    property <length> top: 27.2px + (Studio.tour-visible ? 13.6px + root.tour-h : 0px);
 
     // ---- transcript (padding 16 / 0 + 8 px gutter / 8, 8 px between items) ----
     flick := Flickable {
@@ -301,12 +367,13 @@ export component AssistantPanel inherits Panel {
             padding-top: 13.6px;
             spacing: 6.8px;
             alignment: start;
+            if Studio.tour-visible: TourCard { height: root.tour-h; }
             for entry[i] in Studio.chat: ChatItem { e: entry; index: i; }
         }
     }
     // Empty state: the greeting (12 px / 500, 16 px in from the panel edge's content box).
     if Studio.chat.length == 0 && Studio.chat-available: Text {
-        x: 10.2px; y: 27.2px + 17px; width: root.width - 20.4px;
+        x: 10.2px; y: root.top + 17px; width: root.width - 20.4px;
         text: "Hi there. What would you like to make?"; color: Chat.menu-text;
         font-size: Chat.fs; font-weight: 500; letter-spacing: Chat.ls; wrap: word-wrap;
     }
@@ -351,8 +418,15 @@ export component AssistantPanel inherits Panel {
         }
     }
     // A key from the keychain: a quiet way to remove it, under the greeting.
+    // The tour was closed: start it again from here.
+    if Studio.chat.length == 0 && !Studio.tour-visible: Text {
+        x: 10.2px; y: root.top + 40.8px; text: "Getting started"; font-size: 8.5px; font-weight: 500;
+        color: tour-ta.has-hover ? Chat.menu-text : Chat.gray-30;
+        accessible-role: button; accessible-label: "Start the Getting started tour";
+        tour-ta := TouchArea { clicked => { Studio.tour-action("restart"); } }
+    }
     if Studio.chat.length == 0 && Studio.chat-available && Studio.chat-key-saved: Text {
-        x: 10.2px; y: 27.2px + 40.8px; text: "Remove API key"; font-size: 8.5px; font-weight: 500;
+        x: 10.2px; y: root.top + (Studio.tour-visible ? 40.8px : 57.8px); text: "Remove API key"; font-size: 8.5px; font-weight: 500;
         color: remove-ta.has-hover ? Chat.menu-text : Chat.gray-30;
         accessible-role: button; accessible-label: "Remove API key";
         remove-ta := TouchArea { clicked => { Studio.chat-remove-key(); } }
@@ -493,6 +567,62 @@ export component HighlightOverlay inherits Rectangle {
             spacing: 3.4px;
             title-t := Text { text: h.title; color: #16171a; font-size: 11.9px; font-weight: 600; letter-spacing: -0.12px; wrap: word-wrap; }
             note-t := Text { text: h.note; color: #4a4e57; font-size: 10.2px; font-weight: 400; wrap: word-wrap; }
+        }
+    }
+}
+
+// Getting started coach mark (src/tour.rs): an accent ring around the step's area, with a
+// light popover beside it (title, one line of help, the step counter, Back, Next or Done, close).
+export component CoachMark inherits Rectangle {
+    if Studio.coach-visible: Rectangle {
+        x: Studio.coach.x; y: Studio.coach.y; width: Studio.coach.w; height: Studio.coach.h;
+        property <float> breathe: 0.5 - 0.5 * cos(animation-tick() / 1ms * 360deg / 2600);
+        Rectangle {
+            x: -3.4px; y: -3.4px; width: parent.width + 6.8px; height: parent.height + 6.8px;
+            border-radius: Studio.coach.r + 3.4px; border-width: 3.4px; border-color: Chat.accent.with-alpha(0.12 + 0.12 * parent.breathe);
+        }
+        Rectangle {
+            border-radius: Studio.coach.r; border-width: 1.275px; border-color: Chat.accent-hover;
+        }
+    }
+    // 238 x 108.8 (tour::POPOVER_W / POPOVER_H), radius 12, padding 12 x 14.
+    if Studio.coach-visible: Rectangle {
+        width: 238px; height: 108.8px;
+        x: max(6.8px, min(Studio.coach.bx, root.width - self.width - 6.8px));
+        y: Studio.coach.above ? Studio.coach.by - self.height : Studio.coach.by;
+        border-radius: 10.2px; background: #f4f5f6;
+        border-width: 0.425px; border-color: #00000014;
+        drop-shadow-offset-y: 6.8px; drop-shadow-blur: 21.25px; drop-shadow-color: #00000080;
+        accessible-role: groupbox; accessible-label: Studio.coach.title;
+        Text {
+            x: 11.9px; y: 10.2px; width: parent.width - 11.9px - 23.8px;
+            text: Studio.coach.title; color: #16171a; font-size: 11.9px; font-weight: 600; letter-spacing: -0.12px; overflow: elide;
+        }
+        TourIcon {
+            x: parent.width - 6.8px - 17px; y: 6.8px; d: Icons.close; ink: #8a8d94; ink-hover: #16171a;
+            label: "Close tip"; clicked => { Studio.tour-action("close-coach"); }
+        }
+        Text {
+            x: 11.9px; y: 28.9px; width: parent.width - 23.8px; height: 34px;
+            text: Studio.coach.note; color: #4a4e57; font-size: 10.2px; font-weight: 400; wrap: word-wrap;
+        }
+        Text {
+            x: 11.9px; y: parent.height - 10.2px - 20.4px; height: 20.4px;
+            text: Studio.tour-counter; color: #8a8d94; font-size: 8.5px; font-weight: 600; vertical-alignment: center;
+        }
+        if !Studio.tour-first: Rectangle {
+            x: parent.width - 11.9px - 47.6px - 5.1px - 42.5px; y: parent.height - 10.2px - 20.4px; width: 42.5px; height: 20.4px;
+            border-radius: 10.2px; background: back-ta.has-hover ? #e3e5e8 : transparent;
+            accessible-role: button; accessible-label: "Back";
+            Text { text: "Back"; color: #16171a; font-size: 9.35px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            back-ta := TouchArea { clicked => { Studio.tour-action("back"); } }
+        }
+        Rectangle {
+            x: parent.width - 11.9px - 47.6px; y: parent.height - 10.2px - 20.4px; width: 47.6px; height: 20.4px;
+            border-radius: 10.2px; background: next-ta.has-hover ? #2c2e33 : #16171a;
+            accessible-role: button; accessible-label: Studio.tour-last ? "Done" : "Next";
+            Text { text: Studio.tour-last ? "Done" : "Next"; color: #ffffff; font-size: 9.35px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            next-ta := TouchArea { clicked => { Studio.tour-action("next"); } }
         }
     }
 }

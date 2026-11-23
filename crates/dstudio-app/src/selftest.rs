@@ -3802,6 +3802,80 @@ fn steps() -> Vec<Step> {
                     .ok_or(format!("open {} lanes width {w}", c.assistant_open))
             }),
         ),
+        // ---------------- Getting started tour (src/tour.rs) ----------------
+        Check(
+            "Getting started card on step 1 of 4, no coach mark yet",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                (s.get_tour_visible()
+                    && s.get_tour_counter() == "1 of 4"
+                    && !s.get_coach_visible()
+                    && !c.settings.prefs.assistant_tour.closed)
+                    .then_some(())
+                    .ok_or(format!("visible {} counter {} coach {}", s.get_tour_visible(), s.get_tour_counter(), s.get_coach_visible()))
+            }),
+        ),
+        // Card: first transcript item, 16 px under the 32 px header; Continue is its bottom row (ui/assistant.slint TourCard).
+        Do(
+            "click Continue on the Getting started card",
+            Box::new(|a| {
+                let g = geo();
+                click(a, g.chat_x + g.chat_w / 2.0, g.chat_y + 27.2 + 13.6 + 93.5 - 10.2 - 11.9);
+            }),
+        ),
+        Check(
+            "step 1 coach mark rings the browser, which shows Files",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let r = s.get_coach();
+                (s.get_coach_visible()
+                    && r.title == "Find a sound"
+                    && r.x < 6.0
+                    && s.get_sounds_visible()
+                    && c.files.section == crate::files::SECTION_FILES)
+                    .then_some(())
+                    .ok_or(format!("coach {} {r:?} files {}", s.get_coach_visible(), c.files.section))
+            }),
+        ),
+        DoC(
+            "click Next on the coach mark",
+            Box::new(|a, _| {
+                let r = a.global::<Studio>().get_coach();
+                let w = win().0;
+                let x = r.bx.min(w - crate::tour::POPOVER_W - 6.8).max(6.8);
+                let y = if r.above { r.by - crate::tour::POPOVER_H } else { r.by };
+                click(a, x + crate::tour::POPOVER_W - 11.9 - 23.8, y + crate::tour::POPOVER_H - 10.2 - 10.2);
+            }),
+        ),
+        Check(
+            "step 2 of 4, saved in the preferences, ring on the lanes",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                (s.get_tour_counter() == "2 of 4"
+                    && c.settings.prefs.assistant_tour.step == 1
+                    && s.get_coach().title == "Drag it to the timeline")
+                    .then_some(())
+                    .ok_or(format!("counter {} step {}", s.get_tour_counter(), c.settings.prefs.assistant_tour.step))
+            }),
+        ),
+        Do(
+            "close the Getting started card",
+            Box::new(|a| {
+                let g = geo();
+                click(a, g.chat_x + g.chat_w - 6.8 - 6.8 - 8.5, g.chat_y + 27.2 + 13.6 + 5.1 + 8.5);
+            }),
+        ),
+        Check(
+            "card and coach mark gone for good",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                (!s.get_tour_visible() && !s.get_coach_visible() && c.settings.prefs.assistant_tour.closed).then_some(()).ok_or(format!(
+                    "visible {} coach {}",
+                    s.get_tour_visible(),
+                    s.get_coach_visible()
+                ))
+            }),
+        ),
         Check(
             "recorded project state before the assistant turn",
             Box::new(move |c, _| {
