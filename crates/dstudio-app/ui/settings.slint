@@ -237,10 +237,13 @@ component GeneralPage inherits Rectangle {
     SearchHit { y: 575.2px; width: root.width - 24px; height: 24px; label: "Voice input"; }
     SearchHit { y: 600.9px; width: root.width - 24px; height: 24px; label: "Language"; }
     RowLabel { x: 20.5px; y: 516.3px; text: "Talk key"; }
-    for k[i] in Studio.voice-talk-key-parts: Rectangle {
-        x: root.width - 20.5px - Studio.voice-talk-key-parts.length * 21.75px + 0.75px + i * 21.75px; y: 514.8px;
-        width: max(21px, kt.preferred-width + 8px); height: 17px; border-radius: 6px; background: #292a2f;
-        kt := Text { text: k; color: #e5e5e8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+    HorizontalLayout {
+        x: root.width - 20.5px - self.preferred-width; y: 514.8px; height: 17px; spacing: 0.75px;
+        accessible-role: text; accessible-label: "Talk key: " + Studio.voice-talk-key-parts[0] + " " + Studio.voice-talk-key-parts[1];
+        for k in Studio.voice-talk-key-parts: Rectangle {
+            width: max(21px, kt.preferred-width + 10px); border-radius: 6px; background: #292a2f;
+            kt := Text { text: k; color: #e5e5e8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+        }
     }
     RowLabel { x: 20.5px; y: 581.7px; text: "Input"; setting: "Voice input"; }
     SmallSelect {

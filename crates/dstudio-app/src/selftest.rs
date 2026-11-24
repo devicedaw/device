@@ -14405,7 +14405,7 @@ fn hover_settings_info(a: &AppWindow, label_y: f32) {
 }
 
 /// Help on every setting (roadmap G12): hovering a row's (i) shows its sentence under it, leaving
-/// it or changing page hides it, and a greyed row says it isn't available.
+/// it or changing page hides it.
 fn settings_help_steps() -> Vec<Step> {
     use Step::*;
     let tip = |a: &AppWindow| a.global::<Studio>().get_settings_tip().to_string();
@@ -14449,10 +14449,11 @@ fn settings_help_steps() -> Vec<Step> {
         ),
         Do("settings help: open General", Box::new(|a| a.global::<Studio>().invoke_settings_page_select(0))),
         Check("settings help: changing page hides the tip", Box::new(move |_, a| tip(a).is_empty().then_some(()).ok_or(tip(a)))),
-        Do("settings help: hover Talk key's (i) (greyed)", Box::new(|a| hover_settings_info(a, 516.3))),
+        // No row on General is greyed any more (voice input works, spec 024): Talk key has help too.
+        Do("settings help: hover Talk key's (i)", Box::new(|a| hover_settings_info(a, 516.3))),
         Check(
-            "settings help: a greyed row says it isn't available",
-            Box::new(move |_, a| (tip(a) == "Not available in Device.").then_some(()).ok_or(tip(a))),
+            "settings help: Talk key's sentence",
+            Box::new(move |_, a| (tip(a) == crate::settings_search::help("Talk key")).then_some(()).ok_or(tip(a))),
         ),
         DoC("settings help: close Settings", Box::new(|_, ctl| ctl.borrow_mut().close_settings())),
         Check(
