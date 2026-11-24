@@ -1697,6 +1697,17 @@ int32_t se_midi_capture_read(se_engine* engine, se_midi_captured* out, size_t ca
  * seek back. Any thread. */
 int32_t se_midi_capture_wrapped(se_engine* engine, uint8_t* out_wrapped);
 
+/* Voice input (spec 024). While on, the audio thread copies input `channel`
+ * (0-based; with `stereo`, the average of `channel` and `channel + 1`) after
+ * Mute input into a mono ring of 2^19 samples at the engine rate. A channel
+ * the device lacks reads as silence. channel < 0 turns it off. Turning it on
+ * empties the ring and the peak. MAIN THREAD. */
+int32_t se_voice_capture_set(se_engine* engine, int32_t channel, uint8_t stereo);
+/* Pops up to `capacity` samples in order; *out_count receives how many were
+ * written. *out_peak (may be NULL) receives the largest absolute sample since
+ * the last read. MAIN THREAD (one reader). */
+int32_t se_voice_capture_read(se_engine* engine, float* out, size_t capacity, size_t* out_count, float* out_peak);
+
 typedef struct se_midi_stats {
     uint64_t received;        /* messages received from ports and se_midi_inject */
     uint64_t delivered;       /* messages handed to the audio thread's routing */

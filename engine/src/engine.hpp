@@ -4,6 +4,7 @@
 
 #include "asset.hpp"
 #include "midi_input.hpp"
+#include "voice_tap.hpp"
 #include "platform/audio_device.hpp"
 #include "plugins/plugin_host.hpp"
 #include "processor.hpp"
@@ -71,6 +72,9 @@ public:
     // Test hook: replaces the platform device (takes effect when no device
     // object exists yet, i.e. before the first start/configure).
     void set_device_factory(DeviceFactory f);
+
+    // ---- Voice input tap (voice_tap.hpp; se_voice_*)
+    VoiceTap& voice() noexcept { return *voice_; }
 
     // ---- MIDI input (midi_input.hpp; se_midi_*)
     MidiInputHub& midi() noexcept { return *midi_; }
@@ -408,6 +412,8 @@ private:
     // -- MIDI input (midi_input.hpp). The hub's queues are read by the RT
     // owner; its ports are opened and closed on the main thread.
     std::unique_ptr<MidiInputHub> midi_ = std::make_unique<MidiInputHub>();
+    // -- voice input tap (voice_tap.hpp): written by the RT owner, read by the app.
+    std::unique_ptr<VoiceTap> voice_ = std::make_unique<VoiceTap>();
     std::array<MidiEvent, MidiInputHub::kMaxBlockEvents> rt_midi_{}; // RT-owned
     bool rt_midi_wrapped_ = false; // RT-owned: a loop wrap happened since capture started
     uint32_t rt_capture_pass_ = 0; // RT-owned: the capture pass rt_midi_wrapped_ belongs to

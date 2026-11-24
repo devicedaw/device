@@ -1069,6 +1069,8 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
                 in_ptrs[c] = d;
             }
         }
+        // Voice input (spec 024): the chosen input, as heard after Mute input.
+        voice_->write(in_ptrs, in_count, n);
         const InputView iv{in_ptrs, in_count};
         RtTransport transport;
         transport.position = rt_position_;
