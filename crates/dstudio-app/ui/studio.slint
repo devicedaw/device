@@ -691,6 +691,23 @@ export global Studio {
     in property <[ChatEntry]> chat;
     in property <bool> chat-available;     // provider configured (API key or TEST fixture)
     in property <bool> chat-busy;
+    // Voice input (spec 024, src/assistant_voice.rs): 0 idle, 1 listening, 2 recognising.
+    in property <int> voice-state;
+    in property <float> voice-level;         // input level while listening, 0..1
+    in property <bool> voice-ready;          // the speech model is downloaded
+    callback voice-mic();
+    // The talk key (Control and Option): a key went down or up. Returns true when it was the chord.
+    callback voice-talk-key(string, bool, bool, bool, bool) -> bool;   // text, pressed, ctrl, alt, meta
+    // Settings › General › Voice: the Input and Language fields' text.
+    in property <string> voice-input-text: "Input 1";
+    in property <[string]> voice-talk-key-parts: ["⌃", "⌥"];
+    in property <string> voice-language-text: "Automatic";
+    // Settings › Downloads › Speech recognition: 0 not downloaded, 1 downloading, 2 ready.
+    in property <int> dl-speech-state;
+    in property <string> dl-speech-button: "Download";
+    in property <string> dl-speech-line;
+    in property <float> dl-speech-progress;
+    callback dl-speech-action();
     in property <bool> chat-notice: true;
     in property <bool> teach-mode;
     in property <bool> chat-context-visible;
@@ -1100,7 +1117,7 @@ export global Studio {
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show
     // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top,
     // Sections move clips, Check for updates at launch, Let AI apps control Device.
-    in property <[bool]> general-on: [false, true, false, true, false, true, false, false];
+    in property <[bool]> general-on: [false, true, false, true, false, true, false, false, false, false];
     // Settings › General › AI apps (src/mcp.rs): the config Copy setup copies, "Copied" after a
     // press, and the line under the switch (which app last connected).
     in property <string> ai-apps-setup;

@@ -223,3 +223,21 @@ modified LAME. Device's complete source (AGPL-3.0-or-later) is public, so a
 modified LAME can be built into it with `cargo` (for example with a
 `[patch.crates-io]` entry for `mp3lame-sys`). The license texts ship in the
 crates (`COPYING` in `lame-4.0`, `LICENSE` in each crate).
+
+## App: whisper.cpp (voice input)
+
+The app (not the engine) links whisper.cpp for the assistant's voice input
+(spec 024), through the Rust crates `whisper-rs` 0.16.0 and `whisper-rs-sys`
+(crates.io), which compile whisper.cpp and its ggml library from the sources
+shipped in `whisper-rs-sys` into the app binary, CPU only. Used in
+`crates/dstudio-app/src/voice.rs`.
+
+| Component | Source | Version | License |
+|---|---|---|---|
+| whisper.cpp, ggml | https://github.com/ggml-org/whisper.cpp | as bundled in `whisper-rs-sys` for `whisper-rs` 0.16.0 | MIT |
+| `whisper-rs`, `whisper-rs-sys` (Rust bindings) | https://codeberg.org/tazz4843/whisper-rs | 0.16.0 | Unlicense |
+| Speech model (downloaded by the user, not shipped) | https://huggingface.co/ggerganov/whisper.cpp (`ggml-base-q8_0.bin` at revision `5359861c739e955e79d9a303bcbc70fb988958b1`, SHA-256 `c577b9a8…cb7d9`) | Whisper "base", 8-bit | MIT |
+
+The test recording `crates/dstudio-app/fixtures/speech/fellow-americans.wav`
+is the first 4.6 seconds of whisper.cpp's sample `samples/jfk.wav`, a 1961 US
+presidential address, which is in the public domain.

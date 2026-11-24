@@ -1320,6 +1320,34 @@ impl Engine {
         rc == ffi::SE_OK && w != 0
     }
 
+    /// Voice input (spec 024): capture input `channel` (with `stereo`, the average of
+    /// `channel` and the next one) for speech recognition; `None` stops. Starting empties
+    /// the capture.
+    /// Returns false only if the first turn-on could not allocate the ring (the tap stays off).
+    pub fn set_voice_capture(&self, source: Option<(u16, bool)>) -> bool {
+        let (ch, stereo) = source.map_or((-1, false), |(c, s)| (c as i32, s));
+        unsafe { ffi::se_voice_capture_set(self.raw, ch, stereo as u8) == ffi::SE_OK }
+    }
+
+    /// Appends the voice samples captured since the last read (mono, engine rate) to `out`
+    /// and returns the loudest absolute sample among them.
+    pub fn read_voice_capture(&self, out: &mut Vec<f32>) -> f32 {
+        let mut buf = [0.0f32; 4096];
+        let mut peak = 0.0f32;
+        loop {
+            let (mut n, mut p) = (0usize, 0.0f32);
+            if unsafe { ffi::se_voice_capture_read(self.raw, buf.as_mut_ptr(), buf.len(), &mut n, &mut p) } != ffi::SE_OK {
+                break;
+            }
+            peak = peak.max(p);
+            out.extend_from_slice(&buf[..n]);
+            if n < buf.len() {
+                break;
+            }
+        }
+        peak
+    }
+
     pub fn midi_stats(&self) -> MidiStats {
         let mut s = ffi::se_midi_stats::default();
         unsafe { ffi::se_midi_stats_get(self.raw, &mut s) };

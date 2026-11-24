@@ -1193,6 +1193,20 @@ int32_t se_midi_capture_wrapped(se_engine* engine, uint8_t* out_wrapped) {
     return SE_OK;
 }
 
+int32_t se_voice_capture_set(se_engine* engine, int32_t channel, uint8_t stereo) {
+    SE_REQUIRE_ENGINE(engine);
+    if (!engine->impl->voice().set(channel, stereo != 0)) return fail(SE_ERR_OUT_OF_MEMORY, "out of memory");
+    return SE_OK;
+}
+
+int32_t se_voice_capture_read(se_engine* engine, float* out, size_t capacity, size_t* out_count, float* out_peak) {
+    SE_REQUIRE_ENGINE(engine);
+    if ((capacity > 0 && out == nullptr) || out_count == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    *out_count = engine->impl->voice().read(out, capacity);
+    if (out_peak != nullptr) *out_peak = engine->impl->voice().take_peak();
+    return SE_OK;
+}
+
 int32_t se_midi_stats_get(se_engine* engine, se_midi_stats* out) {
     SE_REQUIRE_ENGINE(engine);
     if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");

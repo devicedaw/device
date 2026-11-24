@@ -286,6 +286,18 @@ jobs:
       # Runs even when the engine tests failed (both results are reported; the
       # job still fails). cargo test compiles every crate of the workspace, so
       # there is no separate debug `cargo build`.
+      # Voice input's speech recognition test (crates/dstudio-app/src/voice.rs) runs the real
+      # model: the tiny whisper.cpp one (43 MB), pinned to a revision and checked by hash.
+      - name: Rust workspace — speech model for the voice input test
+        if: steps.changes.outputs.rust == 'true' && !cancelled()
+        shell: bash
+        run: |
+          f="$RUNNER_TEMP/ggml-tiny-q8_0.bin"
+          curl -fsSL --retry 3 -o "$f" https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny-q8_0.bin
+          # sha256sum on Linux and Windows (Git bash), shasum on macOS.
+          sum="sha256sum"; command -v sha256sum >/dev/null || sum="shasum -a 256"
+          echo "c2085835d3f50733e2ff6e4b41ae8a2b8d8110461e18821b09a15c40c42d1cca  $f" | $sum -c -
+          echo "DSTUDIO_SPEECH_MODEL=$f" >> "$GITHUB_ENV"
       - name: Rust workspace — test
         if: steps.changes.outputs.rust == 'true' && !cancelled()
         run: cargo test --workspace --locked --no-fail-fast

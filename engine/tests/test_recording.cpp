@@ -299,6 +299,59 @@ TEST_CASE(input_mute_zeroes_monitoring_meters_and_respects_track_mute_solo) {
     for (float v : out) CHECK(v == 0.0f);
 }
 
+// Voice input (spec 024): the chosen channel (or a pair's average) arrives in
+// the ring unchanged, in order, across odd block sizes; off reads nothing.
+TEST_CASE(voice_capture_reads_the_chosen_input_in_order) {
+    EngineHandle e(48000, 256);
+    std::vector<float> got(4096);
+    std::size_t n = 0;
+    float peak = 0.0f;
+    render_in(e, 3, 300, 0, {256});
+    REQUIRE(se_voice_capture_read(e, got.data(), got.size(), &n, &peak) == SE_OK);
+    CHECK_EQ(n, std::size_t{0}); // off by default
+
+    REQUIRE(se_voice_capture_set(e, 1, 0) == SE_OK);
+    render_in(e, 3, 1000, 0, {256, 77, 1000});
+    REQUIRE(se_voice_capture_read(e, got.data(), got.size(), &n, &peak) == SE_OK);
+    REQUIRE(n == 1000u);
+    long bad = 0;
+    for (std::size_t k = 0; k < n; ++k) bad += got[k] != ramp_val(1, k);
+    CHECK_EQ(bad, 0L);
+    CHECK_EQ(peak, ramp_val(1, 999));
+
+    // Stereo pair 0/1: the average. Turning it on again empties what was left.
+    render_in(e, 3, 100, 0, {256});
+    REQUIRE(se_voice_capture_set(e, 0, 1) == SE_OK);
+    render_in(e, 3, 500, 0, {128});
+    REQUIRE(se_voice_capture_read(e, got.data(), got.size(), &n, nullptr) == SE_OK);
+    REQUIRE(n == 500u);
+    bad = 0;
+    // Within an ulp or two: compilers may fuse the expected sum here into an
+    // FMA, so the last bit can differ from the engine's plain add.
+    for (std::size_t k = 0; k < n; ++k) {
+        const float want = 0.5f * (ramp_val(0, k) + ramp_val(1, k));
+        bad += std::fabs(got[k] - want) > 1e-6f * want;
+    }
+    CHECK_EQ(bad, 0L);
+
+    // A channel the input lacks reads as silence; Mute input silences it too.
+    REQUIRE(se_voice_capture_set(e, 7, 0) == SE_OK);
+    render_in(e, 3, 64, 0, {64});
+    REQUIRE(se_input_set_muted(e, 1) == SE_OK);
+    REQUIRE(se_voice_capture_set(e, 0, 0) == SE_OK);
+    render_in(e, 3, 64, 0, {64});
+    REQUIRE(se_voice_capture_read(e, got.data(), got.size(), &n, &peak) == SE_OK);
+    REQUIRE(n == 64u);
+    for (std::size_t k = 0; k < n; ++k) CHECK(got[k] == 0.0f);
+    CHECK_EQ(peak, 0.0f);
+
+    REQUIRE(se_voice_capture_set(e, -1, 0) == SE_OK);
+    render_in(e, 3, 64, 0, {64});
+    REQUIRE(se_voice_capture_read(e, got.data(), got.size(), &n, nullptr) == SE_OK);
+    CHECK_EQ(n, std::size_t{0});
+    CHECK_EQ(se_voice_capture_read(e, nullptr, 4, &n, nullptr), SE_ERR_INVALID_ARG);
+}
+
 TEST_CASE(input_publish_v4_validates_and_older_publishes_have_no_input) {
     EngineHandle e(48000, 256);
     TrackIn t;
@@ -614,6 +667,7 @@ TEST_CASE(record_and_monitor_do_not_allocate_on_the_audio_path) {
     REQUIRE(publish_v4(e, tracks) == SE_OK);
     REQUIRE(se_transport_set_loop(e, 1, 100, 20000) == SE_OK);
     REQUIRE(se_record_start(e, dir.path.c_str()) == SE_OK);
+    REQUIRE(se_voice_capture_set(e, 2, 1) == SE_OK); // voice input listens too
     const std::vector<float> in = make_input(4, 8192, 0, ramp_val);
     std::vector<float> out(2 * 8192);
     REQUIRE(se_render_offline_with_input(e, in.data(), 4, out.data(), 256) == SE_OK); // warm-up

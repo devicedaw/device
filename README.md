@@ -138,6 +138,9 @@ wgpu.
   notes on an instrument track, play and export), each with a tip pointing at the right part of the window.
   With Settings › General › Let the assistant listen to audio on, each message also says what the selection sounds like
   (loudness, peak, tone by band, a key and tempo guess), measured on your computer; the audio itself is never sent.
+  You can also talk to it: download Speech recognition once in Settings › Downloads (82 MB), then click the mic or
+  press Control-Option (Ctrl-Alt on Windows and Linux) and speak. Your speech becomes text on your computer, in about
+  100 languages, and goes into the message box (or straight to the assistant with Auto-send).
 - **Use your own AI app.** Turn on Settings › General › Let AI apps control Device and press Copy setup, and an AI app
   that supports MCP on this computer (Claude Desktop, Claude Code, Cursor and others) can read the open project and edit
   it: tracks, MIDI clips and notes, built-in effects and instruments and their settings, tempo, undo and play. Device

@@ -114,7 +114,7 @@ target behaviour.
   Next and close. Device's steps: find a sound in Files and preview it, drag it to the timeline, add an
   instrument track and draw notes, play and export. The card remembers its step; closing it hides it for good
   (a preference), and it can be restarted from the assistant's menu.
-- [ ] **G19. Assistant: voice input.** The mic button and the General › Voice rows (Talk key, Hold talk key to
+- [x] **G19. Assistant: voice input.** (#167) The mic button and the General › Voice rows (Talk key, Hold talk key to
   record, Auto-send, Language) are placeholders, and Settings › Audio has no "Assistant voice input" device row
   (Same as input device by default). Spec needed: a local or provider speech-to-text that respects privacy.
 - [x] **G20. Assistant: "Let the assistant listen to audio".** (#166) Greyed today. When on, a turn may include a short

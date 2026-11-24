@@ -129,6 +129,9 @@ pub struct Preferences {
     pub recent_resolved: Vec<String>,
     #[serde(default)]
     pub general: GeneralPrefs,
+    /// Settings › General › Voice (spec 024).
+    #[serde(default, skip_serializing_if = "crate::voice::VoicePrefs::is_default")]
+    pub voice: crate::voice::VoicePrefs,
     /// Timeline › Returns pill off: return track rows hidden (view state, not project state).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hide_returns: bool,
@@ -328,6 +331,12 @@ mod tests {
                 stop_in_place: true,
                 projects_folder: Some("/tmp/My Songs".into()),
                 ..GeneralPrefs::default()
+            },
+            voice: crate::voice::VoicePrefs {
+                hold_to_talk: true,
+                auto_send: true,
+                language: "fr".into(),
+                input: Some(dstudio_core::model::InputSource { channel: 2, stereo: true }),
             },
             midi: MidiPrefs {
                 disabled_inputs: vec!["coremidi:42".into()],

@@ -162,9 +162,8 @@ component SearchHit inherits Rectangle {
 }
 
 // General page. Startup, Projects folder, Playhead on stop, Sections move clips, the three
-// plugin window switches and the Assistant's listen switch work (prefs.general). Voice is
-// shown off and disabled: Device has no voice input yet. (No sample licensing row: Device has
-// no online service, roadmap Q3.)
+// plugin window switches, the Assistant's listen switch and the Voice rows work (prefs.general,
+// prefs.voice). (No sample licensing row: Device has no online service, roadmap Q3.)
 component GeneralPage inherits Rectangle {
     property <length> sw-x: root.width - 20.5px - 22.5px;
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "General"; font-size: 17.25px; font-weight: 700; }
@@ -178,8 +177,8 @@ component GeneralPage inherits Rectangle {
         { t: "Always load last session", y: 88.4px, k: 0 }, { t: "Check for updates at launch", y: 108px, k: 5 },
         { t: "Sections move clips", y: 282.5px, k: 4 }, { t: "Auto-show third-party effect windows", y: 336.9px, k: 1 },
         { t: "Auto-show built-in effect windows", y: 356.5px, k: 2 }, { t: "Keep plugin windows on top", y: 376.7px, k: 3 },
-        { t: "Let the assistant listen to audio", y: 431.8px, k: 7 }, { t: "Let AI apps control Device", y: 451.4px, k: 6 }, { t: "Hold talk key to record", y: 538.9px, k: -1 },
-        { t: "Auto-send", y: 559.1px, k: -1 },
+        { t: "Let the assistant listen to audio", y: 431.8px, k: 7 }, { t: "Let AI apps control Device", y: 451.4px, k: 6 }, { t: "Hold talk key to record", y: 538.9px, k: 8 },
+        { t: "Auto-send", y: 559.1px, k: 9 },
     ]: Rectangle {
         x: 0; y: r.y; width: root.width; height: 14px;
         SearchHit { y: -5px; width: parent.width - 24px; height: 24px; label: r.t; enabled: r.k >= 0; }
@@ -232,15 +231,32 @@ component GeneralPage inherits Rectangle {
     }
     Icon { x: 20.5px + 1px; y: 494.7px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
     FieldLabel { x: 20.5px + 17px; y: 493.7px; text: "Voice"; }
-    RowLabel { x: 20.5px; y: 516.3px; text: "Talk key"; dim: true; }
-    for k[i] in ["⌃", "⌥"]: Rectangle {
-        x: root.width - 20.5px - 42.75px + i * 21.75px; y: 514.8px; width: 21px; height: 17px; border-radius: 6px; background: #292a2f; opacity: 0.4;
-        Text { text: k; color: #e5e5e8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+    // Voice (spec 024, src/assistant_voice.rs): the talk key is fixed (Control and Option, or
+    // Control and Alt); Input and Language open the settings dropdown (fields 6 and 7).
+    SearchHit { y: 511.3px; width: root.width - 24px; height: 24px; label: "Talk key"; }
+    SearchHit { y: 575.2px; width: root.width - 24px; height: 24px; label: "Voice input"; }
+    SearchHit { y: 600.9px; width: root.width - 24px; height: 24px; label: "Language"; }
+    RowLabel { x: 20.5px; y: 516.3px; text: "Talk key"; }
+    HorizontalLayout {
+        x: root.width - 20.5px - self.preferred-width; y: 514.8px; height: 17px; spacing: 0.75px;
+        accessible-role: text; accessible-label: "Talk key: " + Studio.voice-talk-key-parts[0] + " " + Studio.voice-talk-key-parts[1];
+        for k in Studio.voice-talk-key-parts: Rectangle {
+            width: max(21px, kt.preferred-width + 10px); border-radius: 6px; background: #292a2f;
+            kt := Text { text: k; color: #e5e5e8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+        }
     }
-    RowLabel { x: 20.5px; y: 581.7px; text: "Input"; dim: true; }
-    SmallSelect { x: root.width - 20.5px - 117.5px; y: 580.2px; text: "Input 1"; opacity: 0.4; }
-    RowLabel { x: 20.5px; y: 607.4px; text: "Language"; dim: true; }
-    SmallSelect { x: root.width - 20.5px - 117.5px; y: 605.9px; text: "English"; opacity: 0.4; }
+    RowLabel { x: 20.5px; y: 581.7px; text: "Input"; setting: "Voice input"; }
+    SmallSelect {
+        x: root.width - 20.5px - 117.5px; y: 580.2px; text: Studio.voice-input-text;
+        accessible-role: combobox; accessible-label: "Voice input";
+        TouchArea { mouse-cursor: pointer; clicked => { Studio.settings-dropdown(6); } }
+    }
+    RowLabel { x: 20.5px; y: 607.4px; text: "Language"; }
+    SmallSelect {
+        x: root.width - 20.5px - 117.5px; y: 605.9px; text: Studio.voice-language-text;
+        accessible-role: combobox; accessible-label: "Voice language";
+        TouchArea { mouse-cursor: pointer; clicked => { Studio.settings-dropdown(7); } }
+    }
 }
 
 // ---------------------------------------------------------------- Shortcuts page
@@ -646,20 +662,42 @@ component PluginsPage inherits Rectangle {
     }
 }
 
-// Settings › Downloads (roadmap G15): optional content to download, such as the sound library
-// of the multi-sample instrument (roadmap G27). There is none yet, so the page says so and shows
-// nothing else. The list goes here when there is: one row per item with its name, version and
-// size and a Download / Re-download button with progress, from a model the controller pushes.
+// Settings › Downloads (roadmap G15): optional content to download. One row for now, the speech
+// recognition model for voice input (spec 024, src/assistant_voice.rs): its name and what it is
+// for, a status line (size, progress or the last error), a progress bar while it downloads, and
+// Download / Cancel / Remove.
 component DownloadsPage inherits Rectangle {
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Downloads"; font-size: 17.25px; font-weight: 700; }
-    SearchHit { y: 66px; width: root.width - 24px; height: 44px; label: "Downloadable content"; }
+    SearchHit { y: 66px; width: root.width - 24px; height: 50px; label: "Speech recognition"; }
+    Icon { x: 20.5px + 1px; y: 72px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
     Text {
-        x: 20.5px; y: 71px; width: root.width - 41px; height: 14px;
-        text: "There is nothing to download yet."; color: #e5e5e8; font-size: 10.25px; letter-spacing: 0.15px; vertical-alignment: center;
+        x: 20.5px + 17px; y: 71px; width: root.width - 41px - 17px - 90px; height: 14px;
+        text: "Speech recognition"; color: #e5e5e8; font-size: 10.25px; font-weight: 600; letter-spacing: 0.15px; vertical-alignment: center;
     }
     Text {
-        x: 20.5px; y: 89px; width: root.width - 41px; height: 14px;
-        text: "Optional content, such as a sound library for the sampler, will be listed here with its version and size.";
+        x: 20.5px + 17px; y: 87px; width: root.width - 41px - 17px - 90px; height: 13px;
+        text: "For talking to the assistant. It works on this computer, so nothing you say is sent anywhere.";
+        color: Tokens.text-tertiary; font-size: 9.5px; vertical-alignment: center; overflow: elide;
+    }
+    Text {
+        x: 20.5px + 17px; y: 102px; width: root.width - 41px - 17px - 90px; height: 13px;
+        text: Studio.dl-speech-line; color: #a6a8ac; font-size: 9.35px; font-weight: 500; vertical-alignment: center; overflow: elide;
+    }
+    if Studio.dl-speech-state == 1: Rectangle {
+        x: 20.5px + 17px; y: 119px; width: root.width - 41px - 17px - 90px; height: 3px; border-radius: 1.5px; background: #292a2f;
+        Rectangle { x: 0; width: parent.width * Studio.dl-speech-progress; height: parent.height; border-radius: 1.5px; background: #2752f5; }
+    }
+    Rectangle {
+        x: root.width - 20.5px - 76px; y: 72px; width: 76px; height: 17.25px; border-radius: 8.6px;
+        background: Studio.dl-speech-state == 0 ? (dl-ta.has-hover ? #4167f6 : #2752f5) : (dl-ta.has-hover ? #34353b : #292a2f);
+        accessible-role: button; accessible-label: Studio.dl-speech-button + " speech recognition";
+        Text { text: Studio.dl-speech-button; color: #ffffff; font-size: 10px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+        dl-ta := TouchArea { mouse-cursor: pointer; clicked => { Studio.dl-speech-action(); } }
+    }
+    Rectangle { x: 20.5px; y: 133px; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
+    Text {
+        x: 20.5px; y: 142px; width: root.width - 41px; height: 14px;
+        text: "More optional content, such as a sound library for the sampler, will be listed here.";
         color: Tokens.text-tertiary; font-size: 9.5px; vertical-alignment: center; overflow: elide;
     }
 }
@@ -759,12 +797,16 @@ export component SettingsPanel inherits Rectangle {
     // Dropdown list (click outside closes).
     if Studio.settings-menu-open: Rectangle {
         TouchArea { clicked => { Studio.settings-menu-dismiss(); } }
-        property <length> field-y: Studio.settings-menu-field == 0 ? 90px : Studio.settings-menu-field == 1 ? 151px : Studio.settings-menu-field == 2 ? 251px : Studio.settings-menu-field == 3 ? 312px : Studio.settings-menu-field == 5 ? 90px : 74.75px;
+        property <length> field-y: Studio.settings-menu-field == 0 ? 90px : Studio.settings-menu-field == 1 ? 151px : Studio.settings-menu-field == 2 ? 251px : Studio.settings-menu-field == 3 ? 312px : Studio.settings-menu-field == 5 ? 90px
+            : Studio.settings-menu-field == 6 ? 580.2px : Studio.settings-menu-field == 7 ? 605.9px : 74.75px;
         property <bool> preset: Studio.settings-menu-field == 4;
+        // Voice › Input and Language: a narrow list under the small field, right-aligned.
+        property <bool> small: Studio.settings-menu-field == 6 || Studio.settings-menu-field == 7;
         ChoiceList {
-            x: parent.preset ? 187px + 57.5px : 187px + 20.5px;
-            y: min(parent.field-y + (parent.preset ? 23.4px : 31px), root.height - 5px - self.height);
-            width: parent.preset ? 134px : Studio.settings-menu-field == 0 ? root.width - 187px - 20.5px - 76.5px : root.width - 187px - 41px;
+            x: parent.small ? root.width - 20.5px - 150px : parent.preset ? 187px + 57.5px : 187px + 20.5px;
+            y: parent.small ? (parent.field-y + 20px + self.height > root.height - 5px ? parent.field-y - 3px - self.height : parent.field-y + 20px)
+                : min(parent.field-y + (parent.preset ? 23.4px : 31px), root.height - 5px - self.height);
+            width: parent.small ? 150px : parent.preset ? 134px : Studio.settings-menu-field == 0 ? root.width - 187px - 20.5px - 76.5px : root.width - 187px - 41px;
             height: Studio.settings-menu-h;
             items: Studio.settings-menu-items;
             content-height: Studio.settings-menu-content-h;
