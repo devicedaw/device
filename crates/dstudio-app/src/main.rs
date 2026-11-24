@@ -223,8 +223,7 @@ struct Args {
     settings_search_review: Option<&'static str>,
     /// review-settings-help: Settings › Audio with Buffer size's (i) hovered, its help showing.
     settings_help_review: bool,
-    /// review-settings-privacy: Settings › Privacy (6); review-settings-downloads: Downloads (5);
-    /// review-settings-general: General (0).
+    /// review-settings-privacy: Settings › Privacy (6); review-settings-downloads: Downloads (5).
     settings_page_review: Option<usize>,
     /// review-settings-downloads-progress / -ready: the speech model row downloading (false) or
     /// downloaded (true).
@@ -894,12 +893,8 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_page_review = Some(if st.ends_with("privacy") { settings_search::PRIVACY_PAGE } else { 5 });
                 }
-                // Voice input (spec 024): Settings › General (its Voice rows), and Downloads with the
-                // speech model part way down (31 of 82 MB) or downloaded.
-                "review-settings-general" => {
-                    a.reference_default = true;
-                    a.settings_page_review = Some(0);
-                }
+                // Voice input (spec 024): Downloads with the speech model part way down (31 of 82 MB)
+                // or downloaded.
                 st @ ("review-settings-downloads-progress" | "review-settings-downloads-ready") => {
                     a.reference_default = true;
                     a.settings_page_review = Some(5);
