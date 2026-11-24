@@ -33,8 +33,13 @@ pub struct Voice {
     pub level: f32,
     /// Text for the composer, handed to the UI on the next update.
     pub draft: Option<String>,
-    /// The talk key is held down (Hold talk key to record).
+    /// The talk key (both keys of the chord) is held down.
     pub key_down: bool,
+    /// No other key was pressed since the chord went down: it is the talk key, not the start
+    /// of a shortcut such as Ctrl+Alt+M.
+    pub armed: bool,
+    /// Listening was started by holding the talk key (Hold talk key to record).
+    pub hold_started: bool,
     pub download: Option<ModelDownload>,
     /// The last download failed: shown under the row until the next try.
     pub download_error: Option<String>,
@@ -111,23 +116,57 @@ impl Controller {
         }
     }
 
-    /// The talk key went down (`true`) or up. Press to start and press again to stop, or with
-    /// Hold talk key to record, listen while it is held.
-    pub fn voice_talk_key(&mut self, down: bool) {
+    /// A key went down or up while the main window has the keyboard. Returns true when it was
+    /// the talk key's chord going down (the key event is used).
+    ///
+    /// The chord (Control and Option, or Ctrl and Alt) also starts shortcuts such as Ctrl+Alt+M,
+    /// so it counts as the talk key only if no other key is pressed while it is held: press
+    /// and release it to start listening, again to stop. With Hold talk key to record, listening
+    /// starts as soon as the chord is down (so the first word isn't lost), is dropped without
+    /// recognition if another key follows, and stops when the chord is released.
+    pub fn voice_key(&mut self, text: &str, pressed: bool, ctrl: bool, alt: bool, meta: bool) -> bool {
         let hold = self.settings.prefs.voice.hold_to_talk;
-        if down {
-            if self.voice.key_down {
-                return; // auto-repeat
+        if pressed {
+            if is_talk_chord(text, ctrl, alt, meta) {
+                if !self.voice.key_down {
+                    self.voice.key_down = true;
+                    self.voice.armed = true;
+                    if hold && matches!(self.voice.phase, Phase::Idle) {
+                        self.voice_start();
+                        self.voice.hold_started = self.voice.listening();
+                    }
+                }
+                return true;
             }
-            self.voice.key_down = true;
-            if !hold || !self.voice.listening() {
+            if self.voice.key_down && self.voice.armed && !is_talk_key(text) {
+                self.voice.armed = false;
+                if std::mem::take(&mut self.voice.hold_started) {
+                    self.voice_cancel();
+                }
+            }
+            return false;
+        }
+        if self.voice.key_down && is_talk_key(text) {
+            self.voice.key_down = false;
+            let armed = std::mem::take(&mut self.voice.armed);
+            if std::mem::take(&mut self.voice.hold_started) {
+                if self.voice.listening() {
+                    self.voice_stop();
+                }
+            } else if armed {
                 self.voice_mic();
             }
-        } else {
-            let was = std::mem::replace(&mut self.voice.key_down, false);
-            if hold && was && self.voice.listening() {
-                self.voice_stop();
-            }
+        }
+        false
+    }
+
+    /// Stops listening and drops the take (no recognition).
+    pub fn voice_cancel(&mut self) {
+        if self.voice.listening() {
+            self.engine.set_voice_capture(None);
+            self.voice.phase = Phase::Idle;
+            self.voice.level = 0.0;
+            self.ui_dirty = true;
         }
     }
 

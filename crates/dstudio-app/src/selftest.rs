@@ -4124,13 +4124,56 @@ fn steps() -> Vec<Step> {
             }),
         ),
         DoC(
-            "voice: clear the draft; Hold talk key off",
+            "voice: clear the draft; Hold talk key off; the next take says \"play it\"",
             Box::new(|a, ctl| {
                 a.global::<Studio>().set_chat_draft("".into());
                 let mut c = ctl.borrow_mut();
                 c.settings.prefs.voice.hold_to_talk = false;
+                c.voice.fixture_text = Some("play it".into());
             }),
         ),
+        Do(
+            "voice: Control+Option+M (a shortcut, not the talk key): chord, M, then let go",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                let mac = cfg!(target_os = "macos");
+                s.invoke_voice_talk_key("\u{12}".into(), true, !mac, false, mac);
+                s.invoke_voice_talk_key("m".into(), true, !mac, true, mac);
+                s.invoke_voice_talk_key("m".into(), false, !mac, true, mac);
+                s.invoke_voice_talk_key("\u{12}".into(), false, !mac, false, mac);
+            }),
+        ),
+        Check(
+            "voice: not listening, and the M press was left to the shortcut",
+            Box::new(|c, _| (!c.voice.listening() && !c.voice.key_down).then_some(()).ok_or("listening".into())),
+        ),
+        Do(
+            "voice: press and release the talk key",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                let mac = cfg!(target_os = "macos");
+                s.invoke_voice_talk_key("\u{12}".into(), true, !mac, false, mac);
+                s.invoke_voice_talk_key("\u{12}".into(), false, !mac, false, mac);
+            }),
+        ),
+        Check("voice: listening after the release", Box::new(|c, _| c.voice.listening().then_some(()).ok_or("not listening".into()))),
+        Do(
+            "voice: press and release it again",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                let mac = cfg!(target_os = "macos");
+                s.invoke_voice_talk_key("\u{12}".into(), true, !mac, false, mac);
+                s.invoke_voice_talk_key("\u{12}".into(), false, !mac, false, mac);
+            }),
+        ),
+        Check(
+            "voice: stopped; \"play it\" is in the composer",
+            Box::new(|c, a| {
+                let d = a.global::<Studio>().get_chat_draft();
+                (!c.voice.listening() && d == "play it").then_some(()).ok_or(format!("draft {d:?}"))
+            }),
+        ),
+        Do("voice: clear the draft", Box::new(|a| a.global::<Studio>().set_chat_draft("".into()))),
         // ---------------- mixer ----------------
         Do("click the mixer toggle", Box::new(|a| click(a, win().0 - 119.0 + 12.5, 47.0))),
         Check(

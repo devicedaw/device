@@ -3623,21 +3623,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let ctl = ctl.clone();
         let aw = app.as_weak();
         studio.on_voice_talk_key(move |text, pressed, ctrl, alt, meta| {
-            let text = text.as_str();
-            let chord = pressed && assistant_voice::is_talk_chord(text, ctrl, alt, meta);
-            let release = !pressed && assistant_voice::is_talk_key(text);
-            if !chord && !release {
-                return false;
+            let Ok(mut c) = ctl.try_borrow_mut() else { return false };
+            let (was, state) = (c.voice.key_down, c.voice.ui_state());
+            let used = c.voice_key(text.as_str(), pressed, ctrl, alt, meta);
+            if (was != c.voice.key_down || state != c.voice.ui_state())
+                && let Some(a) = aw.upgrade()
+            {
+                c.update_ui(&a);
+                a.window().request_redraw();
             }
-            let Ok(mut c) = ctl.try_borrow_mut() else { return chord };
-            if chord || c.voice.key_down {
-                c.voice_talk_key(pressed);
-                if let Some(a) = aw.upgrade() {
-                    c.update_ui(&a);
-                    a.window().request_redraw();
-                }
-            }
-            chord
+            used
         });
     }
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
