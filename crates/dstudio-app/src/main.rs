@@ -126,6 +126,7 @@ mod track_menu;
 mod transport_fields;
 mod typing;
 mod updates;
+mod voice;
 mod warpedit;
 mod wavgen;
 mod window_buttons;

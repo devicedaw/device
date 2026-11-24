@@ -42,6 +42,10 @@ serde.workspace = true
 # The assistant's API key in the system keychain: Keychain (macOS), Credential Manager
 # (Windows), Secret Service over zbus (Linux, pure Rust, no libdbus).
 keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
+# Voice input (spec 024): speech recognition on this computer. whisper.cpp (MIT) is built from
+# source with CMake; CPU only, no GPU backends. sha2 checks the downloaded model.
+whisper-rs = { version = "=0.16.0", default-features = false }
+sha2 = "0.10"
 
 # Already in the tree; the crash reports' signal handler (src/crash.rs).
 [target.'cfg(unix)'.dependencies]
