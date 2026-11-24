@@ -185,7 +185,10 @@ impl Controller {
             return;
         }
         let src = self.settings.prefs.voice.source();
-        self.engine.set_voice_capture(Some((src.channel, src.stereo)));
+        if !self.engine.set_voice_capture(Some((src.channel, src.stereo))) {
+            self.set_status("Device couldn't start listening: not enough memory", 6);
+            return;
+        }
         let rate = self.engine.sample_rate().round().max(1.0) as u32;
         self.voice.phase = Phase::Listening { take: Take::new(rate) };
         self.voice.level = 0.0;

@@ -5,7 +5,9 @@
 //   audio thread: write(inputs, count, n)  --> ring (lock-free, no allocation)
 //   app thread:   read(out, capacity)      <-- ring (one reader)
 //
-// The ring is allocated once with the engine. Samples that do not fit while the
+// The ring is allocated (and touched) on the main thread the first time the tap
+// is turned on, and kept until the engine goes away, so engines that never
+// listen pay nothing and the audio thread never allocates. Samples that do not fit while the
 // app is slow are dropped and counted; the app reads every frame, so at 48 kHz
 // the 2^19-sample ring (about 11 s) never fills in practice.
 #pragma once
@@ -16,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
 
 namespace dstudio {
 
@@ -23,18 +26,26 @@ class VoiceTap {
 public:
     static constexpr std::size_t kCapacity = std::size_t{1} << 19;
 
-    VoiceTap() : ring_(new float[kCapacity]()) {}
+    VoiceTap() = default;
 
     // Which input to capture: channel < 0 turns the tap off. Turning it on
-    // empties the ring and the peak. MAIN THREAD.
-    void set(int32_t channel, bool stereo) noexcept {
+    // empties the ring and the peak. Returns false only if the first turn-on
+    // cannot allocate the ring (the tap then stays off). MAIN THREAD.
+    bool set(int32_t channel, bool stereo) noexcept {
         source_.store(-1, std::memory_order_seq_cst);
         // The audio thread may still be inside write() with the old source;
         // emptying from the reader side is safe: the reader owns tail_.
         tail_.store(head_.load(std::memory_order_acquire), std::memory_order_release);
         peak_.store(0.0f, std::memory_order_relaxed);
         dropped_.store(0, std::memory_order_relaxed);
-        if (channel >= 0) source_.store(channel * 2 + (stereo ? 1 : 0), std::memory_order_seq_cst);
+        if (channel < 0) return true;
+        if (!storage_) {
+            storage_.reset(new (std::nothrow) float[kCapacity]()); // zeroed here so the pages are mapped
+            if (!storage_) return false;
+            ring_.store(storage_.get(), std::memory_order_release);
+        }
+        source_.store(channel * 2 + (stereo ? 1 : 0), std::memory_order_seq_cst);
+        return true;
     }
 
     bool active() const noexcept { return source_.load(std::memory_order_relaxed) >= 0; }
@@ -43,7 +54,8 @@ public:
     // channel the device does not have reads as silence.
     void write(const float* const* in, uint32_t count, uint32_t n) noexcept {
         const int32_t src = source_.load(std::memory_order_relaxed);
-        if (src < 0 || n == 0) return;
+        float* ring = ring_.load(std::memory_order_acquire);
+        if (src < 0 || n == 0 || ring == nullptr) return;
         const uint32_t ch = static_cast<uint32_t>(src >> 1);
         const bool stereo = (src & 1) != 0;
         const float* a = ch < count ? in[ch] : nullptr;
@@ -56,7 +68,7 @@ public:
         for (std::size_t i = 0; i < take; ++i) {
             float v = 0.0f;
             if (a != nullptr) v = b != nullptr ? 0.5f * (a[i] + b[i]) : a[i];
-            ring_[(head + i) & (kCapacity - 1)] = v;
+            ring[(head + i) & (kCapacity - 1)] = v;
             peak = std::max(peak, std::fabs(v));
         }
         peak_.store(peak, std::memory_order_relaxed);
@@ -68,8 +80,10 @@ public:
     std::size_t read(float* out, std::size_t capacity) noexcept {
         const std::size_t tail = tail_.load(std::memory_order_relaxed);
         const std::size_t head = head_.load(std::memory_order_acquire);
+        const float* ring = ring_.load(std::memory_order_acquire);
+        if (ring == nullptr) return 0;
         const std::size_t take = std::min(capacity, head - tail);
-        for (std::size_t i = 0; i < take; ++i) out[i] = ring_[(tail + i) & (kCapacity - 1)];
+        for (std::size_t i = 0; i < take; ++i) out[i] = ring[(tail + i) & (kCapacity - 1)];
         tail_.store(tail + take, std::memory_order_release);
         return take;
     }
@@ -79,7 +93,8 @@ public:
     uint64_t dropped() const noexcept { return dropped_.load(std::memory_order_relaxed); }
 
 private:
-    std::unique_ptr<float[]> ring_;
+    std::unique_ptr<float[]> storage_; // main thread only
+    std::atomic<float*> ring_{nullptr}; // storage_.get() once allocated
     std::atomic<int32_t> source_{-1}; // channel * 2 + stereo, or -1 = off
     std::atomic<float> peak_{0.0f};
     std::atomic<uint64_t> dropped_{0};

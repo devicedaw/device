@@ -1323,9 +1323,10 @@ impl Engine {
     /// Voice input (spec 024): capture input `channel` (with `stereo`, the average of
     /// `channel` and the next one) for speech recognition; `None` stops. Starting empties
     /// the capture.
-    pub fn set_voice_capture(&self, source: Option<(u16, bool)>) {
+    /// Returns false only if the first turn-on could not allocate the ring (the tap stays off).
+    pub fn set_voice_capture(&self, source: Option<(u16, bool)>) -> bool {
         let (ch, stereo) = source.map_or((-1, false), |(c, s)| (c as i32, s));
-        unsafe { ffi::se_voice_capture_set(self.raw, ch, stereo as u8) };
+        unsafe { ffi::se_voice_capture_set(self.raw, ch, stereo as u8) == ffi::SE_OK }
     }
 
     /// Appends the voice samples captured since the last read (mono, engine rate) to `out`

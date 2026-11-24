@@ -1195,7 +1195,7 @@ int32_t se_midi_capture_wrapped(se_engine* engine, uint8_t* out_wrapped) {
 
 int32_t se_voice_capture_set(se_engine* engine, int32_t channel, uint8_t stereo) {
     SE_REQUIRE_ENGINE(engine);
-    engine->impl->voice().set(channel, stereo != 0);
+    if (!engine->impl->voice().set(channel, stereo != 0)) return fail(SE_ERR_OUT_OF_MEMORY, "out of memory");
     return SE_OK;
 }
 

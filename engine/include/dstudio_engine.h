@@ -1701,7 +1701,9 @@ int32_t se_midi_capture_wrapped(se_engine* engine, uint8_t* out_wrapped);
  * (0-based; with `stereo`, the average of `channel` and `channel + 1`) after
  * Mute input into a mono ring of 2^19 samples at the engine rate. A channel
  * the device lacks reads as silence. channel < 0 turns it off. Turning it on
- * empties the ring and the peak. MAIN THREAD. */
+ * empties the ring and the peak; the first turn-on allocates the ring (here,
+ * never on the audio thread) and fails with SE_ERR_OUT_OF_MEMORY if it can't.
+ * MAIN THREAD. */
 int32_t se_voice_capture_set(se_engine* engine, int32_t channel, uint8_t stereo);
 /* Pops up to `capacity` samples in order; *out_count receives how many were
  * written. *out_peak (may be NULL) receives the largest absolute sample since
