@@ -1545,12 +1545,14 @@ export component AppWindow inherits Window {
         changed smart-shown => { if (!self.smart-shown) { self.focus(); } }
         init => { self.focus(); }
         key-pressed(e) => {
+            if (Studio.voice-talk-key(e.text, true, e.modifiers.control, e.modifiers.alt, e.modifiers.meta)) { return accept; }
             if (e.text == Key.Escape) { self.focus(); }
             if (Studio.typing-key(e.text, true, e.repeat, e.modifiers.control || e.modifiers.shift || e.modifiers.alt || e.modifiers.meta)) { return accept; }
             if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, e.repeat)) { return accept; }
             reject
         }
         key-released(e) => {
+            Studio.voice-talk-key(e.text, false, e.modifiers.control, e.modifiers.alt, e.modifiers.meta);
             Studio.typing-key(e.text, false, false, false);
             reject
         }

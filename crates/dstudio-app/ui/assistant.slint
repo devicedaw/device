@@ -506,18 +506,33 @@ export component AssistantPanel inherits Panel {
         }
         if Studio.chat-draft == "": Text {
             x: input.x + 1.7px; y: input.y; height: Chat.line; width: input.width - 1.7px;
-            text: !Studio.chat-available ? "Add your API key to use the assistant"
+            text: Studio.voice-state == 1 ? "Listening…" : Studio.voice-state == 2 ? "Recognising speech…"
+                : !Studio.chat-available ? "Add your API key to use the assistant"
                 : Studio.teach-mode ? "Ask the assistant to show you how…" : "Ask the assistant to do anything…";
             overflow: elide; color: Chat.text; font-size: Chat.fs; font-weight: 500; letter-spacing: Chat.ls; vertical-alignment: center;
         }
         // Composer row (32 px, padding 0 8 8): mode switch, then mic and send on the right.
         ModeSwitch { x: 6.8px; y: parent.height - 6.8px - 20.4px; }
-        // Mic: PLACEHOLDER (voice input not implemented)
+        // Mic (spec 024): click (or the talk key) to listen, again to stop. While listening it
+        // turns red with a ring that follows the input level; while recognising it dims.
         Disc {
             x: parent.width - 6.8px - 20.4px - 3.4px - 20.4px; y: parent.height - 6.8px - 20.4px;
-            fill: Chat.disc; fill-hover: Chat.disc-hover; tooltip: "Voice input (not implemented)";
-            clicked => { Studio.chat-placeholder("Voice input"); }
-            Icon { width: 11.9px; height: 11.9px; d: Icons.mic; ink: Chat.menu-text; stroke-width: 1.275px; }
+            enabled: Studio.voice-state != 2;
+            fill: Studio.voice-state == 1 ? #e5484d : Chat.disc;
+            fill-hover: Studio.voice-state == 1 ? #ec5d62 : Chat.disc-hover;
+            tooltip: Studio.voice-state == 1 ? "Stop listening" : Studio.voice-state == 2 ? "Recognising speech"
+                : Studio.voice-ready ? "Talk to the assistant (Control-Option)" : "Voice input: download speech recognition in Settings";
+            clicked => { Studio.voice-mic(); }
+            if Studio.voice-state == 1: Rectangle {
+                property <length> grow: 1.7px + 3.4px * Studio.voice-level;
+                x: -self.grow; y: -self.grow; width: parent.width + 2 * self.grow; height: parent.height + 2 * self.grow;
+                border-radius: self.width / 2; border-width: 1.275px; border-color: #e5484d.with-alpha(0.35 + 0.5 * Studio.voice-level);
+                animate grow { duration: 60ms; }
+            }
+            Icon {
+                width: 11.9px; height: 11.9px; d: Icons.mic; stroke-width: 1.275px;
+                ink: Studio.voice-state == 1 ? #ffffff : Studio.voice-state == 2 ? Chat.text : Chat.menu-text;
+            }
         }
         // Send (accent when there is text), or a bare stop square while busy.
         Disc {

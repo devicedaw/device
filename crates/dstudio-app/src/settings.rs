@@ -37,13 +37,25 @@ pub enum Field {
     ShortcutPreset = 4,
     /// Settings › MIDI › Default instrument (src/default_instrument.rs).
     DefaultInstrument = 5,
+    /// Settings › General › Voice › Input and Language (spec 024).
+    VoiceInput = 6,
+    VoiceLanguage = 7,
 }
 
 impl Field {
     fn from_i32(i: i32) -> Option<Field> {
-        [Field::Output, Field::Input, Field::SampleRate, Field::BufferSize, Field::ShortcutPreset, Field::DefaultInstrument]
-            .into_iter()
-            .find(|f| *f as i32 == i)
+        [
+            Field::Output,
+            Field::Input,
+            Field::SampleRate,
+            Field::BufferSize,
+            Field::ShortcutPreset,
+            Field::DefaultInstrument,
+            Field::VoiceInput,
+            Field::VoiceLanguage,
+        ]
+        .into_iter()
+        .find(|f| *f as i32 == i)
     }
 }
 
@@ -56,6 +68,10 @@ pub enum Choice {
     Preset(&'static str),
     /// A default instrument (None = the Synth).
     Instrument(Option<crate::prefs::InstrumentChoice>),
+    /// Voice input's device input.
+    VoiceInput(dstudio_core::model::InputSource),
+    /// Voice input's language (a code from voice::LANGUAGES).
+    Language(&'static str),
     /// A heading row; can't be picked.
     Header,
 }
@@ -239,6 +255,8 @@ impl Controller {
             5 => &mut g.check_updates_at_launch,
             6 => return self.mcp_toggle(),
             7 => &mut g.assistant_listen,
+            8 => &mut self.settings.prefs.voice.hold_to_talk,
+            9 => &mut self.settings.prefs.voice.auto_send,
             _ => return,
         };
         *flag = !*flag;
@@ -397,6 +415,8 @@ impl Controller {
                 crate::shortcut_presets::PRESETS.iter().map(|p| (p.name.to_string(), Choice::Preset(p.name))).collect()
             }
             Field::DefaultInstrument => self.instrument_choices(),
+            Field::VoiceInput => self.voice_input_choices(),
+            Field::VoiceLanguage => crate::voice::LANGUAGES.iter().map(|(c, n)| (n.to_string(), Choice::Language(c))).collect(),
         }
     }
 
@@ -408,11 +428,30 @@ impl Controller {
             (Field::SampleRate, Choice::Rate(r)) => (r - self.current_rate()).abs() < 0.5,
             (Field::BufferSize, Choice::Buffer(n)) => *n == self.current_buffer(),
             (Field::ShortcutPreset, Choice::Preset(p)) => *p == crate::shortcut_presets::find(&self.settings.prefs.shortcut_preset).name,
+            (Field::VoiceInput, Choice::VoiceInput(src)) => *src == self.settings.prefs.voice.source(),
+            (Field::VoiceLanguage, Choice::Language(code)) => *code == self.settings.prefs.voice.language,
             (Field::DefaultInstrument, Choice::Instrument(c)) => {
                 crate::default_instrument::same_choice(c.as_ref(), self.settings.prefs.midi.default_instrument.as_ref())
             }
             _ => false,
         }
+    }
+
+    /// Voice › Input: each device input channel and stereo pair (as the track "In" menu lists
+    /// them), or Input 1 when the device has none yet.
+    fn voice_input_choices(&self) -> Vec<(String, Choice)> {
+        let devs = self.device_list().unwrap_or_default();
+        let a = &self.settings.prefs.audio;
+        let dev = devs.iter().find(|d| a.input.as_ref() == Some(&d.id)).or_else(|| devs.iter().find(|d| d.is_default_input));
+        let mut v: Vec<(String, Choice)> = crate::recording::input_choices(dev)
+            .into_iter()
+            .filter_map(|(label, src)| src.map(|s| (label, Choice::VoiceInput(s))))
+            .collect();
+        if v.is_empty() {
+            let one = dstudio_core::model::InputSource { channel: 0, stereo: false };
+            v.push((crate::recording::input_label(Some(one)), Choice::VoiceInput(one)));
+        }
+        v
     }
 
     pub fn settings_dropdown(&mut self, field: i32) {
@@ -444,6 +483,16 @@ impl Controller {
         }
         if let Choice::Instrument(choice) = c {
             self.settings.prefs.midi.default_instrument = choice;
+            self.save_prefs();
+            return;
+        }
+        if let Choice::VoiceInput(src) = c {
+            self.settings.prefs.voice.input = (src.channel != 0 || src.stereo).then_some(src);
+            self.save_prefs();
+            return;
+        }
+        if let Choice::Language(code) = c {
+            self.settings.prefs.voice.language = code.to_string();
             self.save_prefs();
             return;
         }
@@ -742,12 +791,25 @@ impl Controller {
             g.check_updates_at_launch,
             self.settings.prefs.ai_apps,
             g.assistant_listen,
+            self.settings.prefs.voice.hold_to_talk,
+            self.settings.prefs.voice.auto_send,
         ];
         let shown = s.get_general_on();
         if (0..on.len()).any(|i| slint::Model::row_data(&shown, i) != Some(on[i])) {
             s.set_general_on(slint::ModelRc::new(slint::VecModel::from(on.to_vec())));
         }
         s.set_general_stop_in_place(g.stop_in_place);
+        // The talk key's badges: ⌃ ⌥ on macOS (the default), Ctrl Alt elsewhere.
+        if !cfg!(target_os = "macos") && slint::Model::row_data(&s.get_voice_talk_key_parts(), 0).as_deref() != Some("Ctrl") {
+            s.set_voice_talk_key_parts(slint::ModelRc::new(slint::VecModel::from(vec!["Ctrl".into(), "Alt".into()])));
+        }
+        s.set_voice_input_text(crate::recording::input_label(Some(self.settings.prefs.voice.source())).into());
+        s.set_voice_language_text(crate::voice::LANGUAGES[self.settings.prefs.voice.language_index()].1.into());
+        let (st, button, line, progress) = self.speech_model_row();
+        s.set_dl_speech_state(st);
+        s.set_dl_speech_button(button.into());
+        s.set_dl_speech_line(line.into());
+        s.set_dl_speech_progress(progress);
         if s.get_ai_apps_setup().is_empty() {
             s.set_ai_apps_setup(crate::mcp::setup_snippet().into());
         }

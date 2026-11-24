@@ -442,6 +442,24 @@ impl Controller {
             self.ui_dirty = true;
             return Ok(());
         }
+        // review-assistant-voice-listening: the mic listening (red, with its level ring);
+        // review-assistant-voice-draft: recognised speech waiting in the message box.
+        match name {
+            "voice-listening" => {
+                self.voice.phase = crate::assistant_voice::Phase::Listening { take: crate::voice::Take::new(48_000) };
+                self.voice.level = 0.6;
+                self.voice.frozen = true;
+                self.ui_dirty = true;
+                return Ok(());
+            }
+            "voice-draft" => {
+                self.voice.ready = Some(true);
+                self.voice.draft = Some("Make the drums louder and add a little reverb to the vocal".into());
+                self.ui_dirty = true;
+                return Ok(());
+            }
+            _ => {}
+        }
         let entry = |kind, text: &str, lines: &[&str], secs, expanded, point| Entry {
             kind,
             text: text.into(),

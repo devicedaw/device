@@ -79,6 +79,21 @@ pub const ENTRIES: &[Entry] = &[
         &["mcp", "claude", "chatgpt", "ai", "assistant", "cursor"],
         "Lets AI apps such as Claude Desktop read and edit your project on this computer.",
     ),
+    e(
+        0,
+        "Talk key",
+        &["voice", "speak", "microphone", "mic", "dictation", "shortcut"],
+        "Press Control and Option together to talk to the assistant.",
+    ),
+    e(
+        0,
+        "Hold talk key to record",
+        &["voice", "push to talk", "microphone", "dictation"],
+        "Listens only while you hold the talk key, instead of until you press it again.",
+    ),
+    e(0, "Auto-send", &["voice", "dictation", "send"], "Sends what you said to the assistant straight away, without a chance to edit it."),
+    e(0, "Voice input", &["voice", "microphone", "mic", "input"], "The audio input Device listens to when you talk to the assistant."),
+    e(0, "Language", &["voice", "speech", "dictation"], "The language you speak; Automatic recognises it for you."),
     // Audio
     e(
         1,
@@ -151,8 +166,8 @@ pub const ENTRIES: &[Entry] = &[
     // Shortcuts
     e(4, "Preset", &["keys", "keyboard", "key commands", "keymap", "other app"], ""),
     e(4, "Reset to defaults", &["keys", "keyboard", "shortcuts", "restore"], ""),
-    // Downloads (nothing to download yet: the page's message is its one row)
-    e(5, "Downloadable content", &["download", "sound library", "library", "content", "samples", "multi-sample", "install"], ""),
+    // Downloads
+    e(5, "Speech recognition", &["download", "voice", "speech", "dictation", "model", "install", "microphone"], ""),
     // Privacy
     e(
         PRIVACY_PAGE,
@@ -296,7 +311,12 @@ mod tests {
         assert_eq!(page_slots("instr"), [-1, -1, 0, -1, -1, -1, -1]);
         assert_eq!(page_slots("latency"), [-1, 0, -1, -1, -1, -1, -1]);
         assert_eq!(page_slots("downloads"), [-1, -1, -1, -1, -1, 0, -1], "the page name matches");
-        assert_eq!(page_slots("sound library"), [-1, -1, -1, -1, -1, 0, -1]);
+        assert_eq!(page_slots("model"), [-1, -1, -1, -1, -1, 0, -1]);
+        assert_eq!(hits("push to talk"), ["Hold talk key to record"]);
+        assert_eq!(
+            hits("microphone"),
+            ["Talk key", "Hold talk key to record", "Voice input", "Input device", "Mute audio input", "Speech recognition"]
+        );
         assert_eq!(page_slots("telemetry"), [-1, -1, -1, -1, -1, -1, 0]);
         assert_eq!(PAGES[PRIVACY_PAGE], "Privacy");
         assert!(!PAGES.contains(&"Account") && !PAGES.contains(&"Usage"), "hidden (roadmap Q3)");

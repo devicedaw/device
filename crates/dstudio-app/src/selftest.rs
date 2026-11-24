@@ -4027,6 +4027,110 @@ fn steps() -> Vec<Step> {
                 c.settings.prefs.general.assistant_listen = false;
             }),
         ),
+        // ---------------- assistant: voice input (src/assistant_voice.rs, spec 024) ----------------
+        DoC(
+            "voice: with no speech model, click the mic",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.voice.test_model_path = Some(std::env::temp_dir().join("dstudio-selftest-no-speech-model.bin"));
+                c.voice.ready = None;
+            }),
+        ),
+        Do("voice: the mic button", Box::new(|a| a.global::<Studio>().invoke_voice_mic())),
+        Check(
+            "voice: Settings › Downloads opened with the speech model to download; not listening",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                (c.settings.open
+                    && c.settings.page == 5
+                    && s.get_voice_state() == 0
+                    && !s.get_voice_ready()
+                    && s.get_dl_speech_state() == 0
+                    && s.get_dl_speech_button() == "Download"
+                    && s.get_dl_speech_line() == "Not downloaded · 82 MB")
+                    .then_some(())
+                    .ok_or(format!("settings {} page {} line {:?}", c.settings.open, c.settings.page, s.get_dl_speech_line()))
+            }),
+        ),
+        DoC(
+            "voice: close Settings; the next take will say \"make the drums louder\"",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.close_settings();
+                c.voice.fixture_text = Some("make the drums louder".into());
+            }),
+        ),
+        Do("voice: click the mic to listen", Box::new(|a| a.global::<Studio>().invoke_voice_mic())),
+        Check(
+            "voice: listening (the mic is red)",
+            Box::new(|c, a| {
+                (c.voice.listening() && a.global::<Studio>().get_voice_state() == 1)
+                    .then_some(())
+                    .ok_or(format!("state {}", a.global::<Studio>().get_voice_state()))
+            }),
+        ),
+        Do("voice: click the mic again to stop", Box::new(|a| a.global::<Studio>().invoke_voice_mic())),
+        Check(
+            "voice: the text is in the composer, nothing was sent",
+            Box::new(|c, a| {
+                let d = a.global::<Studio>().get_chat_draft();
+                (!c.voice.listening()
+                    && a.global::<Studio>().get_voice_state() == 0
+                    && d == "make the drums louder"
+                    && c.assistant.busy.is_none())
+                .then_some(())
+                .ok_or(format!("draft {d:?}"))
+            }),
+        ),
+        DoC(
+            "voice: Hold talk key to record on; the next take says \"with more reverb\"",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.voice.hold_to_talk = true;
+                c.voice.fixture_text = Some("with more reverb".into());
+            }),
+        ),
+        Do(
+            "voice: press and hold the talk key (Control, then Option)",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                let mac = cfg!(target_os = "macos");
+                // Option goes down while Control is held (Slint reports macOS Control as Meta).
+                s.invoke_voice_talk_key("\u{12}".into(), true, !mac, false, mac);
+            }),
+        ),
+        Check(
+            "voice: listening while the key is held",
+            Box::new(|c, a| {
+                (c.voice.listening() && c.voice.key_down && a.global::<Studio>().get_voice_state() == 1)
+                    .then_some(())
+                    .ok_or("not listening".into())
+            }),
+        ),
+        Do(
+            "voice: release Option",
+            Box::new(|a| {
+                let mac = cfg!(target_os = "macos");
+                a.global::<Studio>().invoke_voice_talk_key("\u{12}".into(), false, !mac, false, mac);
+            }),
+        ),
+        Check(
+            "voice: stopped on release; the text was added after the draft",
+            Box::new(|c, a| {
+                let d = a.global::<Studio>().get_chat_draft();
+                (!c.voice.listening() && !c.voice.key_down && d == "make the drums louder with more reverb")
+                    .then_some(())
+                    .ok_or(format!("draft {d:?}"))
+            }),
+        ),
+        DoC(
+            "voice: clear the draft; Hold talk key off",
+            Box::new(|a, ctl| {
+                a.global::<Studio>().set_chat_draft("".into());
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.voice.hold_to_talk = false;
+            }),
+        ),
         // ---------------- mixer ----------------
         Do("click the mixer toggle", Box::new(|a| click(a, win().0 - 119.0 + 12.5, 47.0))),
         Check(
@@ -11563,7 +11667,7 @@ fn general_settings_steps() -> Vec<Step> {
                 let s = a.global::<Studio>();
                 let on: Vec<bool> = s.get_general_on().iter().collect();
                 (s.get_settings_page() == 0
-                    && on == [false, true, false, true, false, true, false, false]
+                    && on == [false, true, false, true, false, true, false, false, false, false]
                     && !s.get_general_stop_in_place()
                     && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
                 .then_some(())
@@ -11601,6 +11705,71 @@ fn general_settings_steps() -> Vec<Step> {
             Box::new(move |a| {
                 let (x, y) = switch_xy(431.8);
                 click(a, x, y);
+            }),
+        ),
+        // Voice (spec 024): the two switches, then Language from its dropdown.
+        Do(
+            "general: click Hold talk key to record and Auto-send",
+            Box::new(move |a| {
+                let (x, y) = switch_xy(538.9);
+                click(a, x, y);
+                let (x, y) = switch_xy(559.1);
+                click(a, x, y);
+            }),
+        ),
+        Check(
+            "general: both voice switches are on and shown on",
+            Box::new(|c, a| {
+                let on = a.global::<Studio>().get_general_on();
+                let v = &c.settings.prefs.voice;
+                (v.hold_to_talk && v.auto_send && on.row_data(8) == Some(true) && on.row_data(9) == Some(true))
+                    .then_some(())
+                    .ok_or(format!("{v:?}"))
+            }),
+        ),
+        Do(
+            "general: click them again (off); open Language and pick French",
+            Box::new(move |a| {
+                let (x, y) = switch_xy(538.9);
+                click(a, x, y);
+                let (x, y) = switch_xy(559.1);
+                click(a, x, y);
+                let s = a.global::<Studio>();
+                s.invoke_settings_dropdown(7);
+                let items = s.get_settings_menu_items();
+                if let Some(i) = (0..items.row_count()).find(|&i| items.row_data(i).is_some_and(|r| r.label == "French")) {
+                    s.invoke_settings_menu_pick(i as i32);
+                }
+            }),
+        ),
+        Check(
+            "general: the voice language is French, the switches are off, the menu closed",
+            Box::new(|c, a| {
+                let s = a.global::<Studio>();
+                let v = &c.settings.prefs.voice;
+                (v.language == "fr"
+                    && !v.hold_to_talk
+                    && !v.auto_send
+                    && s.get_voice_language_text() == "French"
+                    && !s.get_settings_menu_open())
+                .then_some(())
+                .ok_or(format!("{v:?} shown {}", s.get_voice_language_text()))
+            }),
+        ),
+        Do(
+            "general: pick Automatic again",
+            Box::new(|a| {
+                let s = a.global::<Studio>();
+                s.invoke_settings_dropdown(7);
+                s.invoke_settings_menu_pick(0);
+            }),
+        ),
+        Check(
+            "general: voice settings are back to their defaults",
+            Box::new(|c, a| {
+                (c.settings.prefs.voice.is_default() && a.global::<Studio>().get_voice_language_text() == "Automatic")
+                    .then_some(())
+                    .ok_or(format!("{:?}", c.settings.prefs.voice))
             }),
         ),
         Do(
@@ -14308,7 +14477,8 @@ fn privacy_steps() -> Vec<Step> {
     ]
 }
 
-/// Settings › Downloads (roadmap G15): the sidebar opens it, and searching "sound library" finds it.
+/// Settings › Downloads (roadmap G15): the sidebar opens it, and searching "speech" from General
+/// finds its speech recognition row (spec 024).
 fn downloads_steps() -> Vec<Step> {
     use Step::*;
     vec![
@@ -14329,12 +14499,12 @@ fn downloads_steps() -> Vec<Step> {
             }),
         ),
         Do(
-            "downloads: search \"sound library\" from General",
+            "downloads: search \"model\" from General",
             Box::new(|a| {
                 let s = a.global::<Studio>();
                 s.invoke_settings_page_select(0);
-                s.set_settings_search("sound library".into());
-                s.invoke_settings_search_edited("sound library".into());
+                s.set_settings_search("model".into());
+                s.invoke_settings_search_edited("model".into());
             }),
         ),
         Check(

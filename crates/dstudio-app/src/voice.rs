@@ -28,9 +28,6 @@ const SILENT_PEAK: f32 = 0.003;
 
 /// One downloadable model: where it comes from and how to check it.
 pub struct ModelSpec {
-    /// Shown in Settings › Downloads.
-    pub name: &'static str,
-    pub detail: &'static str,
     /// File name under the models folder.
     pub file: &'static str,
     /// Pinned to one revision of the model repository, so the hash below never changes.
@@ -42,8 +39,6 @@ pub struct ModelSpec {
 /// whisper.cpp "base" (multilingual, 8-bit): about 82 MB, good accuracy for short requests and
 /// fast enough on a laptop CPU.
 pub const MODEL: ModelSpec = ModelSpec {
-    name: "Speech recognition",
-    detail: "For talking to the assistant. Works on this computer, in about 100 languages.",
     file: "speech-base-q8_0.bin",
     url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q8_0.bin",
     sha256: "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9",
@@ -127,14 +122,7 @@ pub fn size_label(bytes: u64) -> String {
 /// Downloads `url` to `dest`, checking its size and SHA-256. Writes to `dest.part` and renames
 /// it only when the hash matches, so a failed, cancelled or corrupt download leaves nothing at
 /// `dest` (and removes the part file). `progress` receives the bytes received so far.
-pub fn download(
-    url: &str,
-    sha256: &str,
-    bytes: u64,
-    dest: &Path,
-    progress: &AtomicU64,
-    cancel: &AtomicBool,
-) -> Result<(), String> {
+pub fn download(url: &str, sha256: &str, bytes: u64, dest: &Path, progress: &AtomicU64, cancel: &AtomicBool) -> Result<(), String> {
     if !url.starts_with("https://") && !url.starts_with("http://127.0.0.1:") {
         return Err("Downloads must use HTTPS.".into());
     }

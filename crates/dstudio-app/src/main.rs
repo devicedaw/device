@@ -43,6 +43,7 @@ mod appmenu;
 mod assistant_listen;
 mod assistant_panel;
 mod assistant_provider;
+mod assistant_voice;
 mod automation;
 mod chain_gaps;
 mod chain_presets;
@@ -222,8 +223,12 @@ struct Args {
     settings_search_review: Option<&'static str>,
     /// review-settings-help: Settings › Audio with Buffer size's (i) hovered, its help showing.
     settings_help_review: bool,
-    /// review-settings-privacy: Settings › Privacy (6); review-settings-downloads: Downloads (5).
+    /// review-settings-privacy: Settings › Privacy (6); review-settings-downloads: Downloads (5);
+    /// review-settings-general: General (0).
     settings_page_review: Option<usize>,
+    /// review-settings-downloads-progress / -ready: the speech model row downloading (false) or
+    /// downloaded (true).
+    speech_model_review: Option<bool>,
     /// Settings › Shortcuts: 1 the page, 2 recording keys for Tap tempo, 3 Tap tempo unmapped,
     /// 4-6 searching "track", "notes", "transpose".
     shortcuts_review: u8,
@@ -888,6 +893,17 @@ fn parse_args() -> Result<Args, String> {
                 st @ ("review-settings-privacy" | "review-settings-downloads") => {
                     a.reference_default = true;
                     a.settings_page_review = Some(if st.ends_with("privacy") { settings_search::PRIVACY_PAGE } else { 5 });
+                }
+                // Voice input (spec 024): Settings › General (its Voice rows), and Downloads with the
+                // speech model part way down (31 of 82 MB) or downloaded.
+                "review-settings-general" => {
+                    a.reference_default = true;
+                    a.settings_page_review = Some(0);
+                }
+                st @ ("review-settings-downloads-progress" | "review-settings-downloads-ready") => {
+                    a.reference_default = true;
+                    a.settings_page_review = Some(5);
+                    a.speech_model_review = Some(st.ends_with("ready"));
                 }
                 "review-settings-help" => {
                     a.reference_default = true;
@@ -3164,6 +3180,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut c = ctl.borrow_mut();
         c.open_settings();
         c.settings_page(page);
+        match args.speech_model_review {
+            Some(true) => c.voice.ready = Some(true),
+            Some(false) => {
+                c.voice.download = Some(assistant_voice::ModelDownload {
+                    progress: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(31_400_000)),
+                    cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                });
+            }
+            None => {}
+        }
     }
     if args.settings_help_review {
         let mut c = ctl.borrow_mut();
@@ -3590,6 +3616,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_chat_remove_context, |c| c.assistant_remove_context());
     on!(on_ac_resample, |c| c.resample_open_clip());
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
+    // Voice input (spec 024): the mic, the talk key and the speech model download.
+    on!(on_voice_mic, |c| c.voice_mic());
+    on!(on_dl_speech_action, |c| c.speech_model_action());
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_voice_talk_key(move |text, pressed, ctrl, alt, meta| {
+            let text = text.as_str();
+            let chord = pressed && assistant_voice::is_talk_chord(text, ctrl, alt, meta);
+            let release = !pressed && assistant_voice::is_talk_key(text);
+            if !chord && !release {
+                return false;
+            }
+            let Ok(mut c) = ctl.try_borrow_mut() else { return chord };
+            if chord || c.voice.key_down {
+                c.voice_talk_key(pressed);
+                if let Some(a) = aw.upgrade() {
+                    c.update_ui(&a);
+                    a.window().request_redraw();
+                }
+            }
+            chord
+        });
+    }
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
         // The Marquee tool and Scissors take lane presses before anything else (src/tools.rs).
         if kind == 0 {
@@ -4452,6 +4502,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             c.poll_test_tone();
             c.midi_tick();
+            c.voice_tick();
             c.device_poll();
             c.auto_poll();
             if !c.pr.preview_offs.is_empty() {

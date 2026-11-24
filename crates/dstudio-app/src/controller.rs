@@ -268,6 +268,10 @@ pub enum JobResult {
     Measured { path: PathBuf, result: Result<AssetInfo, String> },
     /// A Consolidate, Bounce or Export render written and loaded (src/clip_render.rs).
     ClipRendered(Box<crate::clip_render::ClipRendered>),
+    /// Voice input: the recognised text of a take (spec 024).
+    Voice(Result<String, String>),
+    /// Settings › Downloads: the speech model download finished.
+    SpeechModel(Result<(), String>),
     /// File › Import Ableton Live Set… read and its samples decoded (src/live_import.rs).
     LiveSet(Box<crate::live_import::LiveSetJob>),
 }
@@ -621,6 +625,8 @@ pub struct Controller {
     pub assistant_open: bool,
     pub assistant: AssistantState,
     pub tour: crate::tour::Tour,
+    /// The assistant's voice input (spec 024, assistant_voice.rs).
+    pub voice: crate::assistant_voice::Voice,
     pub provider: Arc<Provider>,
     /// Where the assistant's API key is kept (src/api_key.rs).
     pub key_store: crate::api_key::KeyStore,
@@ -792,6 +798,7 @@ impl Controller {
             assistant_open: false,
             assistant: AssistantState::default(),
             tour: crate::tour::Tour::default(),
+            voice: crate::assistant_voice::Voice::default(),
             provider: Arc::new(Provider::Unavailable),
             key_store: crate::api_key::KeyStore::System,
             mcp: crate::mcp::McpState::default(),
@@ -1589,6 +1596,8 @@ impl Controller {
                 JobResult::Auditioned { path, result } => self.finish_audition(path, result),
                 JobResult::Measured { path, result } => self.finish_measure(path, result),
                 JobResult::ClipRendered(r) => self.finish_clip_render(*r),
+                JobResult::Voice(r) => self.finish_voice(r),
+                JobResult::SpeechModel(r) => self.finish_speech_model(r),
                 JobResult::LiveSet(job) => self.finish_live_set(*job),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
@@ -2746,6 +2755,16 @@ impl Controller {
         s.set_chat_available(self.provider.available());
         s.set_chat_key_saved(self.assistant.key_saved);
         s.set_chat_busy(self.assistant.busy.is_some());
+        // Voice input (spec 024): the mic's look, and recognised text into the composer.
+        s.set_voice_state(self.voice.ui_state());
+        s.set_voice_level(self.voice.level);
+        let ready = self.speech_model_ready();
+        s.set_voice_ready(ready);
+        if let Some(text) = self.voice.draft.take() {
+            let cur = s.get_chat_draft();
+            let cur = cur.trim_end();
+            s.set_chat_draft(if cur.is_empty() { text.into() } else { format!("{cur} {text}").into() });
+        }
         s.set_chat_notice(self.assistant.notice_visible);
         // Getting started tour (src/tour.rs).
         let tp = &self.settings.prefs.assistant_tour;
