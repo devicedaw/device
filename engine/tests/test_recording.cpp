@@ -326,7 +326,12 @@ TEST_CASE(voice_capture_reads_the_chosen_input_in_order) {
     REQUIRE(se_voice_capture_read(e, got.data(), got.size(), &n, nullptr) == SE_OK);
     REQUIRE(n == 500u);
     bad = 0;
-    for (std::size_t k = 0; k < n; ++k) bad += got[k] != 0.5f * (ramp_val(0, k) + ramp_val(1, k));
+    // Within an ulp or two: compilers may fuse the expected sum here into an
+    // FMA, so the last bit can differ from the engine's plain add.
+    for (std::size_t k = 0; k < n; ++k) {
+        const float want = 0.5f * (ramp_val(0, k) + ramp_val(1, k));
+        bad += std::fabs(got[k] - want) > 1e-6f * want;
+    }
     CHECK_EQ(bad, 0L);
 
     // A channel the input lacks reads as silence; Mute input silences it too.
