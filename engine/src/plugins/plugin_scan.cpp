@@ -214,7 +214,7 @@ bool scan_clap_bundle(const std::string& path, std::vector<ScannedPlugin>& out, 
     host.name = "Device scanner";
     host.vendor = "Device";
     host.url = "";
-    host.version = "0.3.1";
+    host.version = "0.4.0";
     host.get_extension = [](const clap_host*, const char*) -> const void* { return nullptr; };
     host.request_restart = [](const clap_host*) {};
     host.request_process = [](const clap_host*) {};
