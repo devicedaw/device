@@ -12,6 +12,12 @@
 //! the status line: Save keeps it, closing without saving throws it away. The recovered
 //! backup takes over this session's name, so it is not lost if this session crashes too.
 //!
+//! A recording pass writes its takes straight to disk, and the WAV header gets its sizes
+//! only when the pass ends. So while audio is being recorded, `<pid>.takes.json` says where
+//! the takes go and when the pass began. If the session dies mid-pass, the next launch gives
+//! every take it finds there a header that matches the audio that reached the disk
+//! ([`repair_take`]) and says where they are.
+//!
 //! Self-tests and screenshot runs never autosave or recover (no support dir is given).
 
 use crate::controller::Controller;
@@ -32,6 +38,15 @@ pub struct Meta {
     pub written: u64,
 }
 
+/// What `<pid>.takes.json` says about a recording pass in progress.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TakesMeta {
+    /// The folder the takes are written to.
+    pub dir: String,
+    /// When the pass began (seconds since 1970).
+    pub started: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct Autosave {
     /// `<support dir>/Autosave`; None turns autosave off (self-tests, screenshot runs).
@@ -43,6 +58,8 @@ pub struct Autosave {
     pub last_write: Option<Instant>,
     /// Overrides [`INTERVAL`] (tests).
     pub interval: Option<Duration>,
+    /// `<pid>.takes.json` is written (audio is being recorded).
+    pub takes_marked: bool,
 }
 
 fn now_secs() -> u64 {
@@ -58,6 +75,93 @@ pub fn remove(dir: &Path, pid: u32) {
     let (project, meta) = paths(dir, pid);
     let _ = std::fs::remove_file(meta);
     let _ = std::fs::remove_dir_all(project);
+    let _ = std::fs::remove_file(takes_path(dir, pid));
+}
+
+/// `<dir>/<pid>.takes.json`.
+pub fn takes_path(dir: &Path, pid: u32) -> PathBuf {
+    dir.join(format!("{pid}.takes.json"))
+}
+
+/// Size of the header the engine's take writer (`WavFloatWriter`) puts first: RIFF (12),
+/// `fmt ` with 32-bit float (26), `fact` (12) and the `data` chunk header (8).
+const TAKE_HEADER: u64 = 58;
+
+/// Gives a take cut short by a crash a header that matches the audio on disk: the RIFF,
+/// `fact` and `data` sizes, with any partial frame at the end dropped. Some(frames) when the
+/// header was rewritten; None when the file is not a take or its header was already right.
+pub fn repair_take(path: &Path) -> std::io::Result<Option<u64>> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut f = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
+    let len = f.metadata()?.len();
+    let mut h = [0u8; TAKE_HEADER as usize];
+    if len < TAKE_HEADER || f.read_exact(&mut h).is_err() {
+        return Ok(None);
+    }
+    let u16_at = |i: usize| u16::from_le_bytes([h[i], h[i + 1]]);
+    let u32_at = |i: usize| u32::from_le_bytes([h[i], h[i + 1], h[i + 2], h[i + 3]]);
+    let is_take = &h[0..4] == b"RIFF"
+        && &h[8..12] == b"WAVE"
+        && &h[12..16] == b"fmt "
+        && u32_at(16) == 18
+        && u16_at(20) == 3
+        && u16_at(34) == 32
+        && &h[38..42] == b"fact"
+        && &h[50..54] == b"data";
+    let channels = u64::from(u16_at(22));
+    if !is_take || !(1..=2).contains(&channels) {
+        return Ok(None);
+    }
+    let frame = channels * 4;
+    let max_data = u64::from(u32::MAX) - TAKE_HEADER;
+    let frames = (len - TAKE_HEADER).min(max_data) / frame;
+    let data = frames * frame;
+    if u64::from(u32_at(54)) == data && len == TAKE_HEADER + data {
+        return Ok(None);
+    }
+    // Every size fits: data is at most u32::MAX - TAKE_HEADER.
+    let (riff, frames32, data32) = ((TAKE_HEADER - 8 + data) as u32, frames as u32, data as u32);
+    f.seek(SeekFrom::Start(4))?;
+    f.write_all(&riff.to_le_bytes())?;
+    f.seek(SeekFrom::Start(46))?;
+    f.write_all(&frames32.to_le_bytes())?;
+    f.seek(SeekFrom::Start(54))?;
+    f.write_all(&data32.to_le_bytes())?;
+    f.set_len(TAKE_HEADER + data)?;
+    f.sync_all()?;
+    Ok(Some(frames))
+}
+
+/// Repairs the takes of recording passes that sessions no longer running left unfinished,
+/// and forgets those passes: the files repaired, as (path, frames).
+pub fn recover_takes(dir: &Path, own_pid: u32) -> Vec<(PathBuf, u64)> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut repaired = Vec::new();
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(pid) = name.strip_suffix(".takes.json").and_then(|p| p.parse::<u32>().ok()) else { continue };
+        if pid == own_pid || running(pid) {
+            continue;
+        }
+        if let Some(meta) = std::fs::read(e.path()).ok().and_then(|b| serde_json::from_slice::<TakesMeta>(&b).ok()) {
+            let started = UNIX_EPOCH + Duration::from_secs(meta.started.saturating_sub(5));
+            for take in std::fs::read_dir(&meta.dir).into_iter().flatten().flatten() {
+                let p = take.path();
+                let is_wav = p.extension().is_some_and(|x| x.eq_ignore_ascii_case("wav"));
+                let recent = take.metadata().and_then(|m| m.modified()).is_ok_and(|t| t >= started);
+                if is_wav && recent {
+                    match repair_take(&p) {
+                        Ok(Some(frames)) => repaired.push((p, frames)),
+                        Ok(None) => {}
+                        Err(err) => eprintln!("autosave: cannot repair {}: {err}", p.display()),
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_file(e.path());
+    }
+    repaired.sort();
+    repaired
 }
 
 #[cfg(unix)]
@@ -110,6 +214,11 @@ impl Controller {
     pub fn autosave_tick(&mut self) {
         let Some(dir) = self.autosave.dir.clone() else { return };
         let pid = std::process::id();
+        if self.autosave.takes_marked && !self.rec.recording {
+            // The pass ended and the engine finished the takes' headers.
+            let _ = std::fs::remove_file(takes_path(&dir, pid));
+            self.autosave.takes_marked = false;
+        }
         if !self.doc.is_dirty() {
             if self.autosave.saved_rev.take().is_some() {
                 remove(&dir, pid);
@@ -133,6 +242,19 @@ impl Controller {
         }
     }
 
+    /// A recording pass started writing takes to `takes_dir`: note it, so that the next
+    /// launch can repair them if this session dies before the pass ends.
+    pub fn autosave_mark_recording(&mut self, takes_dir: &Path) {
+        let Some(dir) = self.autosave.dir.clone() else { return };
+        let meta = TakesMeta { dir: takes_dir.to_string_lossy().into_owned(), started: now_secs() };
+        let path = takes_path(&dir, std::process::id());
+        let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, serde_json::to_vec(&meta).unwrap_or_default()));
+        match written {
+            Ok(()) => self.autosave.takes_marked = true,
+            Err(e) => eprintln!("autosave: {}: {e}", path.display()),
+        }
+    }
+
     fn write_backup(&mut self, dir: &Path, pid: u32) -> Result<(), String> {
         // Plugin instances own their state: pull it into the model first, as Save does.
         let states = self.engine.plugin_states();
@@ -146,21 +268,43 @@ impl Controller {
         std::fs::rename(&tmp, &meta).map_err(|e| e.to_string())
     }
 
-    /// At launch: open the backup a crashed session left, as unsaved changes to its project.
-    /// True when one was recovered.
+    /// At launch: repair the takes a crashed session was recording, and open the backup it
+    /// left as unsaved changes to its project. True when a project was recovered.
     pub fn autosave_recover(&mut self) -> bool {
         let Some(dir) = self.autosave.dir.clone() else { return false };
         let pid = std::process::id();
-        let Some((from, meta)) = leftover(&dir, pid) else { return false };
-        let backup = match adopt(&dir, from, pid) {
+        let takes = recover_takes(&dir, pid);
+        let takes_note = takes_note(&takes);
+        let recovered = self.recover_backup(&dir, pid);
+        let any = recovered.is_some();
+        match (recovered, takes_note) {
+            (Some(when), note) => {
+                let note = note.map(|n| format!(" {n}")).unwrap_or_default();
+                self.set_status(
+                    format!("Device quit unexpectedly. Recovered your unsaved changes from {when}: save to keep them.{note}"),
+                    20,
+                );
+            }
+            (None, Some(note)) => self.set_status(format!("Device quit while recording. {note}"), 20),
+            (None, None) => return false,
+        }
+        self.ui_dirty = true;
+        any
+    }
+
+    /// Opens the newest backup a session that is no longer running left: how long ago it
+    /// was written, in words.
+    fn recover_backup(&mut self, dir: &Path, pid: u32) -> Option<String> {
+        let (from, meta) = leftover(dir, pid)?;
+        let backup = match adopt(dir, from, pid) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("autosave: cannot take over the backup of process {from}: {e}");
-                return false;
+                return None;
             }
         };
         if !self.open(&backup) {
-            return false;
+            return None;
         }
         // open() remembered the backup as a recent project and made it the project's folder.
         let b = backup.to_string_lossy().into_owned();
@@ -175,14 +319,18 @@ impl Controller {
         self.doc.mark_edited();
         self.autosave.saved_rev = Some(self.doc.revision());
         self.autosave.last_write = Some(Instant::now());
-        let when = ago(meta.written);
-        self.set_status(
-            format!("Device quit unexpectedly. Recovered your unsaved changes from {when}: save to keep them."),
-            20,
-        );
-        self.ui_dirty = true;
-        true
+        Some(ago(meta.written))
     }
+}
+
+/// What the status line says about takes [`recover_takes`] repaired.
+fn takes_note(takes: &[(PathBuf, u64)]) -> Option<String> {
+    let (first, _) = takes.first()?;
+    let folder = first.parent().map(|p| p.display().to_string()).unwrap_or_default();
+    Some(match takes.len() {
+        1 => format!("The take being recorded was saved up to the crash, in {folder}: drag it in from there."),
+        n => format!("The {n} takes being recorded were saved up to the crash, in {folder}: drag them in from there."),
+    })
 }
 
 /// How long ago `written` (seconds since 1970) was, in words.
@@ -198,7 +346,7 @@ fn ago(written: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Meta, adopt, leftover, paths, remove};
+    use super::{Meta, TakesMeta, adopt, leftover, paths, recover_takes, remove, repair_take, takes_path};
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("dstudio-autosave-{name}-{}", std::process::id()));
@@ -255,6 +403,110 @@ mod tests {
         c.save_to(&song);
         c.autosave_tick();
         assert!(!backup.exists(), "saved: the backup goes");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A take as the engine's `WavFloatWriter` leaves it when the app dies mid-pass: the
+    /// header it wrote at the start (every size 0), then the audio that reached the disk.
+    fn cut_take(path: &std::path::Path, channels: u16, samples: &[f32], extra: &[u8]) {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&50u32.to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&18u32.to_le_bytes());
+        b.extend_from_slice(&3u16.to_le_bytes());
+        b.extend_from_slice(&channels.to_le_bytes());
+        b.extend_from_slice(&48_000u32.to_le_bytes());
+        b.extend_from_slice(&(48_000 * u32::from(channels) * 4).to_le_bytes());
+        b.extend_from_slice(&(channels * 4).to_le_bytes());
+        b.extend_from_slice(&32u16.to_le_bytes());
+        b.extend_from_slice(&0u16.to_le_bytes());
+        b.extend_from_slice(b"fact");
+        b.extend_from_slice(&4u32.to_le_bytes());
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(b.len(), 58);
+        for s in samples {
+            b.extend_from_slice(&s.to_le_bytes());
+        }
+        b.extend_from_slice(extra);
+        std::fs::write(path, b).unwrap();
+    }
+
+    #[test]
+    fn a_take_cut_short_gets_a_header_that_matches_its_audio() {
+        let dir = scratch("repair");
+        let take = dir.join("Audio 1.wav");
+        let samples: Vec<f32> = (0..2_000).map(|i| (i as f32 * 0.01).sin()).collect();
+        // Half a sample of a frame that was being written when the app died.
+        cut_take(&take, 2, &samples, &[1, 2, 3]);
+        let (_, _, before) = crate::wavgen::read_wav(&take).unwrap();
+        assert!(before.is_empty(), "a cut-short take reads as silence");
+        assert_eq!(repair_take(&take).unwrap(), Some(1_000));
+        let (rate, ch, after) = crate::wavgen::read_wav(&take).unwrap();
+        assert_eq!((rate, ch), (48_000, 2));
+        assert_eq!(after, samples, "every whole frame on disk is kept");
+        assert_eq!(std::fs::metadata(&take).unwrap().len(), 58 + 8_000, "the partial frame is dropped");
+        assert_eq!(repair_take(&take).unwrap(), None, "a take with the right header is left alone");
+        let other = dir.join("notes.wav");
+        std::fs::write(&other, b"RIFF....WAVEsomething else entirely, longer than a take header").unwrap();
+        assert_eq!(repair_take(&other).unwrap(), None, "only the engine's take format is touched");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_next_launch_repairs_the_takes_of_a_pass_that_never_ended() {
+        let dir = scratch("takes");
+        let takes = dir.join("media");
+        std::fs::create_dir_all(&takes).unwrap();
+        cut_take(&takes.join("Audio 1.wav"), 1, &[0.5; 480], &[]);
+        cut_take(&takes.join("Audio 2.wav"), 1, &[0.25; 96], &[]);
+        let dead = 2_000_000_003;
+        let meta = TakesMeta { dir: takes.to_string_lossy().into_owned(), started: super::now_secs() };
+        std::fs::write(takes_path(&dir, dead), serde_json::to_vec(&meta).unwrap()).unwrap();
+        // This session's own pass is still running: it is not touched.
+        let me = std::process::id();
+        std::fs::write(takes_path(&dir, me), serde_json::to_vec(&meta).unwrap()).unwrap();
+        let fixed = recover_takes(&dir, me);
+        let names: Vec<_> = fixed.iter().map(|(p, n)| (p.file_name().unwrap().to_string_lossy().into_owned(), *n)).collect();
+        assert_eq!(names, vec![("Audio 1.wav".into(), 480), ("Audio 2.wav".into(), 96)]);
+        assert!(!takes_path(&dir, dead).exists(), "the finished pass is forgotten");
+        assert!(takes_path(&dir, me).exists());
+        assert!(recover_takes(&dir, me).is_empty());
+        let note = super::takes_note(&fixed).unwrap();
+        assert!(note.starts_with("The 2 takes being recorded were saved up to the crash, in "), "{note}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_crashed_sessions_changes_open_unsaved_and_go_when_declined() {
+        use crate::controller::Controller;
+        use std::sync::Arc;
+        let dir = scratch("recover");
+        let dead = 2_000_000_004;
+        let (p, m) = paths(&dir, dead);
+        let mut project = dstudio_core::Project::default();
+        project.transport.bpm = 133.0;
+        dstudio_core::persist::save(&project, &p).unwrap();
+        let meta = Meta { project_dir: Some("/songs/Song.dsproj".into()), written: super::now_secs() - 300 };
+        std::fs::write(m, serde_json::to_vec(&meta).unwrap()).unwrap();
+        let engine = Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, dstudio_core::Project::default());
+        c.autosave.dir = Some(dir.clone());
+        assert!(c.autosave_recover());
+        assert_eq!(c.project().transport.bpm, 133.0, "the backup's changes are open");
+        assert!(c.doc.is_dirty(), "as unsaved changes");
+        assert_eq!(c.project_dir.as_deref(), Some(std::path::Path::new("/songs/Song.dsproj")), "Save goes to the original project");
+        let status = c.status_text().unwrap_or_default().to_owned();
+        assert!(status.contains("Recovered your unsaved changes from 5 minutes ago"), "{status}");
+        let mine = paths(&dir, std::process::id()).0;
+        assert!(mine.exists() && !paths(&dir, dead).0.exists(), "this session took the backup over");
+        // Don't Save: the changes, and with them the backup, are thrown away.
+        c.new_project();
+        c.autosave_tick();
+        assert!(!mine.exists());
+        assert!(!c.autosave_recover(), "nothing left to recover");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

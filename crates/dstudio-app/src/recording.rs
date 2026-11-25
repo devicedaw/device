@@ -280,6 +280,7 @@ impl Controller {
                     Ok(()) => {
                         audio_started = true;
                         self.rec.write_errors_at_start = self.engine.recording_stats().write_errors;
+                        self.autosave_mark_recording(&dir);
                     }
                     Err(e) => audio_err = Some(format!("recording failed: {e}")),
                 }
