@@ -1740,9 +1740,13 @@ impl Controller {
                 self.project_dir = Some(dir.to_path_buf());
                 self.remember_recent(dir);
                 match (moved.len(), failed.first()) {
-                    (_, Some(why)) => self.set_status(format!("Saved {}, but a recording stayed in the temp folder: {why}", dir.display()), 8),
+                    (_, Some(why)) => {
+                        self.set_status(format!("Saved {}, but a recording stayed in the temp folder: {why}", dir.display()), 8)
+                    }
                     (0, None) => self.set_status(format!("Saved {}", dir.display()), 3),
-                    (n, None) => self.set_status(format!("Saved {} and moved {n} unsaved recording(s) into its media folder", dir.display()), 4),
+                    (n, None) => {
+                        self.set_status(format!("Saved {} and moved {n} unsaved recording(s) into its media folder", dir.display()), 4)
+                    }
                 }
                 self.files_refresh();
             }

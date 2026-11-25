@@ -57,9 +57,10 @@ pub fn adopt(root: &Path, paths: &[String], project: &Path) -> (Vec<(String, Str
             continue;
         }
         let dest = free_name(dest);
-        let result = dest.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| {
-            if is_move { move_file(p, &dest) } else { std::fs::copy(p, &dest).map(|_| ()) }
-        });
+        let result = dest
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| if is_move { move_file(p, &dest) } else { std::fs::copy(p, &dest).map(|_| ()) });
         match result {
             Ok(()) => {
                 let dest = std::fs::canonicalize(&dest).unwrap_or(dest);
