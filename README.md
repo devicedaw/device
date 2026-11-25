@@ -265,7 +265,8 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Releases and branding | 🚧 | 0.3.1 is released ([CHANGELOG.md](CHANGELOG.md)); the macOS app is signed and notarised, the Windows packages are not signed yet |
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log. Everything still to build, in priority order, is in the
-[parity roadmap](specs/010-parity-roadmap/spec.md).
+[song-ready roadmap](specs/025-song-ready-roadmap/spec.md) (the earlier
+[parity roadmap](specs/010-parity-roadmap/spec.md) is done apart from G27).
 
 ## Get Device
 

@@ -2,6 +2,8 @@
 
 Status: Draft · Spec: 010 · Issue: none
 
+The next list to work from is the [song-ready roadmap](../025-song-ready-roadmap/spec.md) (spec 025).
+
 ## Problem
 
 Device is meant to give a musician everything a complete, modern song-making app gives them, with the same
