@@ -992,8 +992,17 @@ TEST_CASE(device_output_only_named_device_and_restart) {
 // an output to an input. DSTUDIO_TEST_LOOPBACK_TOLERANCE (frames, default 64)
 // bounds the error, which is the latency the backend failed to report (0 on
 // the PipeWire loopback; a hardware converter adds latency of its own).
+//
+// DSTUDIO_TEST_LOOPBACK_RIG_CYCLES=1 says the loopback itself may add or save one
+// whole buffer that nobody reports. That is the case for a loopback inside one
+// PipeWire graph: the engine's output feeds its own input through the null sink
+// and pw-loopback, a cycle PipeWire has to cut somewhere, and where it cuts
+// changes from run to run (CI saw every click off by exactly -256, 0 or +256
+// frames at a 256 buffer on the same build). The test then takes off the whole
+// number of buffers that all the clicks share (at most that many) before the
+// tolerance check, so drift, jitter and glitches still fail it.
 TEST_CASE(device_duplex_loopback_take_lands_on_the_clicks) {
-    std::string in_env, out_env, tol_env;
+    std::string in_env, out_env, tol_env, rig_env;
     if (!dstudio::os::get_env("DSTUDIO_TEST_LOOPBACK_INPUT", in_env) || in_env.empty())
         SKIP("set DSTUDIO_TEST_LOOPBACK_INPUT to an input that hears the output");
     const char* in_uid = in_env.c_str();
@@ -1050,9 +1059,13 @@ TEST_CASE(device_duplex_loopback_take_lands_on_the_clicks) {
         },
         10000));
     REQUIRE(se_transport_pause(e) == SE_OK);
+    se_stats stats{};
+    se_stats_get(e, &stats);
     const auto takes = stop_takes(e);
     REQUIRE(se_device_stop(e) == SE_OK);
     REQUIRE(takes.size() == 1);
+    std::fprintf(stderr, "  %llu callbacks, %llu over their deadline\n", static_cast<unsigned long long>(stats.callbacks),
+                 static_cast<unsigned long long>(stats.xruns_or_overloads));
 
     dstudio::DecodedAudio got;
     std::string err;
@@ -1075,6 +1088,21 @@ TEST_CASE(device_duplex_loopback_take_lands_on_the_clicks) {
     std::fprintf(stderr, "\n");
     // Nearly all of the clicks in the take (one comes before the take starts).
     CHECK(errors.size() >= 25u);
+    const long rig_cycles =
+        dstudio::os::get_env("DSTUDIO_TEST_LOOPBACK_RIG_CYCLES", rig_env) ? std::atol(rig_env.c_str()) : 0;
+    if (rig_cycles > 0 && !errors.empty() && st.buffer_size > 0) {
+        std::vector<long> sorted = errors;
+        std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+        const long buffer = static_cast<long>(st.buffer_size);
+        const long median = sorted[sorted.size() / 2];
+        long cycles = std::lround(static_cast<double>(median) / static_cast<double>(buffer));
+        cycles = std::clamp(cycles, -rig_cycles, rig_cycles);
+        if (cycles != 0) {
+            std::fprintf(stderr, "  the loopback shifted the take by %ld buffer(s) of %ld frames; taken off\n", cycles,
+                         buffer);
+            for (long& x : errors) x -= cycles * buffer;
+        }
+    }
     // Every click lands within the tolerance, except right after a glitch: an
     // xrun (likely on a busy CI machine without real-time scheduling) shifts
     // the input by a cycle until the input ring re-syncs, within two windows

@@ -257,6 +257,9 @@ jobs:
         run: |
           tools/ci/headless-pipewire.sh | sed -e "s/^export //" -e "s/'//g" >> "$GITHUB_ENV"
           echo "DSTUDIO_TEST_LOOPBACK_INPUT=dstudio-loop-source" >> "$GITHUB_ENV"
+          # A loopback inside one graph may add or save one buffer from run to run
+          # (engine/tests/test_recording.cpp, device_duplex_loopback_*).
+          echo "DSTUDIO_TEST_LOOPBACK_RIG_CYCLES=1" >> "$GITHUB_ENV"
       - name: Engine — test
         if: steps.changes.outputs.engine == 'true'
         run: ctest --test-dir engine/build-ci --output-on-failure -j 4
