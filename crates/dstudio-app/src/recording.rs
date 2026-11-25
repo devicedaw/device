@@ -12,9 +12,8 @@
 //!
 //! Where takes are written (`Controller::recording_dir`): `<project dir>/media/`
 //! when the project has been saved, else `<system temp dir>/Device Studio/Unsaved
-//! recordings/`. Note that Save does not move unsaved recordings into the project
-//! (core `persist` has no media consolidation yet), and macOS may purge the temp
-//! directory after a few days.
+//! recordings/`, which the system may purge: Save moves those takes into
+//! `<project>/media/` (src/unsaved_media.rs).
 
 use crate::controller::{Controller, JobResult, load_and_analyse, sync_model};
 use crate::peaks::Pyramid;

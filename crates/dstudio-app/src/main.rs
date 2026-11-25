@@ -126,6 +126,7 @@ mod tour;
 mod track_menu;
 mod transport_fields;
 mod typing;
+mod unsaved_media;
 mod updates;
 mod voice;
 mod warpedit;

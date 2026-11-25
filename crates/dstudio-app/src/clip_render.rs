@@ -19,7 +19,7 @@
 //!
 //! Files go to `<project>/media/joined` (Consolidate) and `<project>/media/bounce` (Bounce) once
 //! the project is saved, else to `<temp>/Device Studio/Unsaved renders/`; like unsaved
-//! recordings they are not moved into the project when it is saved. A file only appears once its
+//! recordings they move into the project when it is saved (src/unsaved_media.rs). A file only appears once its
 //! render finished; a cancelled or failed render leaves no file (an Export is written beside its
 //! destination as `<name>.part` and renamed, so an existing file is replaced only by a whole one).
 
