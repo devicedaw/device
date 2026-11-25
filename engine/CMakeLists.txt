@@ -80,8 +80,8 @@ FetchContent_Declare(dstudio_signalsmith_linear
 # dr_libs, stb_vorbis from stb. Single-file C libraries, pinned by commit (neither repository
 # tags all of its files). dr_libs at the commit noted in third_party_licenses.md (dr_mp3 0.7.5, dr_flac
 # 0.13.5, dr_wav 0.14.7); stb at the commit noted there too (stb_vorbis 1.24).
-set(DSTUDIO_DR_LIBS_COMMIT f12e197fd462e4c22873fbd70d11b1d2f2c1dc3c)
-set(DSTUDIO_STB_COMMIT 9600522de53973336fa033a289858a4354cbb04c)
+set(DSTUDIO_DR_LIBS_COMMIT e381981afa52800b9a3864df548353ff67252fbc)
+set(DSTUDIO_STB_COMMIT 6b5799bae8a1fe3792691ef4b72ae26434c3e799)
 FetchContent_Declare(dstudio_dr_libs
   GIT_REPOSITORY https://github.com/mackron/dr_libs.git
   GIT_TAG ${DSTUDIO_DR_LIBS_COMMIT}
