@@ -37,11 +37,11 @@ the CI history and the website. It replaces 010 as the list contributors and age
   `<temp>/Device Studio/` until the project is saved, and Save left them there (`recording.rs`,
   `clip_render.rs`). Done when Save moves them into `<project>/media/`, the undo history follows, and a unit
   test covers takes, renders and name clashes.
-- [ ] **S0.3 Autosave and crash recovery** (spec). Nothing is written between manual saves, and a crash (a
-  plugin crash takes the whole app down) loses everything since. Done when a backup of an edited project is
-  written every 2 minutes off the audio thread, atomically, beside the project (or in the app's data folder
-  for an unsaved one); the next launch after a crash offers to restore it; a take that was being recorded is
-  recovered with a valid WAV header; and tests cover writing, restoring and declining.
+- [x] **S0.3 Autosave and crash recovery** ([spec 026](../026-autosave/spec.md), #176). Nothing is written
+  between manual saves, and a crash (a plugin crash takes the whole app down) loses everything since. Done when a
+  backup of an edited project is written every 2 minutes off the audio thread, atomically, in the app's data
+  folder; the next launch after a crash opens it as unsaved changes (Save keeps them, Don't Save declines); a take
+  that was being recorded is recovered with a valid WAV header; and tests cover writing, restoring and declining.
 - [ ] **S0.4 Relink missing media.** Opening a project whose files moved only says "N media file(s) missing"
   in the status bar (`controller.rs`, `open`). Done when a dialog lists the missing files, Locate… searches a
   chosen folder for the rest by name and length, and the result is one undo step.

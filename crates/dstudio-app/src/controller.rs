@@ -495,6 +495,8 @@ pub struct Controller {
     /// Docked-assistant width drag (src/splitters.rs).
     pub(crate) chat_drag: Option<crate::splitters::ChatDrag>,
     status: Option<(String, Instant, Duration)>,
+    /// A notice ([`Controller::set_notice`]) shows until then, whatever background work reports.
+    notice_until: Option<Instant>,
     pub project_dir: Option<PathBuf>,
     /// Export dialog and the unsaved-changes prompt (src/dialogs.rs).
     pub export: crate::dialogs::ExportUi,
@@ -511,6 +513,8 @@ pub struct Controller {
     pub after_unsaved: Option<crate::dialogs::AfterUnsaved>,
     /// Set once quitting was confirmed (or nothing was unsaved): the window may close.
     pub quit_confirmed: bool,
+    /// Backups of unsaved changes and recovery after a crash (src/autosave.rs).
+    pub autosave: crate::autosave::Autosave,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
     /// The update check and what it found (updates.rs).
@@ -718,6 +722,7 @@ impl Controller {
             bottom_restore: Default::default(),
             chat_drag: None,
             status: None,
+            notice_until: None,
             project_dir: None,
             export: Default::default(),
             clip_render: Default::default(),
@@ -727,6 +732,7 @@ impl Controller {
             pending_import: None,
             after_unsaved: None,
             quit_confirmed: false,
+            autosave: Default::default(),
             updates_open: false,
             updates: Default::default(),
             key_change: None,
@@ -942,6 +948,23 @@ impl Controller {
         self.feedback.remember(&msg);
         self.status = Some((msg, Instant::now(), Duration::from_secs(secs)));
         self.ui_dirty = true;
+    }
+
+    /// A status message nobody should miss (crash recovery): background progress reports
+    /// ([`Controller::set_background_status`]) do not replace it while it shows.
+    pub fn set_notice(&mut self, msg: impl Into<String>, secs: u64) {
+        self.set_status(msg, secs);
+        self.notice_until = Some(Instant::now() + Duration::from_secs(secs));
+    }
+
+    /// A report from work the user did not just ask for (the launch plugin scan, media
+    /// loading): shown unless a notice is up.
+    pub fn set_background_status(&mut self, msg: impl Into<String>, secs: u64) {
+        if self.notice_until.is_some_and(|t| Instant::now() < t) {
+            eprintln!("[status, behind a notice] {}", msg.into());
+            return;
+        }
+        self.set_status(msg, secs);
     }
 
     /// App menu bar items without a shortcut (`Studio.menu-action`). Settings and the
@@ -1875,7 +1898,7 @@ impl Controller {
         if !missing.is_empty() {
             self.set_status(format!("{} media file(s) missing", missing.len()), 6);
         } else if self.pending_jobs > 0 {
-            self.set_status("Loading media…", 30);
+            self.set_background_status("Loading media…", 30);
         }
         true
     }
