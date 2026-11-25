@@ -1755,12 +1755,26 @@ impl Controller {
         if let Some(name) = project_name_of(dir) {
             self.doc.set_project_name(&name);
         }
+        // Takes and renders made before the first save are in the temp folder: bring them in.
+        let paths: Vec<String> = self.project().assets.iter().map(|a| a.absolute_path.clone()).collect();
+        let (moved, failed) = crate::unsaved_media::adopt(&crate::unsaved_media::temp_root(), &paths, dir);
+        for (from, to) in &moved {
+            self.doc.relocate_asset_file(from, to);
+        }
         match persist::save(self.project(), dir) {
             Ok(()) => {
                 self.doc.mark_saved();
                 self.project_dir = Some(dir.to_path_buf());
                 self.remember_recent(dir);
-                self.set_status(format!("Saved {}", dir.display()), 3);
+                match (moved.len(), failed.first()) {
+                    (_, Some(why)) => {
+                        self.set_status(format!("Saved {}, but a recording stayed in the temp folder: {why}", dir.display()), 8)
+                    }
+                    (0, None) => self.set_status(format!("Saved {}", dir.display()), 3),
+                    (n, None) => {
+                        self.set_status(format!("Saved {} and moved {n} unsaved recording(s) into its media folder", dir.display()), 4)
+                    }
+                }
                 self.files_refresh();
             }
             Err(e) => self.set_status(format!("Save failed: {e}"), 6),

@@ -166,10 +166,38 @@ impl Document {
     /// it follows. Not an undo step and not a change to save: the saved relative paths are
     /// unchanged; only the absolute paths the open project uses move with the folder.
     pub fn relocate_media(&mut self, from: &std::path::Path, to: &std::path::Path) {
-        for a in &mut self.project.assets {
-            if let Ok(rest) = std::path::Path::new(&a.absolute_path).strip_prefix(from) {
-                a.absolute_path = to.join(rest).to_string_lossy().into_owned();
+        self.rewrite_asset_paths(&mut |path: &mut String| {
+            if let Ok(rest) = std::path::Path::new(path.as_str()).strip_prefix(from) {
+                *path = to.join(rest).to_string_lossy().into_owned();
             }
+        });
+    }
+
+    /// One media file moved from `from` to `to` (Save moving unsaved recordings into the
+    /// project). Not an undo step: the project's assets and every Import Audio step in the
+    /// undo history follow, so undoing and redoing a recording finds the file where it is now.
+    pub fn relocate_asset_file(&mut self, from: &str, to: &str) {
+        self.rewrite_asset_paths(&mut |path: &mut String| {
+            if path == from {
+                *path = to.to_owned();
+            }
+        });
+    }
+
+    fn rewrite_asset_paths(&mut self, f: &mut dyn FnMut(&mut String)) {
+        fn walk(cmd: &mut Command, f: &mut dyn FnMut(&mut String)) {
+            match cmd {
+                Command::AddAsset { asset } => f(&mut asset.absolute_path),
+                Command::Batch { commands, .. } => commands.iter_mut().for_each(|c| walk(c, f)),
+                _ => {}
+            }
+        }
+        for a in &mut self.project.assets {
+            f(&mut a.absolute_path);
+        }
+        for e in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+            walk(&mut e.redo, f);
+            walk(&mut e.undo, f);
         }
     }
 
@@ -333,6 +361,29 @@ mod sentence_case_tests {
         assert_eq!(sentence_case("Mute"), "Mute");
         assert_eq!(sentence_case("Convert MIDI-to-Audio"), "Convert MIDI-to-audio");
         assert_eq!(sentence_case("Re-Pitch Clip"), "Re-pitch clip");
+    }
+}
+
+#[cfg(test)]
+mod relocate_tests {
+    use super::{Document, Origin};
+    use crate::command::Command;
+    use crate::model::{Asset, AssetId, Project};
+
+    fn asset(path: &str) -> Asset {
+        Asset { id: AssetId(0), relative_path: None, absolute_path: path.into(), sample_rate: 48_000.0, channels: 1, frames: 10 }
+    }
+
+    #[test]
+    fn a_moved_take_is_found_after_undo_and_redo() {
+        let mut doc = Document::new(Project::default());
+        doc.execute(Command::AddAsset { asset: asset("/tmp/Unsaved recordings/take.wav") }, Origin::User).unwrap();
+        doc.relocate_asset_file("/tmp/Unsaved recordings/take.wav", "/songs/a.dsproj/media/take.wav");
+        assert_eq!(doc.project().assets[0].absolute_path, "/songs/a.dsproj/media/take.wav");
+        doc.undo().unwrap();
+        assert!(doc.project().assets.is_empty());
+        doc.redo().unwrap();
+        assert_eq!(doc.project().assets[0].absolute_path, "/songs/a.dsproj/media/take.wav", "redo must not bring back the temp path");
     }
 }
 
