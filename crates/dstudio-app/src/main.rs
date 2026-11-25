@@ -98,6 +98,7 @@ mod pianoroll;
 mod pointer;
 mod prefs;
 mod recording;
+mod relink;
 mod resample;
 mod routing;
 mod sampler_panel;
@@ -276,6 +277,7 @@ struct Args {
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
     key_change_review: bool,
+    relink_review: bool,
     /// review-count-in-menu: count-in set to 1 bar, the record button's count-in menu open.
     count_in_menu_review: bool,
     /// review-tempo-lane: a song with tempo changes (120, a ramp from 140 at bar 3 down to 96 at
@@ -782,6 +784,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-track-rename" => {
                     a.reference_default = true;
                     a.track_rename_review = true;
+                }
+                "review-relink" => {
+                    a.reference_default = true;
+                    a.relink_review = true;
                 }
                 "review-key-change" => {
                     a.reference_default = true;
@@ -2722,6 +2728,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.track_drag(id, 1, y1);
         }
     }
+    if args.relink_review {
+        // Missing media after opening a project whose audio moved, one folder already searched.
+        let mut c = ctl.borrow_mut();
+        let rows = [
+            ("Lead Vocal.wav", "/Users/me/Music/Night Drive/Recordings"),
+            ("Drums Bus.wav", "/Users/me/Music/Night Drive/Bounces"),
+            ("Pad Texture.wav", "/Volumes/Samples/Pads"),
+        ];
+        c.relink = relink::Relink {
+            open: true,
+            rows: rows
+                .iter()
+                .enumerate()
+                .map(|(i, (name, was))| relink::Row {
+                    asset: dstudio_core::AssetId(i as u64 + 1),
+                    name: (*name).into(),
+                    was: (*was).into(),
+                })
+                .collect(),
+            searching: false,
+            note: "Found 2 in /Users/me/Desktop/Old media. Locate the other 3 in another folder, or skip them.".into(),
+        };
+    }
     if args.key_change_review {
         // A project in C Major with two MIDI clips, then D Minor picked: the prompt asks.
         let mut c = ctl.borrow_mut();
@@ -3394,6 +3423,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             slint::CloseRequestResponse::KeepWindowShown
         });
     }
+    // Missing media › Locate… (src/relink.rs): the folder picker runs with the controller NOT borrowed.
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_relink_locate(move || {
+            let start = ctl.borrow().project_dir.as_ref().and_then(|d| d.parent()).map(Path::to_path_buf);
+            let mut dialog = rfd::FileDialog::new().set_title("Locate missing media in");
+            if let Some(start) = start {
+                dialog = dialog.set_directory(start);
+            }
+            if let Some(dir) = dialog.pick_folder() {
+                ctl.borrow_mut().relink_locate(dir);
+            }
+            if let Some(a) = aw.upgrade() {
+                ctl.borrow_mut().update_ui(&a);
+            }
+        });
+    }
+    on!(on_relink_close, |c| c.relink_close());
     // Folder picker and Save run their native dialogs with the controller NOT borrowed.
     {
         let ctl = ctl.clone();

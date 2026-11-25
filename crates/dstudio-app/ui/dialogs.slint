@@ -3,7 +3,7 @@
 // window centred in the main window; 440 x 149 pt prompt at x 515, y 347 over the timeline).
 import { Tokens } from "tokens.slint";
 import { Icon, Icons, Switch } from "widgets.slint";
-import { Studio } from "studio.slint";
+import { Studio, RelinkRow } from "studio.slint";
 import { ChoiceList } from "settings.slint";
 
 global DialogTokens {
@@ -457,4 +457,46 @@ export component FeedbackModal inherits Rectangle {
         clicked => { if (root.can-send) { Studio.feedback-send(Studio.feedback-message, Studio.feedback-email); } }
     }
     PillButton { x: send.x - 6.8px - self.width; y: send.y; width: self.preferred-width; height: 27.2px; text: "Cancel"; clicked => { Studio.feedback-close(); } }
+}
+
+// Missing media (src/relink.rs): opening a project whose audio files moved. The alert-modal
+// look; one row per missing file (its name, and where it was), at most six before the list
+// scrolls. Locate… searches a folder; Skip leaves the rest missing.
+export component RelinkModal inherits Rectangle {
+    property <length> row-h: 30.6px;
+    property <int> shown: min(Studio.relink-rows.length, 6);
+    width: 380px; height: 40.8px + 30.6px + root.shown * root.row-h + (Studio.relink-note != "" ? 30.6px : 0px) + 17px + 27.2px + 17px;
+    border-radius: 20.4px; background: DialogTokens.surface;
+    border-width: 0.45px; border-color: #ffffff22;
+    drop-shadow-blur: 21px; drop-shadow-offset-y: 6.8px; drop-shadow-color: #00000080;
+    accessible-role: groupbox; accessible-label: "Missing media";
+    TouchArea { }
+    Text { x: 17px; y: 17px; height: 13.6px; text: "Missing media"; color: #ffffff; font-size: 13.6px; font-weight: 700; letter-spacing: -0.54px; vertical-alignment: center; }
+    Text {
+        x: 17px; y: 40.8px; width: root.width - 34px; height: 25.5px; wrap: word-wrap; vertical-alignment: top;
+        text: Studio.relink-rows.length == 1
+            ? "1 audio file this project uses isn't where it was. Its clips stay silent until you locate it."
+            : Studio.relink-rows.length + " audio files this project uses aren't where they were. Their clips stay silent until you locate them.";
+        color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px;
+    }
+    list := Flickable {
+        x: 17px; y: 40.8px + 30.6px; width: root.width - 34px; height: root.shown * root.row-h;
+        viewport-height: Studio.relink-rows.length * root.row-h;
+        for r[i] in Studio.relink-rows: Rectangle {
+            y: i * root.row-h; height: root.row-h; width: parent.width;
+            Rectangle { y: 0; height: 0.45px; background: DialogTokens.rule; }
+            Text { x: 0; y: 4.25px; width: parent.width; height: 12.75px; text: r.name; color: #e5e5e8; font-size: 10.2px; font-weight: 600; letter-spacing: -0.2px; overflow: elide; vertical-alignment: center; accessible-role: text; accessible-label: r.name; }
+            Text { x: 0; y: 17px; width: parent.width; height: 11px; text: r.was; color: DialogTokens.label; font-size: 8.5px; font-weight: 500; overflow: elide; vertical-alignment: center; }
+        }
+    }
+    if Studio.relink-note != "": Text {
+        x: 17px; y: list.y + list.height + 5.1px; width: root.width - 34px; height: 25.5px; wrap: word-wrap;
+        text: Studio.relink-note; color: #a6a8ac; font-size: 9.35px; font-weight: 500; vertical-alignment: top;
+    }
+    locate := PillButton {
+        x: root.width - 17px - self.width; y: root.height - 17px - 27.2px; width: self.preferred-width; height: 27.2px;
+        text: Studio.relink-searching ? "Searching…" : "Locate…"; primary: true;
+        clicked => { if !Studio.relink-searching { Studio.relink-locate(); } }
+    }
+    PillButton { x: locate.x - 6.8px - self.width; y: locate.y; width: self.preferred-width; height: 27.2px; text: "Skip"; clicked => { Studio.relink-close(); } }
 }

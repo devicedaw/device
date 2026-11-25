@@ -188,6 +188,10 @@ pub enum Command {
     RemoveAsset {
         asset: AssetId,
     },
+    /// Point media assets at files somewhere else (Relink Media): (asset, new absolute path).
+    RelinkAssets {
+        paths: Vec<(AssetId, String)>,
+    },
     /// Insert a clip on a track (id 0 → allocate).
     AddClip {
         track: TrackId,
@@ -519,6 +523,7 @@ impl Command {
             Command::SetMasterMute { .. } => "Master Mute Change".into(),
             Command::AddAsset { .. } => "Import Audio".into(),
             Command::RemoveAsset { .. } => "Remove Audio".into(),
+            Command::RelinkAssets { .. } => "Relink Media".into(),
             Command::AddClip { .. } => "Add Clip".into(),
             Command::RemoveClip { .. } => "Delete Clip".into(),
             Command::MoveClip { .. } => "Move Clip".into(),
@@ -808,6 +813,23 @@ impl Command {
                 let idx = p.assets.iter().position(|a| a.id == asset).ok_or(EditError::AssetNotFound(asset))?;
                 let a = p.assets.remove(idx);
                 Ok(Command::AddAsset { asset: a })
+            }
+            Command::RelinkAssets { paths } => {
+                if paths.iter().any(|(_, path)| path.is_empty()) {
+                    return Err(invalid("path", "must not be empty"));
+                }
+                if let Some((id, _)) = paths.iter().find(|(id, _)| p.asset(*id).is_none()) {
+                    return Err(EditError::AssetNotFound(*id));
+                }
+                let mut old = Vec::with_capacity(paths.len());
+                for (id, path) in paths {
+                    let a = p.assets.iter_mut().find(|a| a.id == id).ok_or(EditError::AssetNotFound(id))?;
+                    old.push((id, std::mem::replace(&mut a.absolute_path, path)));
+                    // Worked out again at the next save, from the new file.
+                    a.relative_path = None;
+                }
+                old.reverse();
+                Ok(Command::RelinkAssets { paths: old })
             }
             Command::AddClip { track, mut clip } => {
                 match p.track(track) {

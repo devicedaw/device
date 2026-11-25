@@ -46,6 +46,7 @@ export struct TrackRow {
 }
 
 // Track-header meter: 0 (silent, below -50 dB) .. 1 (0 dB), clip latched.
+export struct RelinkRow { name: string, was: string }
 export struct TrackLevel { l: float, r: float, clip: bool }
 
 // Value label at the left of an automation row (lane-local). state, accent, dim: as TrackRow.auto-*.
@@ -1153,6 +1154,12 @@ export global Studio {
     callback undo-history-travel(int);
     callback undo-history-close();
     callback updates-close();
+    in property <bool> relink-open;                         // Missing media (src/relink.rs)
+    in property <[RelinkRow]> relink-rows;
+    in property <string> relink-note;
+    in property <bool> relink-searching;
+    callback relink-locate();
+    callback relink-close();
     in property <bool> key-change-open;                     // "Change project key?"
     in property <string> key-change-text;
     callback key-change-choose(int);                        // 0 Cancel, 1 Don't transpose, 2 Transpose MIDI
