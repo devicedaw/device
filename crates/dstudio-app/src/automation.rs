@@ -1648,6 +1648,10 @@ impl Controller {
     /// armed and playing; passes without a gesture end finish after `PLUGIN_IDLE`.
     pub fn auto_poll(&mut self) {
         let changes = self.engine.take_plugin_param_changes();
+        if !changes.is_empty() {
+            // A plugin's own window changed its state, which the project saves.
+            self.doc.mark_edited();
+        }
         let recording = self.auto.armed && self.engine.transport().playing;
         for ch in changes {
             if !recording {

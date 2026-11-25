@@ -2662,6 +2662,47 @@ fn steps() -> Vec<Step> {
             }),
         ),
         Do(
+            "close the window with unsaved changes",
+            Box::new(|a| a.window().dispatch_event(slint::platform::WindowEvent::CloseRequested)),
+        ),
+        Check(
+            "Save changes? prompt open for quitting, window still shown",
+            Box::new(|c, a| {
+                (a.global::<Studio>().get_unsaved_open()
+                    && c.after_unsaved == Some(crate::dialogs::AfterUnsaved::Quit)
+                    && !c.quit_confirmed
+                    && a.window().is_visible())
+                .then_some(())
+                .ok_or(format!("prompt {} after {:?}", a.global::<Studio>().get_unsaved_open(), c.after_unsaved))
+            }),
+        ),
+        Do("Escape (Cancel quitting)", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check(
+            "prompt closed, still running",
+            Box::new(|c, _| (!c.unsaved_open && c.after_unsaved.is_none() && !c.quit_confirmed).then_some(()).ok_or("quit still pending".into())),
+        ),
+        DoC(
+            "File › Open another project with unsaved changes",
+            Box::new(|_a, ctl| ctl.borrow_mut().open_request(std::env::temp_dir().join("dstudio-selftest-other.dsproj"))),
+        ),
+        Check(
+            "Save changes? prompt open for opening, project untouched",
+            Box::new(|c, a| {
+                let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
+                (a.global::<Studio>().get_unsaved_open() && matches!(c.after_unsaved, Some(crate::dialogs::AfterUnsaved::Open(_))) && n == 2)
+                    .then_some(())
+                    .ok_or(format!("prompt {} after {:?} clips {n}", a.global::<Studio>().get_unsaved_open(), c.after_unsaved))
+            }),
+        ),
+        Do("Escape (Cancel opening)", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check(
+            "prompt closed, project kept",
+            Box::new(|c, _| {
+                let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
+                (!c.unsaved_open && c.after_unsaved.is_none() && n == 2).then_some(()).ok_or(format!("clips {n}"))
+            }),
+        ),
+        Do(
             "drag track 1 volume slider left",
             Box::new(|a| drag(a, tracks_x() + 115.7 + 5.95 + 0.8 * 56.1, track0_y() + 47.6, tracks_x() + 140.0, track0_y() + 47.6)),
         ),

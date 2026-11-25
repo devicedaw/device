@@ -4,7 +4,8 @@
 //! (Settings…). After each rebuild, a copy of each goes into the app menu below About,
 //! followed by a separator, and the holder is hidden. A
 //! copy targets the original item, so choosing it runs the original's Slint callback; the
-//! originals stay in the holder because the next rebuild removes them from there.
+//! originals stay in the holder because the next rebuild removes them from there. Quit is
+//! pointed at the window's close so that it asks about unsaved changes first.
 
 #[cfg(target_os = "macos")]
 const HOLDER: &str = "Device";
@@ -58,6 +59,20 @@ pub fn adopt_items() {
         }
         let separator: *mut AnyObject = msg_send![item_class, separatorItem];
         let _: () = msg_send![app_menu, insertItem: separator, atIndex: at];
+        // Quit (⌘Q) terminates the app outright, so it could never ask about unsaved changes.
+        // It closes the window instead, the way the close button does: the window's close
+        // request then asks first when the project has unsaved changes (main.rs), and closing
+        // the last window quits.
+        let n: isize = msg_send![app_menu, numberOfItems];
+        for i in 0..n {
+            let item: *mut AnyObject = msg_send![app_menu, itemAtIndex: i];
+            let action: Option<Sel> = msg_send![item, action];
+            if action == Some(objc2::sel!(terminate:)) {
+                let none: *mut AnyObject = std::ptr::null_mut();
+                let _: () = msg_send![item, setAction: objc2::sel!(performClose:)];
+                let _: () = msg_send![item, setTarget: none];
+            }
+        }
         let _: () = msg_send![holder, setHidden: true];
     }
 }
