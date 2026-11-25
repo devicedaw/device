@@ -16499,7 +16499,7 @@ fn clip_menu_steps() -> Vec<Step> {
                 let ok = a.global::<Studio>().get_menu_open()
                     && on("Split")
                     && on("Disable")
-                    && on("Show in Finder")
+                    && on(crate::clipedit::SHOW_IN_FILES)
                     && menu_entry(a, "Consolidate").is_some_and(|e| !e.2);
                 ok.then_some(()).ok_or("clip menu entries".into())
             }),
@@ -16806,7 +16806,7 @@ fn clip_render_steps() -> Vec<Step> {
                 let on = |l: &str| entry(&items, l).is_some_and(|m| m.enabled);
                 let ok = on("Consolidate")
                     && on("Bounce")
-                    && on("Export audio to Finder")
+                    && on(crate::clipedit::EXPORT_TO_FILES)
                     && on("Ask")
                     && entry(&items, "Bounce").is_some_and(|m| m.submenu);
                 ok.then_some(()).ok_or("menu entries".into())
@@ -16974,7 +16974,7 @@ fn clip_render_steps() -> Vec<Step> {
                 right_click(a, x, y);
             }),
         ),
-        Do("clip render: choose Export audio to Finder", Box::new(|a| click_entry(a, "Export audio to Finder"))),
+        Do("clip render: choose Export audio to Finder", Box::new(|a| click_entry(a, crate::clipedit::EXPORT_TO_FILES))),
         Check(
             "clip render: the exported WAV is stereo 48 kHz with sound, 2-4 s long, and the project is untouched",
             Box::new(move |c, _| {
@@ -17004,7 +17004,7 @@ fn clip_render_steps() -> Vec<Step> {
                 let labels: Vec<&str> = c.menu.items.iter().map(|(a, _)| a.label()).collect();
                 let at = |l: &str| labels.iter().position(|x| *x == l);
                 let ok = c.menu.open
-                    && matches!((at("Show in Finder"), at("Export MIDI"), at("Export audio to Finder")), (Some(a), Some(b), Some(e)) if a + 1 == b && b + 1 == e)
+                    && matches!((at(crate::clipedit::SHOW_IN_FILES), at("Export MIDI"), at(crate::clipedit::EXPORT_TO_FILES)), (Some(a), Some(b), Some(e)) if a + 1 == b && b + 1 == e)
                     && c.menu.items.iter().any(|&(a, en)| a == crate::controller::MenuAction::ExportMidi && en);
                 ok.then_some(()).ok_or(format!("{labels:?}"))
             }),

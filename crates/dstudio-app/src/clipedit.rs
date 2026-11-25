@@ -45,6 +45,22 @@ fn slint_color(c: [f32; 3]) -> slint::Color {
     slint::Color::from_rgb_f32(c[0], c[1], c[2])
 }
 
+/// The clip menu's file-manager items, named after the platform's file manager.
+pub(crate) const SHOW_IN_FILES: &str = if cfg!(target_os = "macos") {
+    "Show in Finder"
+} else if cfg!(windows) {
+    "Show in Explorer"
+} else {
+    "Show in Files"
+};
+pub(crate) const EXPORT_TO_FILES: &str = if cfg!(target_os = "macos") {
+    "Export audio to Finder"
+} else if cfg!(windows) {
+    "Export audio to Explorer"
+} else {
+    "Export audio to Files"
+};
+
 impl MenuAction {
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -58,12 +74,12 @@ impl MenuAction {
             MenuAction::Delete => "Delete",
             MenuAction::Disable => "Disable",
             MenuAction::Enable => "Enable",
-            MenuAction::ShowInFinder => "Show in Finder",
+            MenuAction::ShowInFinder => SHOW_IN_FILES,
             MenuAction::Rename => "Rename…",
             MenuAction::Resample => "Resample",
             MenuAction::SendToSampler => "Send to Sampler",
             MenuAction::ExportMidi => "Export MIDI",
-            MenuAction::Export => "Export audio to Finder",
+            MenuAction::Export => EXPORT_TO_FILES,
             MenuAction::Transpose => "Transpose",
             MenuAction::Quantize => "Quantize",
             MenuAction::Humanize => "Humanize",
@@ -516,7 +532,7 @@ impl Controller {
             return;
         }
         if let Err(e) = crate::clip_render::reveal(&path) {
-            self.set_status(format!("Show in Finder failed: {e}"), 3);
+            self.set_status(format!("Show in {} failed: {e}", crate::clip_render::FILE_MANAGER), 3);
         }
     }
 

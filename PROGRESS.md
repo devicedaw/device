@@ -518,7 +518,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Approximations, each listed per track in the notes file: sends above 0 dB are set to 0 dB (Live's maximum), and a
   pre-fader send on a rendered track becomes post-fader with its level divided by the track volume.
 - `live_set::validate` checks one send per return on every track, levels in range, returns last and the pre/post
-  list. Not yet opened in Live itself (spec 006, T5).
+  list. Opened in Live 12 later (spec 006, T5).
 
 ### 2026-11-12: making MIDI clips from the timeline
 
