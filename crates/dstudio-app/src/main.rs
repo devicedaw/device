@@ -44,6 +44,7 @@ mod assistant_listen;
 mod assistant_panel;
 mod assistant_provider;
 mod assistant_voice;
+mod autosave;
 mod automation;
 mod chain_gaps;
 mod chain_presets;
@@ -4331,8 +4332,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.import_files(vec![noise], ImportTarget::NewTrack, Some(10 * dstudio_core::PPQ));
         c.seek_beats(10.0);
     }
+    // Autosave (src/autosave.rs): backups next to the preferences, so never in self-tests or
+    // screenshot runs. A backup a crashed session left opens instead of the last session.
+    {
+        let mut c = ctl.borrow_mut();
+        c.autosave.dir = c.settings.prefs_path.as_ref().and_then(|p| p.parent()).map(|d| d.join("Autosave"));
+    }
+    let recovered = use_prefs && args.open.is_none() && ctl.borrow_mut().autosave_recover();
+    let autosave_timer = slint::Timer::default();
+    {
+        let ctl = ctl.clone();
+        autosave_timer.start(slint::TimerMode::Repeated, Duration::from_secs(5), move || {
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.autosave_tick();
+            }
+        });
+    }
     // Settings › General › Always load last session.
-    if use_prefs && args.import.is_empty() && args.load_sample.is_empty() && args.open.is_none() && !args.demo {
+    if use_prefs && !recovered && args.import.is_empty() && args.load_sample.is_empty() && args.open.is_none() && !args.demo {
         let last = ctl
             .borrow()
             .settings
@@ -4966,6 +4983,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // of the (85 %-unit) layout fits in it, see `zoom.rs`.
     app.window().set_size(slint::LogicalSize::new(args.window_width.unwrap_or(1440.0), args.window_height.unwrap_or(820.0)));
     app.run()?;
+    // A normal quit: unsaved changes were saved or thrown away on purpose, so no backup stays.
+    if let Some(dir) = &ctl.borrow().autosave.dir {
+        autosave::remove(dir, std::process::id());
+    }
     if args.frame_stats && exit_after.is_none() {
         println!("{}", stats_json(&frame.borrow(), &app));
     }

@@ -511,6 +511,8 @@ pub struct Controller {
     pub after_unsaved: Option<crate::dialogs::AfterUnsaved>,
     /// Set once quitting was confirmed (or nothing was unsaved): the window may close.
     pub quit_confirmed: bool,
+    /// Backups of unsaved changes and recovery after a crash (src/autosave.rs).
+    pub autosave: crate::autosave::Autosave,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
     /// The update check and what it found (updates.rs).
@@ -727,6 +729,7 @@ impl Controller {
             pending_import: None,
             after_unsaved: None,
             quit_confirmed: false,
+            autosave: Default::default(),
             updates_open: false,
             updates: Default::default(),
             key_change: None,
