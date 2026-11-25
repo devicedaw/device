@@ -308,12 +308,12 @@ impl Controller {
         match (recovered, takes_note) {
             (Some(when), note) => {
                 let note = note.map(|n| format!(" {n}")).unwrap_or_default();
-                self.set_status(
+                self.set_notice(
                     format!("Device quit unexpectedly. Recovered your unsaved changes from {when}: save to keep them.{note}"),
                     20,
                 );
             }
-            (None, Some(note)) => self.set_status(format!("Device quit while recording. {note}"), 20),
+            (None, Some(note)) => self.set_notice(format!("Device quit while recording. {note}"), 20),
             (None, None) => return false,
         }
         self.ui_dirty = true;
@@ -537,6 +537,8 @@ mod tests {
         assert_eq!(c.project_dir.as_deref(), Some(std::path::Path::new("/songs/Song.dsproj")), "Save goes to the original project");
         let status = c.status_text().unwrap_or_default().to_owned();
         assert!(status.contains("Recovered your unsaved changes from 5 minutes ago"), "{status}");
+        c.set_background_status("Plugins: 0 found", 4);
+        assert_eq!(c.status_text(), Some(status.as_str()), "the launch plugin scan does not hide it");
         let mine = paths(&dir, std::process::id()).0;
         assert!(mine.exists() && !paths(&dir, dead).0.exists(), "this session took the backup over");
         // Don't Save: the changes, and with them the backup, are thrown away.

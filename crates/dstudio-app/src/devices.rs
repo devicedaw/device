@@ -769,7 +769,7 @@ impl Controller {
         } else {
             let _ = tx.send(JobResult::PluginScan(Err("no app support directory for the plugin cache".into())));
         }
-        self.set_status(if rescan { "Rescanning plugins…" } else { "Scanning plugins…" }, 600);
+        self.set_background_status(if rescan { "Rescanning plugins…" } else { "Scanning plugins…" }, 600);
     }
 
     /// Settings › Plugins › Add folder (the folder picked in the dialog): keeps it in the
@@ -820,7 +820,7 @@ impl Controller {
                 self.devices.catalog.from_cache = rep.from_cache;
                 self.devices.catalog.state = ScanState::Done;
                 let src = if self.devices.catalog.fixture.is_some() { " (TEST fixture)" } else { "" };
-                self.set_status(
+                self.set_background_status(
                     format!(
                         "Plugins: {n} found{}{src}",
                         if nf > 0 { format!(", {nf} failed (see Settings › Plugins)") } else { String::new() }
@@ -867,7 +867,7 @@ impl Controller {
             let p = self.devices.catalog.progress.lock().map(|p| p.clone()).unwrap_or_default();
             if p != self.devices.catalog.shown_progress {
                 self.devices.catalog.shown_progress = p.clone();
-                self.set_status(format!("Scanning plugins… {p}"), 600);
+                self.set_background_status(format!("Scanning plugins… {p}"), 600);
             }
         }
         let has_devices = self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some());
