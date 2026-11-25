@@ -1,6 +1,6 @@
 # MIDI input and recording
 
-Status: Building · Spec: 003 · Issue: none
+Status: Done · Spec: 003 · Issue: none
 
 ## Problem
 

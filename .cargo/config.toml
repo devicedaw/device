@@ -1,0 +1,6 @@
+# Build the speech recogniser (whisper.cpp, voice input) for a common x86-64 baseline
+# (AVX2, FMA, F16C) instead of the build machine's own CPU. A native build crashes with
+# an illegal instruction on any computer older than the one that built it, and CI runs
+# reuse builds across runners with different CPUs.
+[env]
+GGML_NATIVE = "OFF"

@@ -1425,7 +1425,7 @@ export component AppWindow inherits Window {
                 if Studio.recent-projects.length > 0: MenuSeparator { }
                 MenuItem { title: "Clear Menu"; enabled: Studio.recent-projects.length > 0; activated => { Studio.menu-action("file.clear_recent"); } }
             }
-            MenuItem { title: "Show Project in Finder"; enabled: Studio.project-on-disk; activated => { Studio.menu-action("file.show_in_finder"); } }
+            MenuItem { title: "Show Project in " + Studio.file-manager; enabled: Studio.project-on-disk; activated => { Studio.menu-action("file.show_in_finder"); } }
             MenuSeparator { }
             MenuItem { title: "Export Audio…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + Shift + E); activated => { Studio.menu-key("e", true, true); } }
             MenuItem { title: "Export Project for Ableton Live…"; activated => { Studio.menu-action("file.export_ableton"); } }

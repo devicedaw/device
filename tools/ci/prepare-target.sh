@@ -30,7 +30,9 @@
 #    already reruns build.rs), but a restored CMakeCache.txt pins the compiler's full path,
 #    which a runner image update (a new Xcode or MSVC version) removes, and keeps cache
 #    variables that build.rs no longer passes. The fresh configure costs about 15 to 30
-#    seconds; the compiles are ccache hits.
+#    seconds; the compiles are ccache hits. The speech recogniser's build output
+#    (whisper-rs-sys) goes too: its build script does not rerun when the GGML_ settings in
+#    .cargo/config.toml change, so a restored build would keep the old ones.
 set -euo pipefail
 
 profile=${1:?usage: prepare-target.sh debug|release}
@@ -82,7 +84,7 @@ fi
 
 # 5. (No empty-array expansion: macOS runs bash 3.2, where that fails under `set -u`.)
 if [ "$profile" = release ]; then
-    cargo clean -p dstudio-engine --locked --release
+    cargo clean -p dstudio-engine -p whisper-rs-sys --locked --release
 else
-    cargo clean -p dstudio-engine --locked
+    cargo clean -p dstudio-engine -p whisper-rs-sys --locked
 fi

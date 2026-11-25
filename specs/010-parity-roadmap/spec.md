@@ -1,6 +1,6 @@
 # Parity roadmap: what Device still needs
 
-Status: Draft · Spec: 010 · Issue: none
+Status: Done except G27 · Spec: 010 · Issue: none
 
 The next list to work from is the [song-ready roadmap](../025-song-ready-roadmap/spec.md) (spec 025).
 
@@ -229,7 +229,11 @@ next to the target on the same window size.
 
 ## Open questions
 
-- Q1. Device's add-track menu has a "Group track" row that the target does not; groups are made from a
-  selection. Keep it as an extra, or remove it for parity?
+All three are settled in the app:
+
+- Q1. Device's add-track menu had a "Group track" row that the target does not; groups are made from a
+  selection. Settled: the row is gone (G3, #141); select tracks and press ⌘G.
 - Q2. Smart Fill (G23): build it on Device's own pattern library, wait for the assistant work (G22), or drop?
-- Q3. Account, Usage and sample licensing: hide those settings pages and rows, or keep them greyed?
+  Settled: built on the pattern library (#156).
+- Q3. Account, Usage and sample licensing: hide those settings pages and rows, or keep them greyed? Settled:
+  the account pages are hidden; Usage tracking shows off and disabled, because Device collects nothing.
