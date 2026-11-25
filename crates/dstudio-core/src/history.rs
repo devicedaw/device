@@ -35,6 +35,8 @@ pub struct Document {
     /// snapshot publisher, UI) compare revisions to detect changes.
     revision: u64,
     saved_revision: u64,
+    /// Changed in a way that is not an undo step (a plugin's own editor): unsaved until saved.
+    edited_outside: bool,
     pub coalesce_window: Duration,
     pub max_history: usize,
     /// A gesture holds the last entry open ([`hold_coalescing`](Self::hold_coalescing)): a
@@ -50,6 +52,7 @@ impl Document {
             redo: Vec::new(),
             revision: 0,
             saved_revision: 0,
+            edited_outside: false,
             coalesce_window: Duration::from_millis(750),
             max_history: 1000,
             held: false,
@@ -65,11 +68,18 @@ impl Document {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.revision != self.saved_revision
+        self.revision != self.saved_revision || self.edited_outside
     }
 
     pub fn mark_saved(&mut self) {
         self.saved_revision = self.revision;
+        self.edited_outside = false;
+    }
+
+    /// Something the project saves changed outside the undo history (a parameter moved in a
+    /// plugin's own window): the project has unsaved changes, with no revision change.
+    pub fn mark_edited(&mut self) {
+        self.edited_outside = true;
     }
 
     /// Validate and execute a command, recording it for undo.
@@ -374,5 +384,23 @@ mod relocate_tests {
         assert!(doc.project().assets.is_empty());
         doc.redo().unwrap();
         assert_eq!(doc.project().assets[0].absolute_path, "/songs/a.dsproj/media/take.wav", "redo must not bring back the temp path");
+    }
+}
+
+#[cfg(test)]
+mod dirty_tests {
+    use super::Document;
+    use crate::model::Project;
+
+    #[test]
+    fn an_edit_outside_the_history_is_unsaved_until_saved() {
+        let mut doc = Document::new(Project::default());
+        assert!(!doc.is_dirty());
+        let rev = doc.revision();
+        doc.mark_edited();
+        assert!(doc.is_dirty(), "a plugin-window change must count as unsaved");
+        assert_eq!(doc.revision(), rev, "no revision change: nothing to republish");
+        doc.mark_saved();
+        assert!(!doc.is_dirty());
     }
 }

@@ -1593,7 +1593,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         }
         "file.open" => {
             if let Some(dir) = pick_project_dir(false, None, "") {
-                ctl.borrow_mut().open(&dir);
+                ctl.borrow_mut().open_request(dir);
             }
         }
         "file.new" => ctl.borrow_mut().new_project_request(),
@@ -3363,7 +3363,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_export_pick_tracks, |c, i: i32| c.export_pick_tracks(i));
     on!(on_export_name_edited, |c, t: slint::SharedString| c.export_set_name(t.as_str()));
     on!(on_unsaved_cancel, |c| c.dialogs_close());
-    on!(on_unsaved_dont_save, |c| c.unsaved_continue());
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_unsaved_dont_save(move || {
+            let quit = {
+                let mut c = ctl.borrow_mut();
+                c.unsaved_continue();
+                c.quit_confirmed
+            };
+            if quit {
+                let _ = slint::quit_event_loop();
+            } else if let Some(a) = aw.upgrade() {
+                ctl.borrow_mut().update_ui(&a);
+            }
+        });
+    }
+    // The window's close button, ⌘Q (appmenu.rs) and Alt-F4: ask first about unsaved changes.
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        app.window().on_close_requested(move || {
+            let Ok(mut c) = ctl.try_borrow_mut() else { return slint::CloseRequestResponse::KeepWindowShown };
+            if c.close_request() {
+                return slint::CloseRequestResponse::HideWindow;
+            }
+            drop(c);
+            if let Some(a) = aw.upgrade() {
+                ctl.borrow_mut().update_ui(&a);
+            }
+            slint::CloseRequestResponse::KeepWindowShown
+        });
+    }
     // Folder picker and Save run their native dialogs with the controller NOT borrowed.
     {
         let ctl = ctl.clone();
@@ -3390,6 +3421,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.save_to(&dir);
                 if !c.doc.is_dirty() {
                     c.unsaved_continue();
+                }
+                if c.quit_confirmed {
+                    let _ = slint::quit_event_loop();
+                    return;
                 }
             }
             if let Some(a) = aw.upgrade() {

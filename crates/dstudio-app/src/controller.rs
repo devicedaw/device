@@ -506,6 +506,11 @@ pub struct Controller {
     pub unsaved_open: bool,
     /// A Live set to import once the unsaved-changes prompt is answered.
     pub(crate) pending_import: Option<crate::live_import::PendingImport>,
+    /// What runs once the unsaved-changes prompt is answered with Save or Don't Save (opening
+    /// another project, or quitting). None with no import pending means File › New Project.
+    pub after_unsaved: Option<crate::dialogs::AfterUnsaved>,
+    /// Set once quitting was confirmed (or nothing was unsaved): the window may close.
+    pub quit_confirmed: bool,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
     /// The update check and what it found (updates.rs).
@@ -720,6 +725,8 @@ impl Controller {
             midi_dialog_request: None,
             unsaved_open: false,
             pending_import: None,
+            after_unsaved: None,
+            quit_confirmed: false,
             updates_open: false,
             updates: Default::default(),
             key_change: None,
@@ -989,7 +996,27 @@ impl Controller {
             return;
         }
         let Some(path) = self.settings.prefs.recent_projects.get(i).map(PathBuf::from) else { return };
-        if !self.open(&path) {
+        self.open_request(path);
+    }
+
+    /// Open `dir` (File › Open, Open Recent, the browser): asks first when the project has
+    /// unsaved changes. A project in Open Recent that no longer opens leaves the list.
+    pub fn open_request(&mut self, dir: PathBuf) {
+        if self.doc.is_dirty() {
+            self.after_unsaved = Some(crate::dialogs::AfterUnsaved::Open(dir));
+            self.unsaved_open = true;
+            self.ui_dirty = true;
+            return;
+        }
+        self.open_or_forget(&dir);
+    }
+
+    pub(crate) fn open_or_forget(&mut self, dir: &Path) {
+        if self.open(dir) {
+            return;
+        }
+        let s = dir.to_string_lossy();
+        if let Some(i) = self.settings.prefs.recent_projects.iter().position(|p| *p == s) {
             self.settings.prefs.recent_projects.remove(i);
             if i < self.settings.prefs.recent_resolved.len() {
                 self.settings.prefs.recent_resolved.remove(i);

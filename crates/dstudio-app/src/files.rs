@@ -621,9 +621,7 @@ impl Controller {
         let Some(Some(item)) = self.files.items.get(i).cloned() else { return };
         match item {
             FileItem::Folder(_) => {}
-            FileItem::Project(p) => {
-                self.open(&p);
-            }
+            FileItem::Project(p) => self.open_request(p),
             FileItem::Audio(p) => self.import_files(vec![p], ImportTarget::NewTrack, None),
             FileItem::Track { project, track } => self.files_add_track(&project, track, None),
             FileItem::Midi { project, clip } => self.files_add_midi(&project, clip, None, None),
