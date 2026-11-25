@@ -60,6 +60,8 @@ pub struct Autosave {
     pub interval: Option<Duration>,
     /// `<pid>.takes.json` is written (audio is being recorded).
     pub takes_marked: bool,
+    /// A backup being written on its own thread, and the revision it holds.
+    pub pending: Option<(u64, std::thread::JoinHandle<Result<(), String>>)>,
 }
 
 fn now_secs() -> u64 {
@@ -208,9 +210,21 @@ pub fn adopt(dir: &Path, from: u32, to: u32) -> std::io::Result<PathBuf> {
     Ok(tp)
 }
 
+/// Writes the backup and the note beside it (on the autosave thread).
+fn write_backup(project: &dstudio_core::Project, project_dir: Option<String>, dir: &Path, pid: u32) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let (backup, meta) = paths(dir, pid);
+    persist::save(project, &backup).map_err(|e| e.to_string())?;
+    let m = Meta { project_dir, written: now_secs() };
+    let tmp = meta.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec(&m).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &meta).map_err(|e| e.to_string())
+}
+
 impl Controller {
     /// UI timer: back up the project once it has had unsaved changes for [`INTERVAL`], and
-    /// again every interval while it changes; drop the backup once nothing is unsaved.
+    /// again every interval while it changes; drop the backup once nothing is unsaved. The
+    /// write runs on its own thread (a large project takes tens of milliseconds to write).
     pub fn autosave_tick(&mut self) {
         let Some(dir) = self.autosave.dir.clone() else { return };
         let pid = std::process::id();
@@ -218,6 +232,17 @@ impl Controller {
             // The pass ended and the engine finished the takes' headers.
             let _ = std::fs::remove_file(takes_path(&dir, pid));
             self.autosave.takes_marked = false;
+        }
+        if let Some((rev, write)) = self.autosave.pending.take_if(|(_, w)| w.is_finished()) {
+            match write.join() {
+                Ok(Ok(())) => self.autosave.saved_rev = Some(rev),
+                Ok(Err(e)) => eprintln!("autosave: {e}"),
+                Err(_) => eprintln!("autosave: the backup write panicked"),
+            }
+        }
+        if self.autosave.pending.is_some() {
+            // One write at a time, and nothing is removed while one is under way.
+            return;
         }
         if !self.doc.is_dirty() {
             if self.autosave.saved_rev.take().is_some() {
@@ -236,9 +261,25 @@ impl Controller {
             return;
         }
         self.autosave.last_write = Some(now);
-        match self.write_backup(&dir, pid) {
-            Ok(()) => self.autosave.saved_rev = Some(rev),
+        // Plugin instances own their state: pull it into the model first, as Save does.
+        let states = self.engine.plugin_states();
+        self.doc.sync_device_states(&states);
+        let project = self.project().clone();
+        let project_dir = self.project_dir.as_ref().map(|p| p.to_string_lossy().into_owned());
+        let write = std::thread::Builder::new().name("autosave".into()).spawn(move || write_backup(&project, project_dir, &dir, pid));
+        match write {
+            Ok(w) => self.autosave.pending = Some((rev, w)),
             Err(e) => eprintln!("autosave: {e}"),
+        }
+    }
+
+    /// At a normal quit: let a backup being written finish, then remove it.
+    pub fn autosave_finish(&mut self) {
+        if let Some((_, write)) = self.autosave.pending.take() {
+            let _ = write.join();
+        }
+        if let Some(dir) = &self.autosave.dir {
+            remove(dir, std::process::id());
         }
     }
 
@@ -253,19 +294,6 @@ impl Controller {
             Ok(()) => self.autosave.takes_marked = true,
             Err(e) => eprintln!("autosave: {}: {e}", path.display()),
         }
-    }
-
-    fn write_backup(&mut self, dir: &Path, pid: u32) -> Result<(), String> {
-        // Plugin instances own their state: pull it into the model first, as Save does.
-        let states = self.engine.plugin_states();
-        self.doc.sync_device_states(&states);
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        let (project, meta) = paths(dir, pid);
-        persist::save(self.project(), &project).map_err(|e| e.to_string())?;
-        let m = Meta { project_dir: self.project_dir.as_ref().map(|p| p.to_string_lossy().into_owned()), written: now_secs() };
-        let tmp = meta.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec(&m).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &meta).map_err(|e| e.to_string())
     }
 
     /// At launch: repair the takes a crashed session was recording, and open the backup it
@@ -348,6 +376,15 @@ fn ago(written: u64) -> String {
 mod tests {
     use super::{Meta, TakesMeta, adopt, leftover, paths, recover_takes, remove, repair_take, takes_path};
 
+    /// One timer tick, then another once the backup it started is written.
+    fn tick(c: &mut crate::controller::Controller) {
+        c.autosave_tick();
+        while c.autosave.pending.as_ref().is_some_and(|(_, w)| !w.is_finished()) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        c.autosave_tick();
+    }
+
     fn scratch(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("dstudio-autosave-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -393,15 +430,15 @@ mod tests {
         c.autosave.dir = Some(dir.clone());
         c.autosave.interval = Some(Duration::ZERO);
         let backup = paths(&dir, std::process::id()).0;
-        c.autosave_tick();
+        tick(&mut c);
         assert!(!backup.exists(), "nothing unsaved: no backup");
         c.execute(dstudio_core::Command::SetTempo { bpm: 97.0, at: None });
-        c.autosave_tick();
+        tick(&mut c);
         let saved = dstudio_core::persist::load(&backup).expect("a backup of the unsaved project").project;
         assert_eq!(saved.transport.bpm, 97.0);
         let song = dir.join("Song.dsproj");
         c.save_to(&song);
-        c.autosave_tick();
+        tick(&mut c);
         assert!(!backup.exists(), "saved: the backup goes");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -504,7 +541,7 @@ mod tests {
         assert!(mine.exists() && !paths(&dir, dead).0.exists(), "this session took the backup over");
         // Don't Save: the changes, and with them the backup, are thrown away.
         c.new_project();
-        c.autosave_tick();
+        tick(&mut c);
         assert!(!mine.exists());
         assert!(!c.autosave_recover(), "nothing left to recover");
         let _ = std::fs::remove_dir_all(&dir);
