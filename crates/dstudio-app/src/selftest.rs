@@ -2661,10 +2661,7 @@ fn steps() -> Vec<Step> {
                 (!a.global::<Studio>().get_unsaved_open() && !c.unsaved_open && n == 2).then_some(()).ok_or(format!("clips {n}"))
             }),
         ),
-        Do(
-            "close the window with unsaved changes",
-            Box::new(|a| a.window().dispatch_event(slint::platform::WindowEvent::CloseRequested)),
-        ),
+        Do("close the window with unsaved changes", Box::new(|a| a.window().dispatch_event(slint::platform::WindowEvent::CloseRequested))),
         Check(
             "Save changes? prompt open for quitting, window still shown",
             Box::new(|c, a| {
@@ -2679,7 +2676,9 @@ fn steps() -> Vec<Step> {
         Do("Escape (Cancel quitting)", Box::new(|a| key(a, Key::Escape, false, false))),
         Check(
             "prompt closed, still running",
-            Box::new(|c, _| (!c.unsaved_open && c.after_unsaved.is_none() && !c.quit_confirmed).then_some(()).ok_or("quit still pending".into())),
+            Box::new(|c, _| {
+                (!c.unsaved_open && c.after_unsaved.is_none() && !c.quit_confirmed).then_some(()).ok_or("quit still pending".into())
+            }),
         ),
         DoC(
             "File › Open another project with unsaved changes",
@@ -2689,7 +2688,9 @@ fn steps() -> Vec<Step> {
             "Save changes? prompt open for opening, project untouched",
             Box::new(|c, a| {
                 let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
-                (a.global::<Studio>().get_unsaved_open() && matches!(c.after_unsaved, Some(crate::dialogs::AfterUnsaved::Open(_))) && n == 2)
+                (a.global::<Studio>().get_unsaved_open()
+                    && matches!(c.after_unsaved, Some(crate::dialogs::AfterUnsaved::Open(_)))
+                    && n == 2)
                     .then_some(())
                     .ok_or(format!("prompt {} after {:?} clips {n}", a.global::<Studio>().get_unsaved_open(), c.after_unsaved))
             }),
