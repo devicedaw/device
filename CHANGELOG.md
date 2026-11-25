@@ -11,6 +11,38 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-25
+
+### Added
+
+- Talk to the assistant. Click the mic in the assistant panel, or press Control-Option (Ctrl-Alt on Windows and
+  Linux), and speak: your words are turned into text on this computer and never sent anywhere for recognition. The
+  speech model (82 MB) is downloaded once from Settings › Downloads.
+- The assistant can listen. Turn on Settings › General › Let the assistant listen to audio and it measures the
+  selected clip, track or the whole mix (loudness, peaks, tone, key and tempo) before it answers. Only those numbers
+  are sent; the audio stays on your computer.
+- A Getting started tour in the assistant panel walks you through making a first song in four steps.
+- Autosave. While a project has unsaved changes, Device keeps a backup of it every 2 minutes. If Device or a plugin
+  crashes, the next launch reopens your changes as unsaved: save to keep them. A take that was being recorded keeps
+  everything recorded up to the crash.
+
+### Changed
+
+- Quitting, closing the window, File › Open, Open Recent and opening a project from the browser now ask whether to
+  save unsaved changes first. A change made in a plugin's own window counts as an unsaved change.
+- Recordings and renders made before a project's first save are moved into the project's media folder when you save
+  it, instead of staying in a temporary folder the system may clear.
+
+### Fixed
+
+- File › Show Project in Finder did nothing on Windows and Linux. It now opens Explorer or the file manager, and the
+  menus name the right one.
+- Opening a project whose audio files moved now lists them in a Missing media dialog. Locate… finds them in a folder
+  you pick (by name and length) and relinks them in one undo step.
+- Voice input no longer risks crashing on older computers: the speech recogniser is built for a common processor
+  baseline instead of the build machine's.
+- Opening badly formed FLAC, MP3, WAV and Ogg files is safer (updated decoders).
+
 ## [0.3.1] - 2026-11-21
 
 ### Fixed
