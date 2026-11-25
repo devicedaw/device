@@ -203,7 +203,9 @@ A project is a `Name.dsproj/` folder holding a versioned JSON document, so it di
 version control. Plugin state is saved inside it. Audio files stay where they are: the project references each one by a
 path relative to the project (when both are on the same drive) and by its absolute path. To move a project, move its
 media with it and keep the same layout around the project folder, or leave the media at its original absolute path
-(always the case for media on another Windows drive). A backup of the project folder alone
+(always the case for media on another Windows drive). If files are missing when a project opens, the Missing media
+dialog lists them: Locate… searches a folder you pick, and the folders inside it, for files with the same name and length,
+and relinks them in one undo step. A backup of the project folder alone
 does not include the audio, so back up the media too. The format is versioned, but it isn't frozen until the first release.
 A project with tempo changes is saved in a newer version of the format, which 0.2.x builds refuse to open rather than
 play at one tempo; projects without them stay readable by 0.2.x.

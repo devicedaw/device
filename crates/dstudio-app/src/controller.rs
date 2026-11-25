@@ -238,6 +238,8 @@ pub enum JobResult {
     Imported { path: PathBuf, target: ImportTarget, at: Ticks, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
     /// Media of an opened project reloaded into the engine.
     Reloaded { asset: AssetId, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
+    /// A Relink Media search finished (`relink.rs`).
+    Relinked { doc_epoch: u64, folder: PathBuf, found: crate::relink::Found },
     /// Assistant provider reply (raw `AssistantTurn` JSON) for a request started at `started`.
     Assistant { started: Instant, mode: dstudio_core::assistant::Mode, result: Result<String, String> },
     /// A bug report or feedback was posted (feedback.rs).
@@ -458,6 +460,11 @@ pub struct Controller {
     pub engine: Arc<Engine>,
     pub rate: f64,
     pub(crate) asset_map: HashMap<AssetId, u64>,
+    /// The path each asset was last loaded from (or found missing at): a change to it reloads
+    /// the asset (`relink.rs`).
+    pub(crate) asset_paths: HashMap<AssetId, String>,
+    /// The Missing media dialog (`relink.rs`).
+    pub relink: crate::relink::Relink,
     /// The engine's reversed copies of assets that reversed clips play (src/warpedit.rs).
     pub(crate) reversed_assets: HashMap<AssetId, u64>,
     /// Detected transients per engine asset (asset frames), and those being analysed.
@@ -700,6 +707,8 @@ impl Controller {
             engine,
             rate,
             asset_map: HashMap::new(),
+            asset_paths: HashMap::new(),
+            relink: Default::default(),
             reversed_assets: HashMap::new(),
             onsets: HashMap::new(),
             onsets_pending: std::collections::HashSet::new(),
@@ -1006,6 +1015,7 @@ impl Controller {
         self.settings.open
             || self.export.open
             || self.unsaved_open
+            || self.relink.open
             || self.updates_open
             || self.undo_history_open
             || self.key_change.is_some()
@@ -1078,6 +1088,7 @@ impl Controller {
 
     /// Publish a new engine snapshot if the document changed.
     pub fn after_change(&mut self) {
+        self.reload_moved_assets();
         self.remember_device_names();
         self.refresh_tempo_lane();
         let p = self.doc.project();
@@ -1649,6 +1660,7 @@ impl Controller {
                 JobResult::Voice(r) => self.finish_voice(r),
                 JobResult::SpeechModel(r) => self.finish_speech_model(r),
                 JobResult::LiveSet(job) => self.finish_live_set(*job),
+                JobResult::Relinked { doc_epoch, folder, found } => self.finish_relink(doc_epoch, &folder, found),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -1889,14 +1901,18 @@ impl Controller {
         self.published_rev = None;
         self.after_change();
         self.devices_after_open();
-        let missing: std::collections::HashSet<String> = loaded.missing_media.into_iter().collect();
+        let missing: std::collections::HashSet<String> = loaded.missing_media.iter().cloned().collect();
+        self.asset_paths.clear();
+        self.relink = Default::default();
         for a in self.project().assets.clone() {
-            if !missing.contains(&a.absolute_path) {
+            if missing.contains(&a.absolute_path) {
+                self.asset_paths.insert(a.id, a.absolute_path.clone());
+            } else {
                 self.load_asset(&a);
             }
         }
         if !missing.is_empty() {
-            self.set_status(format!("{} media file(s) missing", missing.len()), 6);
+            self.relink_show(&loaded.missing_media);
         } else if self.pending_jobs > 0 {
             self.set_background_status("Loading media…", 30);
         }
@@ -1909,6 +1925,7 @@ impl Controller {
         let tx = self.jobs_tx.clone();
         let epoch = self.doc_epoch;
         let (id, path) = (a.id, a.absolute_path.clone());
+        self.asset_paths.insert(id, path.clone());
         self.pending_jobs += 1;
         std::thread::spawn(move || {
             let result = load_and_analyse(&engine, Path::new(&path));
