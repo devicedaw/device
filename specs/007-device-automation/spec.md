@@ -1,6 +1,6 @@
 # Automate any device control, mute and device on/off
 
-Status: In review · Spec: 007 · Issue: none
+Status: Done · Spec: 007 · Issue: none
 
 ## Problem
 
