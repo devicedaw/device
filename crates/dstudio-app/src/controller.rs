@@ -971,8 +971,8 @@ impl Controller {
             "options.rescan_plugins" => self.start_plugin_scan(true),
             "file.show_in_finder" => {
                 let Some(dir) = &self.project_dir else { return };
-                if let Err(e) = std::process::Command::new("open").arg("-R").arg(dir).spawn() {
-                    self.set_status(format!("Show in Finder failed: {e}"), 3);
+                if let Err(e) = crate::clip_render::reveal(&dir.to_string_lossy()) {
+                    self.set_status(format!("Show in {} failed: {e}", crate::clip_render::FILE_MANAGER), 3);
                 }
             }
             other => self.set_status(format!("{other}: not implemented yet"), 3),
@@ -2685,6 +2685,7 @@ impl Controller {
         s.set_can_redo(self.doc.can_redo());
         s.set_can_copy(self.selected_clip.is_some());
         s.set_project_on_disk(self.project_dir.is_some());
+        s.set_file_manager(crate::clip_render::FILE_MANAGER.into());
         s.set_loop_enabled(p.transport.loop_enabled);
         s.set_sig_text(format!("{}/{}", p.transport.time_signature.numerator, p.transport.time_signature.denominator).into());
         s.set_master_pos(slider_from_gain(p.master_gain));

@@ -141,6 +141,15 @@ impl ClipRender {
     }
 }
 
+/// The platform's file manager, as menus name it ("Show in Finder").
+pub const FILE_MANAGER: &str = if cfg!(target_os = "macos") {
+    "Finder"
+} else if cfg!(windows) {
+    "Explorer"
+} else {
+    "Files"
+};
+
 /// Open the platform's file manager on `path`.
 pub fn reveal(path: &str) -> Result<(), String> {
     let p = Path::new(path);
