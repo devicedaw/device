@@ -42,7 +42,7 @@ the CI history and the website. It replaces 010 as the list contributors and age
   backup of an edited project is written every 2 minutes off the audio thread, atomically, in the app's data
   folder; the next launch after a crash opens it as unsaved changes (Save keeps them, Don't Save declines); a take
   that was being recorded is recovered with a valid WAV header; and tests cover writing, restoring and declining.
-- [ ] **S0.4 Relink missing media.** Opening a project whose files moved only says "N media file(s) missing"
+- [x] **S0.4 Relink missing media** (#177). Opening a project whose files moved only said "N media file(s) missing"
   in the status bar (`controller.rs`, `open`). Done when a dialog lists the missing files, Locate… searches a
   chosen folder for the rest by name and length, and the result is one undo step.
 - [ ] **S0.5 Collect All and Save.** Imported audio is referenced where it lies. Done when File › Collect All

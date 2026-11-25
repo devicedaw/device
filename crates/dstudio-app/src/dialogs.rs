@@ -1204,6 +1204,14 @@ impl Controller {
     pub(crate) fn push_dialogs(&self, s: &Studio) {
         s.set_export_open(self.export.open);
         s.set_unsaved_open(self.unsaved_open);
+        s.set_relink_open(self.relink.open);
+        if self.relink.open {
+            let rows: Vec<crate::RelinkRow> =
+                self.relink.rows.iter().map(|r| crate::RelinkRow { name: r.name.as_str().into(), was: r.was.as_str().into() }).collect();
+            s.set_relink_rows(std::rc::Rc::new(slint::VecModel::from(rows)).into());
+            s.set_relink_note(self.relink.note.as_str().into());
+            s.set_relink_searching(self.relink.searching);
+        }
         s.set_updates_open(self.updates_open);
         s.set_key_change_open(self.key_change.is_some());
         s.set_mcp_ask_open(self.mcp.asking.is_some());
