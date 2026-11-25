@@ -212,6 +212,11 @@ play at one tempo; projects without them stay readable by 0.2.x.
 Click the project name in the title bar to rename it: a saved project's folder is renamed on disk; an unsaved one
 keeps the name for its first save.
 
+While a project has unsaved changes, Device writes a backup of it every 2 minutes to an `Autosave` folder beside its
+preferences (never into the project folder). If Device or a plugin crashes, the next launch opens the backup as unsaved
+changes to the same project: Save keeps them, closing without saving throws them away. A take that was being recorded
+when it crashed keeps everything that reached the disk, and the status line says where it is.
+
 ## Under the hood
 
 <p align="center"><img alt="The Rust app sends validated commands to the Rust core, which hands the C++23 engine an immutable snapshot over a C ABI. 128 audio tracks render a 256-frame block in about 12 microseconds, 0.2% of the 5.3 ms deadline." src="docs/assets/art/architecture.png" width="100%"></p>
