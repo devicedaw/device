@@ -25,6 +25,14 @@ fn recent_name(path: &str) -> String {
     Path::new(path).file_stem().map_or_else(|| path.to_string(), |s| s.to_string_lossy().into_owned())
 }
 
+/// What the unsaved-changes prompt goes on to do after Save or Don't Save (besides File › New
+/// Project and a Live set import, which have their own state).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AfterUnsaved {
+    Open(PathBuf),
+    Quit,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Recipe {
     #[default]
@@ -451,6 +459,7 @@ impl Controller {
         self.export.tracks_menu = false;
         self.export.range_menu = false;
         self.unsaved_open = false;
+        self.after_unsaved = None;
         if let Some(crate::live_import::PendingImport::Loaded(job)) = self.pending_import.take() {
             self.release_live_set(*job);
         }
@@ -1135,6 +1144,7 @@ impl Controller {
     /// File › New Project: ask first when the project has unsaved changes.
     pub fn new_project_request(&mut self) {
         if self.doc.is_dirty() {
+            self.after_unsaved = None;
             self.unsaved_open = true;
             self.ui_dirty = true;
         } else {
@@ -1151,8 +1161,33 @@ impl Controller {
                 self.import_live_set(file);
             }
             Some(PendingImport::Loaded(job)) => self.apply_live_set(*job),
-            None => self.new_project(),
+            None => match self.after_unsaved.take() {
+                Some(AfterUnsaved::Open(dir)) => {
+                    self.dialogs_close();
+                    self.open_or_forget(&dir);
+                }
+                Some(AfterUnsaved::Quit) => {
+                    self.dialogs_close();
+                    self.quit_confirmed = true;
+                }
+                None => self.new_project(),
+            },
         }
+    }
+
+    /// The window was asked to close (close button, ⌘Q, Alt-F4). True when it may close now;
+    /// otherwise the unsaved-changes prompt opens, and Save or Don't Save then quits.
+    pub fn close_request(&mut self) -> bool {
+        if self.quit_confirmed || !self.doc.is_dirty() {
+            self.quit_confirmed = true;
+            return true;
+        }
+        if !self.unsaved_open {
+            self.after_unsaved = Some(AfterUnsaved::Quit);
+            self.unsaved_open = true;
+            self.ui_dirty = true;
+        }
+        false
     }
 
     pub fn new_project(&mut self) {
