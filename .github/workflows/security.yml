@@ -10,7 +10,8 @@ name: Security
 #     Unmaintained or yanked crates are listed as warnings. A new advisory can appear without
 #     any commit, which is why it also runs on a schedule.
 #
-# Neither is a required check. A failure on main or on the schedule shows in the Actions tab.
+# Neither is a required check. A failure on main shows in the Actions tab; a failed scheduled run
+# also opens (or comments on) a `ci-nightly` issue, which the next passing scheduled run closes.
 
 on:
   pull_request:
@@ -61,3 +62,25 @@ jobs:
         run: cargo install cargo-audit --locked --version 0.22.2
       - name: cargo audit
         run: cargo audit --file Cargo.lock
+
+  scheduled-failure:
+    name: Report the scheduled run
+    needs: rustsec
+    if: ${{ !cancelled() && github.event_name == 'schedule' && github.repository == 'devicedaw/device' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # list the run's failed jobs
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/ci
+      - name: Open, comment on or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+          TITLE: Weekly security check failed
+        run: tools/ci/scheduled-run-issue.sh

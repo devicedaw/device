@@ -58,7 +58,11 @@ anchors the panels report, not fixed coordinates, because window sizes differ be
 CI.
 
 A feature with a UI flow gets a short self-test section: add a `<area>_steps()` function next to the
-others and append it where the sections are collected. Check results in the `Document`, not in
+others and list it in `SECTIONS` (selftest.rs) where it runs, with the part of its neighbours. CI runs
+the Windows self-test in parts (`--self-test-part 1..3`: the shared setup, then one contiguous run of
+`SECTIONS`), so a section that starts a part sets up the state it needs itself. A step that holds a
+button across timer ticks can lose the press to the system on a slow machine; press and move in one
+step and record what the checks need. Check results in the `Document`, not in
 pixels. A UI bug fix gets a step that would have failed before the fix.
 
 ## Performance

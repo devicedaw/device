@@ -77,6 +77,8 @@ fn finish_run(failed: usize) {
     }
 }
 
+type PreviewSeen = ((Option<(u64, u8)>, u8), (Option<(u64, u8)>, u8));
+
 enum Step {
     Do(&'static str, Box<dyn Fn(&AppWindow)>),
     /// Like `Do`, but computes coordinates from the controller first (the closure must
@@ -89,6 +91,9 @@ thread_local! {
     /// Right after the audition click: the previewed pitch, its scheduled length (s) and whether
     /// its note-off was set (midi steps).
     static AUDITION_SEEN: Cell<(Option<u8>, Option<f64>, bool)> = const { Cell::new((None, None, false)) };
+    /// The piano roll keyboard preview (device and pitch, engine-held notes) right after the
+    /// press on G3 and right after the slide to A3 (midi steps).
+    static PREVIEW_SEEN: Cell<PreviewSeen> = const { Cell::new(((None, 0), (None, 0))) };
     /// Audio loop start before the footer Position drag (audio loop section).
     static AUDIO_LOOP_START: Cell<i64> = const { Cell::new(0) };
     /// Track count and the open clip before the audio clip editor's Resample.
@@ -346,7 +351,7 @@ fn midi_steps() -> Vec<Step> {
     };
     let [h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15] = <[Rc<Cell<usize>>; 16]>::try_from(hs).ok().unwrap();
     let hp = Rc::new(Cell::new(0usize));
-    let (hp0, hp1, hp2) = (hp.clone(), hp.clone(), hp.clone());
+    let (hp0, hp1, hp2, hp_cancel) = (hp.clone(), hp.clone(), hp.clone(), hp.clone());
     // Toolbar zoom sliders: (left x, width, y) of the vertical (0) and horizontal (1) track.
     let zoom_track = |ctl: &Ctl, axis: usize| -> (f32, f32, f32) {
         let right = pr_origin().0 + ctl.borrow().pr.size.0 + 0.5;
@@ -606,12 +611,28 @@ fn midi_steps() -> Vec<Step> {
                 }
             }),
         ),
+        // Press and slide in one step, reading the preview after each event. The button is held
+        // only between the two events, so nothing the system sends between timer ticks (Windows
+        // under WARP takes over a second per step, and a pointer-exit there ends Slint's grab)
+        // can come between them.
         DoC(
-            "preview: press the G3 key on the piano roll keyboard",
+            "preview: press the G3 key on the piano roll keyboard, then slide up to A3 with the button held",
             Box::new(move |a, ctl| {
                 hp0.set(ctl.borrow().doc.history_labels().len());
+                let x = pr_origin().0 + 20.0;
                 let (_, y) = pr_xy(ctl, 0.0, 55);
-                press(a, pr_origin().0 + 20.0, y);
+                press(a, x, y);
+                let pressed = {
+                    let c = ctl.borrow();
+                    (c.pr.preview, c.engine.preview().notes)
+                };
+                let (_, y) = pr_xy(ctl, 0.0, 57);
+                dispatch(a.window(), WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
+                let slid = {
+                    let c = ctl.borrow();
+                    (c.pr.preview, c.engine.preview().notes)
+                };
+                PREVIEW_SEEN.with(|s| s.set((pressed, slid)));
             }),
         ),
         Check(
@@ -621,27 +642,19 @@ fn midi_steps() -> Vec<Step> {
                     .and_then(|t| c.project().tracks[t].instrument_plugin.as_ref())
                     .map(|d| d.id.0)
                     .ok_or("no instrument")?;
-                let held = c.engine.preview().notes;
-                (c.pr.preview == Some((dev, 55)) && held == 1 && c.doc.history_labels().len() == hp1.get()).then_some(()).ok_or(format!(
-                    "preview {:?} held {held} history {} -> {}",
-                    c.pr.preview,
+                let ((preview, held), _) = PREVIEW_SEEN.with(Cell::get);
+                (preview == Some((dev, 55)) && held == 1 && c.doc.history_labels().len() == hp1.get()).then_some(()).ok_or(format!(
+                    "preview {preview:?} held {held} history {} -> {}",
                     hp1.get(),
                     c.doc.history_labels().len()
                 ))
             }),
         ),
-        DoC(
-            "preview: slide up to A3 with the button held",
-            Box::new(|a, ctl| {
-                let (_, y) = pr_xy(ctl, 0.0, 57);
-                dispatch(a.window(), WindowEvent::PointerMoved { position: LogicalPosition::new(pr_origin().0 + 20.0, y) });
-            }),
-        ),
         Check(
             "preview: A3 replaced G3 (still one note held)",
-            Box::new(|c, _| {
-                let held = c.engine.preview().notes;
-                (c.pr.preview.map(|p| p.1) == Some(57) && held == 1).then_some(()).ok_or(format!("preview {:?} held {held}", c.pr.preview))
+            Box::new(|_, _| {
+                let (_, (preview, held)) = PREVIEW_SEEN.with(Cell::get);
+                (preview.map(|p| p.1) == Some(57) && held == 1).then_some(()).ok_or(format!("preview {preview:?} held {held}"))
             }),
         ),
         DoC(
@@ -656,6 +669,52 @@ fn midi_steps() -> Vec<Step> {
             Box::new(move |c, _| {
                 let held = c.engine.preview().notes;
                 (c.pr.preview.is_none() && held == 0 && c.doc.history_labels().len() == hp2.get())
+                    .then_some(())
+                    .ok_or(format!("preview {:?} held {held}", c.pr.preview))
+            }),
+        ),
+        // The window losing the pointer mid-press (another window, a system dialog, the mouse
+        // leaving on Windows) makes Slint cancel the press: no release follows. The held key's
+        // note must stop as on a release, not keep sounding until the next click.
+        DoC(
+            "preview: press the G3 key, then the window loses the pointer before the release",
+            Box::new(|a, ctl| {
+                let (_, y) = pr_xy(ctl, 0.0, 55);
+                press(a, pr_origin().0 + 20.0, y);
+                dispatch(a.window(), WindowEvent::PointerExited);
+            }),
+        ),
+        Check(
+            "preview: the cancelled press ended the key slide and released its note",
+            Box::new(|c, _| {
+                let ended = c.pr.drag.is_none() && (c.pr.preview.is_none() || c.pr.preview_off_at.is_some());
+                ended.then_some(()).ok_or(format!(
+                    "drag {} preview {:?} off at {:?}",
+                    c.pr.drag.is_some(),
+                    c.pr.preview,
+                    c.pr.preview_off_at
+                ))
+            }),
+        ),
+        DoC(
+            "preview: the pointer comes back and lets go; the released note's time is up",
+            Box::new(|a, ctl| {
+                let (_, y) = pr_xy(ctl, 0.0, 55);
+                let p = LogicalPosition::new(pr_origin().0 + 20.0, y);
+                dispatch(a.window(), WindowEvent::PointerMoved { position: p });
+                dispatch(a.window(), WindowEvent::PointerReleased { position: p, button: PointerEventButton::Left });
+                let mut c = ctl.borrow_mut();
+                if c.pr.preview_off_at.is_some() {
+                    c.pr.preview_off_at = Some(std::time::Instant::now());
+                }
+                c.pr_preview_tick();
+            }),
+        ),
+        Check(
+            "preview: after the cancelled press no note is held, the clip unchanged",
+            Box::new(move |c, _| {
+                let held = c.engine.preview().notes;
+                (c.pr.preview.is_none() && held == 0 && c.doc.history_labels().len() == hp_cancel.get())
                     .then_some(())
                     .ok_or(format!("preview {:?} held {held}", c.pr.preview))
             }),
@@ -15825,6 +15884,11 @@ fn track_menu_steps() -> Vec<Step> {
                 if c.project().ordinary_track_count() < 2 {
                     c.add_audio_track();
                 }
+                // The swatch step below turns track 1 teal: start from another colour (a part run,
+                // --self-test-part, reaches here without the sections that recolour it).
+                if let Some(t) = c.project().tracks.first().filter(|t| t.color.0 == 6).map(|t| t.id) {
+                    c.execute(dstudio_core::Command::SetTrackColor { track: t, color: dstudio_core::ColorIndex(0) });
+                }
                 c.view.scroll_y = 0.0;
                 c.ui_dirty = true;
                 *b0.borrow_mut() = ids(&c);
@@ -15917,7 +15981,21 @@ fn track_menu_steps() -> Vec<Step> {
         Do("track menu: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         Check(
             "track menu: undo removes the copy",
-            Box::new(move |c, _| (ids(c) == *b2.borrow()).then_some(()).ok_or(format!("{:?}", ids(c)))),
+            Box::new(move |c, a| {
+                // On failure, say where the ⌘Z could have gone (Windows failed this once, with
+                // the copy still there and nothing printed about undo).
+                let s = a.global::<Studio>();
+                (ids(c) == *b2.borrow()).then_some(()).ok_or(format!(
+                    "{:?} (want {:?}), last undo step {:?}, menu open {}, a text field focused {}, modal {}, settings open {}",
+                    ids(c),
+                    b2.borrow(),
+                    c.doc.undo_label(),
+                    s.get_menu_open(),
+                    crate::app_text_focused(&a.as_weak()),
+                    c.modal_open(),
+                    c.settings.open,
+                ))
+            }),
         ),
         DoC(
             "track menu: right-click track 1",
@@ -19196,7 +19274,98 @@ fn browser_drop_steps() -> Vec<Step> {
 }
 
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
-pub fn start(app: &AppWindow, ctl: Ctl) {
+/// The self-test's sections after the shared setup, in the order the full run takes them, each
+/// with its part (`--self-test-part`). A part is a contiguous run of this list, so each section
+/// still sees what the sections before it in its part left; a part starts at a section that sets
+/// up the state it needs itself (`snap_steps` puts the Auto grid back that the setup pinned).
+/// A new section goes where it belongs in the order and takes the part of its neighbours.
+const SECTIONS: &[(usize, &str, fn() -> Vec<Step>)] = &[
+    // Part 1: the Synth, the piano roll, recording and the built-in devices.
+    (1, "synth_steps", synth_steps),
+    (1, "midi_steps", midi_steps),
+    (1, "recording_steps", recording_steps),
+    (1, "platform_device_steps", platform_device_steps),
+    (1, "builtin_device_steps", builtin_device_steps),
+    (1, "dynamics_device_steps", dynamics_device_steps),
+    (1, "modulation_steps", modulation_steps),
+    (1, "builtin_each_steps", builtin_each_steps),
+    (1, "modulation_device_steps", modulation_device_steps),
+    (1, "custom_view_steps", custom_view_steps),
+    (1, "limiter_family_steps", limiter_family_steps),
+    (1, "restoration_device_steps", restoration_device_steps),
+    (1, "analyzer_device_steps", analyzer_device_steps),
+    // Part 2: the Sampler, time effects, automation, sequencing, panels, files, clips and rendering.
+    (2, "sampler_steps", sampler_steps),
+    (2, "time_fx_steps", time_fx_steps),
+    (2, "automation_steps", automation_steps),
+    (2, "field_device_steps", field_device_steps),
+    (2, "step_sequencer_steps", step_sequencer_steps),
+    (2, "pattern_library_steps", pattern_library_steps),
+    (2, "splitter_steps", splitter_steps),
+    (2, "chat_dock_steps", chat_dock_steps),
+    (2, "files_steps", files_steps),
+    (2, "browser_drop_steps", browser_drop_steps),
+    (2, "section_steps", section_steps),
+    (2, "minimap_steps", minimap_steps),
+    (2, "devminimap_steps", devminimap_steps),
+    (2, "clip_menu_steps", clip_menu_steps),
+    (2, "clip_selection_steps", clip_selection_steps),
+    (2, "clip_fade_steps", clip_fade_steps),
+    (2, "clip_render_steps", clip_render_steps),
+    (2, "bounce_in_place_steps", bounce_in_place_steps),
+    (2, "clip_render_plugin_steps", clip_render_plugin_steps),
+    (2, "ruler_zoom_steps", ruler_zoom_steps),
+    // Part 3: timeline tools, tracks, keys, menus, settings and the assistant.
+    (3, "snap_steps", snap_steps),
+    (3, "tool_steps", tool_steps),
+    (3, "zoom_slider_steps", zoom_slider_steps),
+    (3, "transport_fields_steps", transport_fields_steps),
+    (3, "tempo_steps", tempo_steps),
+    (3, "track_rename_steps", track_rename_steps),
+    (3, "track_menu_steps", track_menu_steps),
+    (3, "group_steps", group_steps),
+    (3, "zoom_fit_steps", zoom_fit_steps),
+    (3, "key_change_steps", key_change_steps),
+    (3, "automation_lane_steps", automation_lane_steps),
+    (3, "shortcut_page_steps", shortcut_page_steps),
+    (3, "default_key_steps", default_key_steps),
+    (3, "more_key_steps", more_key_steps),
+    (3, "gesture_steps", gesture_steps),
+    (3, "menu_bar_steps", menu_bar_steps),
+    (3, "updates_steps", updates_steps),
+    (3, "general_settings_steps", general_settings_steps),
+    (3, "add_search_steps", add_search_steps),
+    (3, "live_import_steps", live_import_steps),
+    (3, "strip_steps", strip_steps),
+    (3, "returns_steps", returns_steps),
+    (3, "return_send_steps", return_send_steps),
+    (3, "plugin_folder_steps", plugin_folder_steps),
+    (3, "default_instrument_steps", default_instrument_steps),
+    (3, "settings_search_steps", settings_search_steps),
+    (3, "settings_help_steps", settings_help_steps),
+    (3, "privacy_steps", privacy_steps),
+    (3, "downloads_steps", downloads_steps),
+    (3, "recording_offset_steps", recording_offset_steps),
+    (3, "shortcut_steps", shortcut_steps),
+    (3, "velocity_lane_steps", velocity_lane_steps),
+    (3, "note_redraw_steps", note_redraw_steps),
+    (3, "header_monitor_steps", header_monitor_steps),
+    (3, "api_key_steps", api_key_steps),
+    (3, "live_convert_steps", live_convert_steps),
+    (3, "smart_fill_steps", smart_fill_steps),
+    (3, "ask_clip_steps", ask_clip_steps),
+    (3, "assistant_full_steps", assistant_full_steps),
+    (3, "rename_project_steps", rename_project_steps),
+    (3, "effect_select_steps", effect_select_steps),
+];
+
+/// The number of parts `--self-test-part` takes (1..=PARTS).
+pub const PARTS: usize = 3;
+
+/// Runs the self-test: every section, or with `part` (1..=[PARTS]) the shared setup (the window
+/// checks and [steps], which builds the project the other sections work on) and that part's
+/// sections only.
+pub fn start(app: &AppWindow, ctl: Ctl, part: Option<usize>) {
     APP.with(|a| *a.borrow_mut() = Some(app.as_weak()));
     let mut all = steps();
     // Auto snap follows the ruler step (two beats at the default zoom); the sections below that
@@ -19208,80 +19377,23 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
             Box::new(|_, ctl| ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::Quarter)),
         ),
     );
-    all.extend(synth_steps());
-    all.extend(midi_steps());
-    all.extend(recording_steps());
-    all.extend(platform_device_steps());
-    all.extend(builtin_device_steps());
-    all.extend(dynamics_device_steps());
-    all.extend(modulation_steps());
-    all.extend(builtin_each_steps());
-    all.extend(modulation_device_steps());
-    all.extend(custom_view_steps());
-    all.extend(limiter_family_steps());
-    all.extend(restoration_device_steps());
-    all.extend(analyzer_device_steps());
-    all.extend(sampler_steps());
-    all.extend(time_fx_steps());
-    all.extend(automation_steps());
-    all.extend(field_device_steps());
-    all.extend(step_sequencer_steps());
-    all.extend(pattern_library_steps());
-    all.extend(splitter_steps());
-    all.extend(chat_dock_steps());
-    all.extend(files_steps());
-    all.extend(browser_drop_steps());
-    all.extend(section_steps());
-    all.extend(minimap_steps());
-    all.extend(devminimap_steps());
-    all.extend(clip_menu_steps());
-    all.extend(clip_selection_steps());
-    all.extend(clip_fade_steps());
-    all.extend(clip_render_steps());
-    all.extend(bounce_in_place_steps());
-    all.extend(clip_render_plugin_steps());
-    all.extend(ruler_zoom_steps());
-    all.extend(snap_steps());
-    all.extend(tool_steps());
-    all.extend(zoom_slider_steps());
-    all.extend(transport_fields_steps());
-    all.extend(tempo_steps());
-    all.extend(track_rename_steps());
-    all.extend(track_menu_steps());
-    all.extend(group_steps());
-    all.extend(zoom_fit_steps());
-    all.extend(key_change_steps());
-    all.extend(automation_lane_steps());
-    all.extend(shortcut_page_steps());
-    all.extend(default_key_steps());
-    all.extend(more_key_steps());
-    all.extend(gesture_steps());
-    all.extend(menu_bar_steps());
-    all.extend(updates_steps());
-    all.extend(general_settings_steps());
-    all.extend(add_search_steps());
-    all.extend(live_import_steps());
-    all.extend(strip_steps());
-    all.extend(returns_steps());
-    all.extend(return_send_steps());
-    all.extend(plugin_folder_steps());
-    all.extend(default_instrument_steps());
-    all.extend(settings_search_steps());
-    all.extend(settings_help_steps());
-    all.extend(privacy_steps());
-    all.extend(downloads_steps());
-    all.extend(recording_offset_steps());
-    all.extend(shortcut_steps());
-    all.extend(velocity_lane_steps());
-    all.extend(note_redraw_steps());
-    all.extend(header_monitor_steps());
-    all.extend(api_key_steps());
-    all.extend(live_convert_steps());
-    all.extend(smart_fill_steps());
-    all.extend(ask_clip_steps());
-    all.extend(assistant_full_steps());
-    all.extend(rename_project_steps());
-    all.extend(effect_select_steps());
+    eprintln!("self-test: shared setup: {} steps, {} checks", all.len(), all.iter().filter(|s| matches!(s, Step::Check(..))).count());
+    let mut sections = 0;
+    for &(p, name, f) in SECTIONS {
+        if part.is_none_or(|k| k == p) {
+            let s = f();
+            eprintln!(
+                "self-test: section {name} (part {p}): {} steps, {} checks",
+                s.len(),
+                s.iter().filter(|s| matches!(s, Step::Check(..))).count()
+            );
+            all.extend(s);
+            sections += 1;
+        }
+    }
+    if let Some(k) = part {
+        eprintln!("self-test: part {k} of {PARTS}: the shared setup and {sections} of {} sections", SECTIONS.len());
+    }
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.
@@ -19316,6 +19428,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
             }),
         ),
     );
+    eprintln!("self-test: {} steps, {} checks", all.len(), all.iter().filter(|s| matches!(s, Step::Check(..))).count());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));
@@ -19344,7 +19457,8 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
                 crate::gpu::THROTTLED_FRAMES.load(std::sync::atomic::Ordering::Relaxed),
                 crate::gpu::MAX_FRAMES_IN_FLIGHT
             );
-            println!("self-test: {} / {n} checks passed{skipped}{note}", n - fails.get());
+            let of_part = part.map(|k| format!(" (part {k} of {PARTS})")).unwrap_or_default();
+            println!("self-test: {} / {n} checks passed{of_part}{skipped}{note}", n - fails.get());
             finish_run(fails.get());
             t2.stop();
             let _ = slint::quit_event_loop();
@@ -19856,4 +19970,28 @@ fn smart_fill_steps() -> Vec<Step> {
         ),
         DoC("smart fill: the pill again turns the mode off", Box::new(|_, ctl| ctl.borrow_mut().smart_fill_toggle())),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PARTS, SECTIONS};
+
+    /// Each part is one contiguous run of the sections in the full run's order, no part is
+    /// empty, and no section is listed twice: the parts together run exactly the full run's
+    /// sections, each once, each after the same predecessors within its part.
+    #[test]
+    fn parts_cover_the_sections_in_order() {
+        let parts: Vec<usize> = SECTIONS.iter().map(|s| s.0).collect();
+        assert!(parts.windows(2).all(|w| w[0] <= w[1]), "parts out of order: {parts:?}");
+        assert_eq!(parts.first(), Some(&1));
+        assert_eq!(parts.last(), Some(&PARTS));
+        for k in 1..=PARTS {
+            assert!(parts.contains(&k), "part {k} has no sections");
+        }
+        let mut names: Vec<&str> = SECTIONS.iter().map(|s| s.1).collect();
+        names.sort_unstable();
+        let n = names.len();
+        names.dedup();
+        assert_eq!(names.len(), n, "a section is listed twice");
+    }
 }

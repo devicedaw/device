@@ -35,8 +35,9 @@ parts its changes reach: documentation-only changes run none, engine-test-only c
 and anything CI can't classify runs everything (the rules are in docs/building.md).
 Its runners have no audio device, so the self-test runs with `--no-audio` (Linux also runs it against a headless
 PipeWire server) and anything that needs audio hardware has to be tested by hand. The Windows self-test takes about
-30 minutes under the software renderer, so pull requests that change the app run it only with the `windows-self-test` label; main and
-the nightly run always run it, and a failure fails the job. The engine is built with warnings as errors on
+50 minutes under the software renderer (CI runs it in three parts side by side), so pull requests that change the app run it only with
+the `windows-self-test` label; the nightly run and every release run it, and a failure fails the run. A failed nightly opens a
+`ci-nightly` issue. The engine is built with warnings as errors on
 clang, MSVC and GCC, so please build on more than one compiler if you can, or check the CI result.
 
 ## Pull requests

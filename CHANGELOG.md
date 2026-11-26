@@ -11,6 +11,11 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+### Fixed
+
+- A note played from the piano roll's keyboard no longer keeps sounding when the window loses the mouse while the key
+  is held (another window or a system dialog coming up, for example).
+
 ## [0.4.0] - 2026-11-25
 
 ### Added

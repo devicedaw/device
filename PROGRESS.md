@@ -979,3 +979,14 @@ right-clicking elsewhere in the marker row or the lane (warp on) opens an Insert
 and so does a click on an empty spot of the lane; a transient line still drags to move the transient, and a
 double-click in the lane still adds or removes one. Review states `review-warp-hover`, `review-warp-off`;
 self-test steps in the warp section; unit tests for the anchors and the neighbour clamp.
+
+### 2026-11-26: Windows self-test in parts, nightly alerts, release gate
+
+The Windows WARP self-test had grown to 44 to 55 minutes against a 60-minute limit, and the nightly failed in 6 of 12
+runs with nobody told. `--self-test-part 1..3` runs the shared setup and one contiguous third of the sections
+(`SECTIONS` in `selftest.rs`); CI runs the three parts side by side on the Windows app job's build, a failed scheduled
+CI or Security run opens or comments on a `ci-nightly` issue, and the release draft waits for the three parts on the
+packaged Windows build. The piano roll's keyboard preview ends on a cancelled press (the window lost the pointer), which
+had left the note sounding; the preview steps press and slide in one step so a pointer-exit between timer ticks cannot
+end the hold, and a new step checks the cancelled press.
+

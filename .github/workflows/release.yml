@@ -17,12 +17,14 @@ name: Release
 # then push the tag vX.Y.Z on that commit. The tag must be on main, match Cargo.toml and have a
 # changelog section, or nothing builds. The release is created as a draft whose notes are that
 # section followed by GitHub's generated list of pull requests; a pre-release version is
-# marked as a pre-release. Review the packages and publish it by hand.
+# marked as a pre-release. The draft waits for the full Windows self-test (WARP, in three parts)
+# on the packaged build. Review the packages and publish it by hand.
 #
 # Other runs build the packages without releasing anything (download them from the run's
 # artifacts):
 #   - Actions > Release > Run workflow, from any branch;
-#   - pull requests that change the packaging (this file, tools/release/, the bundle script).
+#   - pull requests that change the packaging (this file, tools/release/, the bundle script,
+#     the Windows self-test script).
 #
 # Signing: the macOS app is signed with a Developer ID and notarised only for release tags,
 # in the `macos-sign` job, which runs in the protected `release` environment. Its secrets are
@@ -41,6 +43,7 @@ on:
       - '.github/workflows/release.yml'
       - 'tools/release/**'
       - 'tools/macos-bundle.sh'
+      - 'tools/ci/self-test-windows.ps1'
   workflow_dispatch:
 
 permissions:
@@ -304,6 +307,21 @@ jobs:
           key: release-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: Build
         run: cargo build --release --locked -p dstudio-app
+      # For the Windows self-test (windows-self-test below): the app, the plugin scanner and the
+      # test plugins, which the exe finds at this build's absolute paths (the same workspace
+      # path on every Windows runner).
+      - name: Keep the build for the Windows self-test
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-self-test-build
+          path: |
+            target/release/device-studio.exe
+            target/release/build/dstudio-engine-*/out/build/dstudio_plugin_scanner.exe
+            target/release/build/dstudio-engine-*/out/build/test_plugins/
+            target/release/build/dstudio-engine/*/out/build/dstudio_plugin_scanner.exe
+            target/release/build/dstudio-engine/*/out/build/test_plugins/
+          if-no-files-found: error
+          retention-days: 3
       - name: Package installer and .zip
         shell: pwsh
         run: pwsh tools/release/package-windows.ps1 -Version "${{ needs.version.outputs.version }}" -OutDir dist
@@ -332,6 +350,44 @@ jobs:
             dist/*.exe
             dist/*.zip
           if-no-files-found: error
+
+  # The release gate for Windows: the full app self-test under WARP, in its three parts side by
+  # side (as CI's nightly run does), on the very build that was packaged. Pull requests and
+  # pushes to main run it only nightly or with a label, so a release commit has often not been
+  # through it; the draft release waits for all three parts.
+  windows-self-test:
+    name: Self-test Windows (part ${{ matrix.part }})
+    needs: windows
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3]
+    runs-on: windows-2025
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-self-test-build
+          path: target/release
+      - name: Self-test (WARP, part ${{ matrix.part }})
+        timeout-minutes: 40
+        shell: pwsh
+        env:
+          WGPU_BACKEND: dx12
+          SLINT_WGPU_CPU: '1' # WARP: no GPU on the runner
+          RUST_BACKTRACE: '1'
+        run: pwsh tools/ci/self-test-windows.ps1 -Exe target\release\device-studio.exe -Name windows-part${{ matrix.part }} -Part ${{ matrix.part }}
+      - name: Upload the self-test logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: selftest-windows-part${{ matrix.part }}
+          path: selftest-*.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
   linux:
     name: Package Linux (${{ matrix.arch }})
@@ -396,7 +452,7 @@ jobs:
 
   release:
     name: Draft release
-    needs: [version, macos-sign, windows, linux]
+    needs: [version, macos-sign, windows, windows-self-test, linux]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 15
