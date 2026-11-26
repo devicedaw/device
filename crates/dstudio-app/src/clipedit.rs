@@ -92,6 +92,8 @@ impl MenuAction {
             MenuAction::AutoLaneClose => "Close lane",
             MenuAction::TempoRamp => "Ramp to Next Point",
             MenuAction::TempoHold => "Hold Until Next Point",
+            MenuAction::InsertTransient => "Insert Transient",
+            MenuAction::DeleteTransient => "Delete Transient",
             MenuAction::SectionRename => "Rename…",
             MenuAction::SectionColor => "Color",
             MenuAction::SectionInsert => "Insert",
@@ -757,6 +759,7 @@ impl Controller {
         self.menu.count_in = false;
         self.menu.auto_lane = None;
         self.menu.tempo_point = None;
+        self.menu.ac_transient = None;
         self.ui_dirty = true;
     }
 
@@ -795,6 +798,7 @@ impl Controller {
             self.menu.count_in = false;
             self.menu.auto_lane = None;
             self.menu.tempo_point = None;
+            self.menu.ac_transient = None;
             self.ui_dirty = true;
         }
     }
@@ -832,6 +836,10 @@ impl Controller {
         }
         if self.menu.count_in {
             self.count_in_menu_activate(action);
+            return;
+        }
+        if let Some((clip, source)) = self.menu.ac_transient {
+            self.ac_transient_menu_activate(clip, source, action);
             return;
         }
         if let Some(i) = self.menu.tempo_point {

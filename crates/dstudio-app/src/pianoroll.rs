@@ -349,6 +349,10 @@ pub struct PrState {
     /// Audio clip editor value being typed in (double-click), and its clip.
     pub ac_edit: Option<(crate::warpedit::AcEdit, ClipId)>,
     pub ac_last_down: Option<(Instant, f32, f32)>,
+    /// Audio clip editor: the warp marker under the pointer (its source frame).
+    pub ac_hover: Option<u64>,
+    /// Audio clip editor: the transient tick under the pointer, shown as a ghost marker.
+    pub ac_ghost: Option<u64>,
     /// The rows the view last showed: when they change (Scale rows on or off, a new scale,
     /// undo or redo) the pitch in the middle of the view stays in place.
     pub rows: Rows,
@@ -391,6 +395,8 @@ impl Default for PrState {
             ac_drag: None,
             ac_edit: None,
             ac_last_down: None,
+            ac_hover: None,
+            ac_ghost: None,
             rows: Rows::ALL,
             hzoom: 0.0,
             hstart: 0.0,
@@ -421,11 +427,17 @@ pub struct PrScene<'a> {
     /// Ruler and grid steps for the editor's zoom.
     pub steps: RulerSteps,
     pub marquee: Option<(f32, f32, f32, f32)>,
-    /// Audio clip editor: no keyboard or pitch rows, gain dots on the clip handles.
+    /// Audio clip editor: no keyboard or pitch rows.
     pub audio: bool,
-    /// Warped audio clips: warp markers and transients (clip-relative beats).
+    /// Audio clips: warp markers and transients (clip-relative beats), shown in the handle
+    /// band's lower row; dimmed while warp is off.
     pub warp_markers: Vec<f64>,
     pub transients: Vec<f64>,
+    pub warp_on: bool,
+    /// The marker under the pointer or being dragged (index into `warp_markers`).
+    pub warp_hover: Option<usize>,
+    /// A ghost marker over the hovered transient tick (clip-relative beat).
+    pub warp_ghost: Option<f64>,
     /// Audio clip editor: the clip's waveform, one lane per channel (`Controller::clip_lanes`).
     pub wave: Option<(Vec<crate::peaks::Slot>, Vec<crate::peaks::WaveSeg>)>,
     /// The clip's scale while the footer's Scale switch is on: in-scale rows and keys are tinted.
@@ -438,6 +450,15 @@ pub struct PrScene<'a> {
     pub lit: u128,
     /// The velocity lane shows under the grid (from `view.h` to `view.h + VEL_H`).
     pub vel_lane: bool,
+}
+
+/// A warp marker pin centred on `x`: rounded top, pointed bottom, in the handle band's lower row.
+fn warp_pin(o: &mut Vec<RectInst>, px: &Px, x: f32, color: [f32; 4]) {
+    o.push(px.rounded(x - 3.8, 42.8, 7.6, 7.0, 2.5, color));
+    for r in 0..8 {
+        let ww = 7.6 * (1.0 - r as f32 / 8.5);
+        o.push(px.rect(x - ww / 2.0, 48.0 + r as f32 * 0.75, ww, 0.75, color));
+    }
 }
 
 fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
@@ -548,11 +569,13 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
         b.push(px.rect(x, GRID_Y, w - x, h - GRID_Y, rgba(BLACK, 0.2)));
     }
 
-    // ---- transients (warped audio clips): faint guides through the lane ----
-    for &t in &sc.transients {
-        let x = v.x_of(t);
-        if x >= gx && x <= w {
-            b.push(px.rect(x - 0.25, GRID_Y, 0.5, h - GRID_Y, rgba(WHITE, 0.2)));
+    // ---- transients (warped audio clips): faint guides through the lane, to drag ----
+    if sc.warp_on {
+        for &t in &sc.transients {
+            let x = v.x_of(t);
+            if x >= gx && x <= w {
+                b.push(px.rect(x - 0.25, GRID_Y, 0.5, h - GRID_Y, rgba(WHITE, 0.2)));
+            }
         }
     }
 
@@ -714,27 +737,37 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
             let hx = if left { x - 0.5 } else { x + 0.5 - ww };
             o.push(px.rect(hx, 29.5 + r as f32 * 0.5, ww, 0.5, rgba(WHITE, 1.0)));
         }
-        // Audio clips: a gain pin under each handle (rounded top, pointed bottom).
-        if sc.audio {
-            let pin = rgba(mix(sc.color, rgb(0x383c42), 0.5), 1.0);
-            o.push(px.rounded(x - 3.8, 42.8, 7.6, 7.0, 2.5, pin));
-            for r in 0..8 {
-                let ww = 7.6 * (1.0 - r as f32 / 8.5);
-                o.push(px.rect(x - ww / 2.0, 48.0 + r as f32 * 0.75, ww, 0.75, pin));
-            }
+    }
+    // ---- transients: short grey ticks at the bottom of the handle band's lower row ----
+    for &t in &sc.transients {
+        let x = v.x_of(t);
+        if x >= gx && x <= w {
+            o.push(px.rect(x - 0.75, GRID_Y - 5.5, 1.5, 5.0, rgba(rgb(0x616267), 1.0)));
         }
     }
-    // ---- warp markers: a flag in the upper handle band and a line through the lane ----
-    let marker = mix(sc.color, WHITE, 0.55);
-    for &m in &sc.warp_markers {
+    // ---- warp markers: a pin (rounded top, pointed bottom) in the lower row; the one under
+    // the pointer turns lighter and drops a line through the lane. Warp off: dimmed.
+    for (i, &m) in sc.warp_markers.iter().enumerate() {
         let x = v.x_of(m);
         if x < gx - 4.0 || x > w + 4.0 {
             continue;
         }
-        o.push(px.rect(x - 0.5, BAND_Y + 1.0, 1.0, h - BAND_Y - 1.0, rgba(marker, 0.7)));
-        for r in 0..10 {
-            let ww = 8.0 * (1.0 - r as f32 / 10.0);
-            o.push(px.rect(x - ww / 2.0, BAND_Y + 1.5 + r as f32, ww, 1.0, rgba(marker, 1.0)));
+        let hover = sc.warp_on && sc.warp_hover == Some(i);
+        if hover {
+            o.push(px.rect(x - 0.5, GRID_Y, 1.0, h - GRID_Y, rgba(rgb(0x8a8a8b), 1.0)));
+        }
+        let pin = match (sc.warp_on, hover) {
+            (true, true) => rgba(mix(sc.color, WHITE, 0.6), 1.0),
+            (true, false) => rgba(mix(sc.color, WHITE, 0.15), 1.0),
+            (false, _) => rgba(sc.color, 0.45),
+        };
+        warp_pin(o, &px, x, pin);
+    }
+    // A ghost marker (grey) over the hovered transient: a drag from it places a marker there.
+    if let Some(g) = sc.warp_ghost {
+        let x = v.x_of(g);
+        if x >= gx - 4.0 && x <= w + 4.0 {
+            warp_pin(o, &px, x, rgba(rgb(0x8a8a8b), 0.8));
         }
     }
     // ---- velocity lane: a stem and a cap per note, under the grid ----
@@ -1116,6 +1149,9 @@ impl Controller {
                 audio: true,
                 warp_markers: self.ac_marker_beats(),
                 transients: self.ac_transient_beats(),
+                warp_on: c.warp.enabled,
+                warp_hover: self.ac_marker_hover(),
+                warp_ghost: self.ac_ghost_beat(),
                 wave: self.clip_lanes(c),
                 key: None,
                 curves: Vec::new(),
@@ -1148,6 +1184,9 @@ impl Controller {
             audio: false,
             warp_markers: Vec::new(),
             transients: Vec::new(),
+            warp_on: false,
+            warp_hover: None,
+            warp_ghost: None,
             wave: None,
             key: self.pr_scale().filter(|(s, _)| s.highlight).map(|(_, k)| k),
             curves,
@@ -1283,6 +1322,10 @@ impl Controller {
     pub fn pr_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool) {
         if self.ac_clip().is_some() {
             self.ac_pointer(kind, x, y, shift, alt, command);
+            return;
+        }
+        // Hover, leave and right-press (3, 4, 5) only matter in the audio clip editor.
+        if kind >= 3 {
             return;
         }
         let in_lane = self.pr.vel_lane && y >= vel_lane_y(&self.pr_view());

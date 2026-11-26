@@ -84,6 +84,13 @@ wgpu.
 - **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. Clicking, drawing or dragging a
   note, or clicking a key, plays it through the track's instrument for its length (up to a second). A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
+- **Warping audio.** Turn Warp on in the audio clip editor and the clip follows the song's tempo; pick its speed,
+  original tempo, transpose and stretch mode in the toolbar. Warp markers sit under the clip's handles, one at each end
+  to start with: double-click the marker row to add one (it lands on a transient under the pointer), drag one to stretch
+  the audio either side (⇧ slides the audio under it instead), press a transient tick and drag to pin it, and
+  double-click or right-click a marker to remove it. A transient detected in the wrong place can be dragged to the
+  right one in the waveform, and double-clicking there adds or removes one. Hovering a transient shows a grey
+  ghost marker, and right-clicking the waveform or the marker row offers Insert Transient and Delete Transient.
 - **Printing clips.** Consolidate joins clips into one, Bounce to new track (⌘B, or Resample in the clip menu and the
   audio clip editor) renders a clip through its track's devices onto a new track, Bounce track in place prints a whole
   track to one audio clip and turns it into an audio track (its devices kept, switched off), and Export audio saves one clip as a

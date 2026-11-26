@@ -2156,6 +2156,9 @@ fn rendered_brightness(c: &Controller) -> Result<Option<f32>, String> {
     Ok(Some(rms(&mut l.windows(2).map(|w| w[1] - w[0])) / level))
 }
 
+/// The audio clip editor's warp marker row (`warpedit::MARKER_ROW`), in its middle.
+const MARKER_Y: f32 = 48.0;
+
 fn steps() -> Vec<Step> {
     use Step::*;
     // Values recorded by one check and compared by a later one.
@@ -2166,6 +2169,18 @@ fn steps() -> Vec<Step> {
     let rec_mute = Rc::new(Cell::new(false));
     let (press_beat, press_beat2) = {
         let b = Rc::new(Cell::new(0f64));
+        (b.clone(), b)
+    };
+    let (hover_ok, hover_ok2) = {
+        let b = Rc::new(Cell::new(false));
+        (b.clone(), b)
+    };
+    let (ghost_ok, ghost_ok2) = {
+        let b = Rc::new(Cell::new(false));
+        (b.clone(), b)
+    };
+    let (gap_beat, gap_beat2) = {
+        let b = Rc::new(Cell::new(0.0f64));
         (b.clone(), b)
     };
     let (rt1, rt2, rt3, rt4, rt5) = (rec_tracks.clone(), rec_tracks.clone(), rec_tracks.clone(), rec_tracks.clone(), rec_tracks.clone());
@@ -3026,27 +3041,198 @@ fn steps() -> Vec<Step> {
                 .ok_or(format!("bpm {} label {:?}", clip.warp.original_bpm, c.doc.undo_label()))
             }),
         ),
-        DoC(
-            "warp: click the handle band at beat 1 (add a warp marker)",
-            Box::new(|_, ctl| {
-                let x = ctl.borrow().pr_view().x_of(1.0);
-                let mut c = ctl.borrow_mut();
-                c.pr_pointer(0, x, 30.0, false, true, false);
-                c.pr_pointer(2, x, 30.0, false, true, false);
-            }),
-        ),
         Check(
-            "warp marker added (with the clip-start anchor)",
+            "a warped clip without markers shows two, at its start and its end",
             Box::new(|c, _| {
                 let clip = c.ac_clip().ok_or("no audio clip open")?;
                 let beats = c.ac_marker_beats();
-                (clip.warp.markers.len() == 2
-                    && beats.len() == 2
+                let len = c.project().clip_length_ticks(clip) as f64 / PPQ as f64;
+                (clip.warp.markers.is_empty() && beats.len() == 2 && beats[0].abs() < 1e-6 && (beats[1] - len).abs() < 1e-3)
+                    .then_some(())
+                    .ok_or(format!("markers {:?} beats {beats:?} len {len}", clip.warp.markers))
+            }),
+        ),
+        DoC(
+            "warp: single click in the marker row at beat 1 (changes nothing)",
+            Box::new(|_, ctl| {
+                let x = ctl.borrow().pr_view().x_of(1.0);
+                let mut c = ctl.borrow_mut();
+                c.pr.ac_last_down = None;
+                c.pr_pointer(0, x, MARKER_Y, false, true, false);
+                c.pr_pointer(2, x, MARKER_Y, false, true, false);
+            }),
+        ),
+        Check(
+            "a click adds no marker",
+            Box::new(|c, _| {
+                let clip = c.ac_clip().ok_or("no audio clip open")?;
+                (clip.warp.markers.is_empty() && c.doc.undo_label() == Some("Set original BPM")).then_some(()).ok_or(format!(
+                    "markers {:?} undo {:?}",
+                    clip.warp.markers,
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        DoC(
+            "warp: double-click the marker row at beat 1 (add a warp marker)",
+            Box::new(|_, ctl| {
+                let x = ctl.borrow().pr_view().x_of(1.0);
+                let mut c = ctl.borrow_mut();
+                c.pr.ac_last_down = None;
+                for _ in 0..2 {
+                    c.pr_pointer(0, x, MARKER_Y, false, true, false);
+                    c.pr_pointer(2, x, MARKER_Y, false, true, false);
+                }
+            }),
+        ),
+        Check(
+            "warp marker added, with the clip's start and end anchors",
+            Box::new(|c, _| {
+                let clip = c.ac_clip().ok_or("no audio clip open")?;
+                let beats = c.ac_marker_beats();
+                (clip.warp.markers.len() == 3
+                    && beats.len() == 3
                     && beats[0].abs() < 1e-6
                     && (beats[1] - 1.0).abs() < 0.05
                     && c.doc.undo_label() == Some("Add warp marker"))
                 .then_some(())
                 .ok_or(format!("markers {:?} beats {beats:?}", clip.warp.markers))
+            }),
+        ),
+        DoC(
+            "warp: hover the marker, then click it without dragging",
+            Box::new(move |_, ctl| {
+                let x = ctl.borrow().pr_view().x_of(1.0);
+                let mut c = ctl.borrow_mut();
+                c.pr.ac_last_down = None;
+                c.pr_pointer(3, x + 2.0, MARKER_Y, false, false, false);
+                hover_ok.set(c.ac_marker_hover() == Some(1));
+                c.pr_pointer(0, x, MARKER_Y, false, false, false);
+                c.pr_pointer(2, x, MARKER_Y, false, false, false);
+                c.pr_pointer(4, 0.0, 0.0, false, false, false);
+            }),
+        ),
+        Check(
+            "hover lit the marker; the click kept it",
+            Box::new(move |c, _| {
+                let clip = c.ac_clip().ok_or("no audio clip open")?;
+                (hover_ok2.get()
+                    && c.ac_marker_hover().is_none()
+                    && clip.warp.markers.len() == 3
+                    && c.doc.undo_label() == Some("Add warp marker"))
+                .then_some(())
+                .ok_or(format!("hover {} markers {:?} undo {:?}", hover_ok2.get(), clip.warp.markers, c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "warp: double-click the marker (remove it)",
+            Box::new(|_, ctl| {
+                let x = ctl.borrow().pr_view().x_of(1.0);
+                let mut c = ctl.borrow_mut();
+                c.pr.ac_last_down = None;
+                for _ in 0..2 {
+                    c.pr_pointer(0, x, MARKER_Y, false, false, false);
+                    c.pr_pointer(2, x, MARKER_Y, false, false, false);
+                }
+            }),
+        ),
+        Check(
+            "double-click removed the marker",
+            Box::new(|c, _| {
+                let clip = c.ac_clip().ok_or("no audio clip open")?;
+                (clip.warp.markers.len() == 2 && c.doc.undo_label() == Some("Remove warp marker")).then_some(()).ok_or(format!(
+                    "markers {:?} undo {:?}",
+                    clip.warp.markers,
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        DoC(
+            "warp: undo, then right-click the marker (remove it)",
+            Box::new(|_, ctl| {
+                ctl.borrow_mut().undo();
+                let x = ctl.borrow().pr_view().x_of(1.0);
+                ctl.borrow_mut().ac_context(x, MARKER_Y, 0.0, 0.0, (1440.0, 820.0));
+            }),
+        ),
+        Check(
+            "right-click removed the marker",
+            Box::new(|c, _| {
+                let clip = c.ac_clip().ok_or("no audio clip open")?;
+                (clip.warp.markers.len() == 2 && c.doc.undo_label() == Some("Remove warp marker")).then_some(()).ok_or(format!(
+                    "markers {:?} undo {:?}",
+                    clip.warp.markers,
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        DoC("warp: undo the removal", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check(
+            "the marker is back at beat 1",
+            Box::new(|c, _| {
+                let beats = c.ac_marker_beats();
+                (beats.len() == 3 && (beats[1] - 1.0).abs() < 0.05 && c.doc.undo_label() == Some("Add warp marker"))
+                    .then_some(())
+                    .ok_or(format!("beats {beats:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "warp: right-click the lane between transients, Insert Transient",
+            Box::new(move |_, ctl| {
+                // The middle of the widest gap between transients inside the clip's window.
+                let end = ctl.borrow().ac_marker_beats().last().copied().unwrap_or(2.0);
+                let mut beats = ctl.borrow().ac_transient_beats();
+                beats.extend([0.0, end]);
+                beats.retain(|b| (0.0..=end).contains(b));
+                beats.sort_by(f64::total_cmp);
+                let beat = beats.windows(2).max_by(|a, b| (a[1] - a[0]).total_cmp(&(b[1] - b[0]))).map_or(2.0, |w| 0.5 * (w[0] + w[1]));
+                gap_beat.set(beat);
+                let x = ctl.borrow().pr_view().x_of(beat);
+                let mut c = ctl.borrow_mut();
+                c.ac_context(x, 90.0, 0.0, 0.0, (1440.0, 820.0));
+                c.menu_activate(0);
+            }),
+        ),
+        Check(
+            "Insert Transient added one",
+            Box::new(|c, _| {
+                (c.doc.undo_label() == Some("Add transient") && !c.menu.open).then_some(()).ok_or(format!(
+                    "undo {:?} menu open {}",
+                    c.doc.undo_label(),
+                    c.menu.open
+                ))
+            }),
+        ),
+        DoC(
+            "warp: hover the new transient tick, then right-click it, Delete Transient",
+            Box::new(move |_, ctl| {
+                let x = ctl.borrow().pr_view().x_of(gap_beat2.get());
+                let mut c = ctl.borrow_mut();
+                c.pr_pointer(3, x, MARKER_Y, false, false, false);
+                ghost_ok.set(c.ac_ghost_beat().is_some_and(|b| (b - gap_beat2.get()).abs() < 0.05));
+                c.ac_context(x, MARKER_Y, 0.0, 0.0, (1440.0, 820.0));
+                c.menu_activate(1);
+            }),
+        ),
+        Check(
+            "a ghost marker showed and Delete Transient removed it",
+            Box::new(move |c, _| {
+                (ghost_ok2.get() && c.doc.undo_label() == Some("Remove transient")).then_some(()).ok_or(format!(
+                    "ghost {} undo {:?}",
+                    ghost_ok2.get(),
+                    c.doc.undo_label()
+                ))
+            }),
+        ),
+        DoC(
+            "warp: undo both transient edits",
+            Box::new(|_, ctl| {
+                for _ in 0..2 {
+                    let label = ctl.borrow().doc.undo_label().map(str::to_owned);
+                    if matches!(label.as_deref(), Some("Add transient" | "Remove transient")) {
+                        ctl.borrow_mut().undo();
+                    }
+                }
             }),
         ),
         Check(
@@ -3119,9 +3305,10 @@ fn steps() -> Vec<Step> {
                     (v.x_of(1.0), v.x_of(1.5))
                 };
                 let mut c = ctl.borrow_mut();
-                c.pr_pointer(0, x0, 30.0, true, false, false);
-                c.pr_pointer(1, x1, 30.0, false, false, false);
-                c.pr_pointer(2, x1, 30.0, true, false, false);
+                c.pr.ac_last_down = None;
+                c.pr_pointer(0, x0, MARKER_Y, true, false, false);
+                c.pr_pointer(1, x1, MARKER_Y, false, false, false);
+                c.pr_pointer(2, x1, MARKER_Y, true, false, false);
             }),
         ),
         Check(
@@ -3141,7 +3328,7 @@ fn steps() -> Vec<Step> {
             }),
         ),
         DoC(
-            "warp: three transients, Cmd-click the middle one in the handle band",
+            "warp: three transients, Cmd-drag the middle one a point right in the marker row",
             Box::new(|_, ctl| {
                 let mut c = ctl.borrow_mut();
                 let Some(clip) = c.ac_clip().cloned() else { return };
@@ -3153,8 +3340,10 @@ fn steps() -> Vec<Step> {
                 drop(c);
                 let x = ctl.borrow().ac_transient_beats().get(1).map(|&b| ctl.borrow().pr_view().x_of(b)).unwrap_or(0.0);
                 let mut c = ctl.borrow_mut();
-                c.pr_pointer(0, x, 30.0, false, false, true);
-                c.pr_pointer(2, x, 30.0, false, false, true);
+                c.pr.ac_last_down = None;
+                c.pr_pointer(0, x, MARKER_Y, false, false, true);
+                c.pr_pointer(1, x + 1.0, MARKER_Y, false, false, true);
+                c.pr_pointer(2, x + 1.0, MARKER_Y, false, false, true);
             }),
         ),
         Check(
@@ -3164,7 +3353,7 @@ fn steps() -> Vec<Step> {
                 let marks = c.ac_marker_beats();
                 let tr = c.ac_transient_beats();
                 let pinned = tr.iter().filter(|t| marks.iter().any(|m| (m - *t).abs() < 1e-6)).count();
-                (clip.warp.markers.len() == 5 && pinned == 3 && c.doc.undo_label() == Some("Add warp marker at transient"))
+                (clip.warp.markers.len() == 6 && pinned == 3 && c.doc.undo_label() == Some("Add warp marker at transient"))
                     .then_some(())
                     .ok_or(format!("markers {marks:?} transients {tr:?} undo {:?}", c.doc.undo_label()))
             }),
@@ -3181,9 +3370,10 @@ fn steps() -> Vec<Step> {
                     (v.x_of(b), v.x_of(b + 0.25))
                 };
                 let mut c = ctl.borrow_mut();
-                c.pr_pointer(0, x0, 30.0, false, false, false);
-                c.pr_pointer(1, x1, 30.0, false, false, false);
-                c.pr_pointer(2, x1, 30.0, false, false, false);
+                c.pr.ac_last_down = None;
+                c.pr_pointer(0, x0, MARKER_Y, false, false, false);
+                c.pr_pointer(1, x1, MARKER_Y, false, false, false);
+                c.pr_pointer(2, x1, MARKER_Y, false, false, false);
             }),
         ),
         Check(
@@ -3194,7 +3384,7 @@ fn steps() -> Vec<Step> {
                 let tr = c.ac_transient_beats();
                 let pinned = tr.first().is_some_and(|t| marks.iter().any(|m| (m - t).abs() < 1e-6));
                 let want = press_beat2.get() + 0.25;
-                (clip.warp.markers.len() == 3
+                (clip.warp.markers.len() == 4
                     && pinned
                     && (tr[0] - want).abs() < 0.02
                     && c.doc.undo_label() == Some("Add warp marker at transient"))
@@ -3207,7 +3397,7 @@ fn steps() -> Vec<Step> {
             "one undo removes the placed and dragged marker",
             Box::new(|c, _| {
                 let clip = c.ac_clip().ok_or("no audio clip open")?;
-                (clip.warp.markers.len() == 2).then_some(()).ok_or(format!("markers {:?}", clip.warp.markers))
+                (clip.warp.markers.len() == 3).then_some(()).ok_or(format!("markers {:?}", clip.warp.markers))
             }),
         ),
         DoC("warp: undo the transients", Box::new(|_, ctl| ctl.borrow_mut().undo())),

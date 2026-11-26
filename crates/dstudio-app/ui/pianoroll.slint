@@ -484,6 +484,17 @@ export component PianoRoll inherits Rectangle {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) {
                     Studio.pr-pointer(2, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta || e.modifiers.control);
                 }
+                // Audio clip editor: hover (3) lights the warp marker under the pointer; a
+                // right-press removes a marker or opens the Insert/Delete Transient menu.
+                if (Studio.ac-visible && e.kind == PointerEventKind.move && !self.pressed) {
+                    Studio.pr-pointer(3, self.mouse-x, self.mouse-y, false, false, false);
+                }
+                if (Studio.ac-visible && e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                    Studio.ac-context(self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y);
+                }
+            }
+            changed has-hover => {
+                if (!self.has-hover && Studio.ac-visible) { Studio.pr-pointer(4, 0, 0, false, false, false); }
             }
             moved => { Studio.pr-pointer(1, self.mouse-x, self.mouse-y, false, false, false); }
             scroll-event(e) => { Studio.pr-scroll(e.delta-x / 1px, e.delta-y / 1px, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.alt, e.modifiers.control); accept }

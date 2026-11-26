@@ -963,3 +963,19 @@ model sent every new note with id 0, which failed as "duplicate note id 0", so `
 id 0 (or none) after the largest id in their list. Tests: `builtin_devices_are_a_short_list_until_asked_for_parameters`
 and core `notes_sent_with_id_zero_get_their_own_ids`.
 
+
+### 2026-11-26: warp marker editing
+
+Spec 027. Warp markers in the audio clip editor now live in the handle band's lower row as pins in the clip colour,
+with the transients as grey ticks in the same row (the faint lines through the lane stay for editing them, and the
+pins under the clip handles are the clip's start and end markers rather than decoration). A warped clip without markers shows those
+two; the first edit makes them real (`warpedit::anchored`). Double-click adds a marker (on a transient under the
+pointer unless ⌥), drag moves one and stops at its neighbours, a press on a transient becomes a marker on the first
+move (one "Add warp marker at transient" step), and double-click or right-click removes one. A single click changes
+nothing. Hovering a marker lights it and drops a line through the lane (`pr-pointer` kinds 3 hover, 4 leave).
+Hovering a transient tick shows a grey ghost marker where a press would pin one. Right-clicking a marker removes it;
+right-clicking elsewhere in the marker row or the lane (warp on) opens an Insert Transient / Delete Transient menu
+(`ac-context`, `MenuAction::InsertTransient` and `DeleteTransient`). With warp off the markers stay, dimmed, and cannot be edited. A press in the upper row moves the playhead,
+and so does a click on an empty spot of the lane; a transient line still drags to move the transient, and a
+double-click in the lane still adds or removes one. Review states `review-warp-hover`, `review-warp-off`;
+self-test steps in the warp section; unit tests for the anchors and the neighbour clamp.

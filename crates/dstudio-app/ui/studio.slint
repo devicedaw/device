@@ -878,6 +878,7 @@ export global Studio {
     callback shape-reset();
     // ---- clip context menu + rename ----
     callback lane-context(length, length, length, length);  // lane x, y, window x, y
+    callback ac-context(length, length, length, length);    // clip editor right-press: x, y, window x, y
     in property <bool> menu-open;
     in property <length> menu-x;
     in property <length> menu-y;

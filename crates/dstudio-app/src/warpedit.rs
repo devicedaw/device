@@ -1,25 +1,27 @@
 //! Audio clip warping in the clip editor: the Speed / Warp / Mode menus, the
-//! Original BPM drag, warp markers (handle band) and transients (lane), and
-//! the onset analysis that feeds Drums / Auto slicing.
+//! Original BPM drag, warp markers and transients (the handle band's lower row),
+//! and the onset analysis that feeds Drums / Auto slicing.
 //!
 //! Every edit is one `Command::SetClipWarp` named as an undo step;
 //! drags commit live and coalesce into one step per gesture kind.
 
-use crate::controller::{Controller, JobResult};
+use crate::controller::{Controller, JobResult, MenuAction};
 use crate::peaks::{L0_FRAMES, Pyramid};
-use crate::pianoroll::{BAND_Y, GRID_Y, PrView};
+use crate::pianoroll::{GRID_Y, PrView};
 use dstudio_core::warp::{ClipWarp, SPEED_PRESETS, Transient, WarpMode};
 use dstudio_core::{AssetId, Clip, ClipId, Command};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(350);
-/// Warp-marker flags sit in the upper half of the handle band.
-const MARKER_BAND: (f32, f32) = (BAND_Y, 40.5);
+/// Warp markers sit in the lower row of the handle band (the upper row holds the clip's start
+/// and end flags).
+pub const MARKER_ROW: (f32, f32) = (40.5, GRID_Y);
 const MARKER_HIT: f32 = 6.0;
+/// Reach of a transient line in the lane, and of a transient tick in the marker row.
 const TRANSIENT_HIT: f32 = 4.0;
 const TRANSIENT_SNAP: f32 = 8.0;
-/// Undo label of a press on a transient: the marker it places and its drag.
+/// Undo label of a marker placed on a transient (and its drag).
 const PLACE_LABEL: &str = "Add warp marker at transient";
 
 #[derive(Debug, Clone)]
@@ -41,6 +43,13 @@ pub enum AcDragKind {
         slide: bool,
         placed: bool,
     },
+    /// Press on a transient: the first move pins it (`neighbours`: and the transients either
+    /// side) with a warp marker and drags that marker.
+    Pin {
+        source: u64,
+        neighbours: bool,
+    },
+    /// A transient line in the lane, dragged from `from` to `to` (committed on release).
     Transient {
         from: u64,
         to: u64,
@@ -109,12 +118,15 @@ impl<'a> Map<'a> {
     }
 }
 
-/// The clip's warp with a marker pinning the window's source start where it
-/// plays now, when there are no markers yet (the first marker added needs it).
+/// The clip's warp with markers pinning the window's source start and end where they play
+/// now, where no marker sits there yet: a warped clip always shows those two, and the first
+/// marker edit makes them real. Pins on the current mapping leave playback unchanged.
 fn anchored(c: &Clip, rate: f64) -> ClipWarp {
     let mut w = c.warp.clone();
-    if w.markers.is_empty() {
-        w.set_marker(c.source_offset, c.warp.beat_at(c.source_offset as f64, rate));
+    for s in [c.source_offset, c.source_offset + c.source_length] {
+        if !w.markers.iter().any(|k| k.source == s) {
+            w.set_marker(s, c.warp.beat_at(s as f64, rate));
+        }
     }
     w
 }
@@ -445,54 +457,233 @@ impl Controller {
         }
     }
 
-    /// Warp markers of the open audio clip (clip-relative beats; drag preview included).
-    pub fn ac_marker_beats(&self) -> Vec<f64> {
-        let Some(c) = self.ac_clip() else { return Vec::new() };
-        if !c.warp.enabled {
-            return Vec::new();
-        }
+    /// Clip-relative beat of every source frame in `sources` as the editor shows it: through the
+    /// warp map with warp on, 1:1 across the clip's content with warp off (mirrored when reversed).
+    fn editor_beats(&self, c: &Clip, sources: impl Iterator<Item = u64>) -> Vec<f64> {
         let rate = self.asset_rate(c.asset);
-        let m = Map::new(c, &c.warp, rate);
-        c.warp.markers.iter().map(|k| m.clip_beat(k.source as f64)).collect()
+        if c.warp.enabled {
+            let m = Map::new(c, &c.warp, rate);
+            return sources.map(|s| m.clip_beat(s as f64)).collect();
+        }
+        let len = self.project().content_length_ticks(c) as f64 / dstudio_core::PPQ as f64;
+        let n = c.source_length.max(1) as f64;
+        sources
+            .map(|s| {
+                let t = (s as f64 - c.source_offset as f64) / n;
+                if c.warp.reverse { (1.0 - t) * len } else { t * len }
+            })
+            .collect()
     }
 
-    /// Transients of the open audio clip (clip-relative beats; drag preview included).
+    /// Warp markers of the open audio clip, as shown: a clip without markers shows the two that
+    /// pin its start and its end (the first edit makes them real).
+    fn shown_markers(&self, c: &Clip) -> Vec<u64> {
+        let rate = self.asset_rate(c.asset);
+        anchored(c, rate).markers.iter().map(|k| k.source).collect()
+    }
+
+    /// Warp markers of the open audio clip (clip-relative beats). Shown with warp off too
+    /// (dimmed, not editable).
+    pub fn ac_marker_beats(&self) -> Vec<f64> {
+        let Some(c) = self.ac_clip() else { return Vec::new() };
+        let shown = self.shown_markers(c);
+        self.editor_beats(c, shown.into_iter())
+    }
+
+    /// The marker under the pointer, or the one being dragged: its index in `ac_marker_beats`.
+    pub fn ac_marker_hover(&self) -> Option<usize> {
+        let c = self.ac_clip()?;
+        if !c.warp.enabled {
+            return None;
+        }
+        let source = match &self.pr.ac_drag {
+            Some(AcDrag { kind: AcDragKind::Marker { source, .. }, .. }) => *source,
+            Some(_) => return None,
+            None => self.pr.ac_hover?,
+        };
+        self.shown_markers(c).iter().position(|&s| s == source)
+    }
+
+    /// Transients of the open audio clip (clip-relative beats), inside the clip's window.
     pub fn ac_transient_beats(&self) -> Vec<f64> {
         let Some(c) = self.ac_clip() else { return Vec::new() };
-        if !c.warp.enabled {
-            return Vec::new();
-        }
         let rate = self.asset_rate(c.asset);
-        let m = Map::new(c, &c.warp, rate);
+        let end = c.source_offset + c.source_length;
         let (from, to) = match self.pr.ac_drag {
             Some(AcDrag { kind: AcDragKind::Transient { from, to }, .. }) => (Some(from), to),
             _ => (None, 0),
         };
-        let end = c.source_offset + c.source_length;
-        c.warp
+        let tr: Vec<u64> = c
+            .warp
             .transients(self.detected_transients(c.asset), rate)
             .iter()
             .map(|t| if Some(t.source) == from { to } else { t.source })
             .filter(|&s| s >= c.source_offset && s < end)
-            .map(|s| m.clip_beat(s as f64))
-            .collect()
+            .collect();
+        self.editor_beats(c, tr.into_iter())
     }
 
-    /// Pointer in the audio clip editor (kind 0 down, 1 move, 2 up).
-    /// Handle band (upper half): a press on a transient pins it with a warp
-    /// marker and drags that marker on (one undo step); a click
-    /// elsewhere adds a marker; a marker drags, and a click on it without
-    /// dragging removes it. Lane: drag a transient to move it, double-click to
-    /// add or remove one. Ruler: move the playhead. Markers and transients need
-    /// warp on. Modifiers: `shift` slides the audio under a dragged marker or,
-    /// on a transient, moves the transient; `alt` ignores transients;
+    /// A press in the lane on a warped clip: on a transient line, a double-click removes the
+    /// transient and a press starts dragging it; elsewhere a double-click adds one. Returns false
+    /// when the press is left to move the playhead.
+    fn lane_transient_press(&mut self, c: &Clip, view: PrView, x: f32, double: bool) -> bool {
+        let rate = self.asset_rate(c.asset);
+        let m = Map::new(c, &c.warp, rate);
+        let detected = self.detected_transients(c.asset).to_vec();
+        let dist = |s: u64| (view.x_of(m.clip_beat(s as f64)) - x).abs();
+        let hit = c
+            .warp
+            .transients(&detected, rate)
+            .iter()
+            .map(|t| t.source)
+            .filter(|&s| dist(s) <= TRANSIENT_HIT)
+            .min_by(|&a, &b| dist(a).total_cmp(&dist(b)));
+        let mut w = c.warp.clone();
+        match (double, hit) {
+            (true, Some(s)) => {
+                if w.remove_transient(&detected, s, rate) {
+                    self.set_clip_warp(c.id, w, "Remove transient");
+                }
+            }
+            (true, None) => {
+                let s = m.source(view.beat_at(x)).round().max(0.0) as u64;
+                if w.add_transient(&detected, s, rate) {
+                    self.set_clip_warp(c.id, w, "Add transient");
+                }
+            }
+            (false, Some(s)) => {
+                self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: w, kind: AcDragKind::Transient { from: s, to: s }, moved: false });
+            }
+            (false, None) => return false,
+        }
+        true
+    }
+
+    /// The shown marker nearest `x`, within `MARKER_HIT`.
+    fn marker_at(&self, c: &Clip, view: &PrView, x: f32) -> Option<u64> {
+        let shown = self.shown_markers(c);
+        let beats = self.editor_beats(c, shown.iter().copied());
+        shown
+            .iter()
+            .zip(beats)
+            .map(|(&s, b)| (s, (view.x_of(b) - x).abs()))
+            .filter(|&(_, d)| d <= MARKER_HIT)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(s, _)| s)
+    }
+
+    /// Remove the marker at `source` (a clip without markers first gets its two anchors).
+    fn remove_marker_at(&mut self, c: &Clip, source: u64) {
+        let mut w = anchored(c, self.asset_rate(c.asset));
+        if let Some(i) = w.markers.iter().position(|k| k.source == source)
+            && w.remove_marker(i)
+        {
+            self.set_clip_warp(c.id, w, "Remove warp marker");
+        }
+    }
+
+    /// The transient nearest `x` within `TRANSIENT_HIT` (warp map positions).
+    fn transient_at(&self, c: &Clip, view: &PrView, x: f32) -> Option<u64> {
+        let rate = self.asset_rate(c.asset);
+        let m = Map::new(c, &c.warp, rate);
+        let dist = |s: u64| (view.x_of(m.clip_beat(s as f64)) - x).abs();
+        let end = c.source_offset + c.source_length;
+        c.warp
+            .transients(self.detected_transients(c.asset), rate)
+            .iter()
+            .map(|t| t.source)
+            .filter(|&s| s >= c.source_offset && s < end && dist(s) <= TRANSIENT_HIT)
+            .min_by(|&a, &b| dist(a).total_cmp(&dist(b)))
+    }
+
+    /// The ghost marker over a hovered transient tick (clip-relative beat).
+    pub fn ac_ghost_beat(&self) -> Option<f64> {
+        let c = self.ac_clip()?;
+        let s = self.pr.ac_ghost.filter(|_| c.warp.enabled && self.pr.ac_drag.is_none())?;
+        self.editor_beats(c, std::iter::once(s)).first().copied()
+    }
+
+    /// Right-click in the audio clip editor at (x, y), window point (wx, wy). On a warp marker
+    /// it removes the marker. Elsewhere in the marker row or the lane of a warped clip it opens
+    /// the transient menu: Insert Transient at the pointer, Delete Transient on one.
+    pub fn ac_context(&mut self, x: f32, y: f32, wx: f32, wy: f32, win: (f32, f32)) {
+        let Some(c) = self.ac_clip().cloned() else { return };
+        self.menu_close();
+        self.doc.seal_coalescing();
+        self.ui_dirty = true;
+        if !c.warp.enabled || y < MARKER_ROW.0 {
+            return;
+        }
+        let view = self.pr_view();
+        if y < MARKER_ROW.1
+            && let Some(s) = self.marker_at(&c, &view, x)
+        {
+            self.pr.ac_hover = None;
+            self.remove_marker_at(&c, s);
+            return;
+        }
+        let rate = self.asset_rate(c.asset);
+        let at = Map::new(&c, &c.warp, rate).source(view.beat_at(x)).round().max(0.0) as u64;
+        let hit = self.transient_at(&c, &view, x);
+        let inside = at >= c.source_offset && at < c.source_offset + c.source_length;
+        self.open_menu(
+            vec![(MenuAction::InsertTransient, hit.is_none() && inside), (MenuAction::DeleteTransient, hit.is_some())],
+            wx,
+            wy,
+            win,
+        );
+        self.menu.ac_transient = Some((c.id, hit.unwrap_or(at)));
+    }
+
+    /// The transient menu's entries: insert one at `source`, or delete the one there.
+    pub fn ac_transient_menu_activate(&mut self, clip: ClipId, source: u64, action: MenuAction) {
+        self.menu_close();
+        let Some(c) = self.ac_clip().filter(|c| c.id == clip).cloned() else { return };
+        let rate = self.asset_rate(c.asset);
+        let detected = self.detected_transients(c.asset).to_vec();
+        let mut w = c.warp.clone();
+        let label = match action {
+            MenuAction::InsertTransient if w.add_transient(&detected, source, rate) => "Add transient",
+            MenuAction::DeleteTransient if w.remove_transient(&detected, source, rate) => "Remove transient",
+            _ => return,
+        };
+        self.set_clip_warp(c.id, w, label);
+    }
+
+    /// Pointer in the audio clip editor. `kind`: 0 press, 1 move (pressed), 2 release, 3 hover,
+    /// 4 the pointer left. Right-clicks go to `ac_context`.
+    ///
+    /// The handle band's lower row holds the warp markers (warp on): double-click adds one (on a
+    /// transient when one is under the pointer), a drag moves one between its neighbours, a
+    /// double-click or a right-click removes one. A press on a transient (a ghost marker shows on
+    /// hover) and a drag places a marker
+    /// on the transient and drags it (one undo step); a click alone changes nothing. In the lane
+    /// (warp on) a transient line drags to move the transient, and a double-click adds or
+    /// removes one. Ruler, loop bar (outside the loop), the upper handle row and the rest of
+    /// the lane move the playhead.
+    /// Modifiers: `shift` slides the audio under a dragged marker, `alt` ignores transients,
     /// `command` (Cmd or Ctrl) on a transient also pins its two neighbours.
     pub fn ac_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool) {
         let Some(c) = self.ac_clip().cloned() else { return };
-        self.ui_dirty = true;
         let rate = self.asset_rate(c.asset);
+        let in_row = (MARKER_ROW.0..MARKER_ROW.1).contains(&y);
         match kind {
+            3 | 4 => {
+                if self.pr.ac_drag.is_some() {
+                    return;
+                }
+                let view = self.pr_view();
+                let hover = if kind == 3 && in_row && c.warp.enabled { self.marker_at(&c, &view, x) } else { None };
+                // Over a transient tick (no marker there): a ghost marker shows what a drag would place.
+                let ghost = if kind == 3 && in_row && c.warp.enabled && hover.is_none() { self.transient_at(&c, &view, x) } else { None };
+                if (hover, ghost) != (self.pr.ac_hover, self.pr.ac_ghost) {
+                    self.pr.ac_hover = hover;
+                    self.pr.ac_ghost = ghost;
+                    self.ui_dirty = true;
+                }
+            }
             0 => {
+                self.ui_dirty = true;
                 self.menu_close();
                 // Each press is its own undo step; only its drag coalesces.
                 self.doc.seal_coalescing();
@@ -500,124 +691,100 @@ impl Controller {
                 let double =
                     self.pr.ac_last_down.is_some_and(|(t, lx, ly)| now - t < DOUBLE_CLICK && (lx - x).abs() < 4.0 && (ly - y).abs() < 4.0);
                 self.pr.ac_last_down = Some((now, x, y));
+                self.pr.ac_ghost = None;
                 let view = self.pr_view();
                 if self.pr_loop_press(&view, x, y, (view.beat_at(x) * dstudio_core::PPQ as f64).round() as dstudio_core::Ticks) {
                     return;
                 }
-                if y < BAND_Y {
+                if y >= GRID_Y && c.warp.enabled && self.lane_transient_press(&c, view, x, double) {
+                    return;
+                }
+                if !in_row {
                     self.seek_beats((c.start as f64 / dstudio_core::PPQ as f64) + view.beat_at(x).max(0.0));
                     return;
                 }
                 if !c.warp.enabled {
                     return;
                 }
-                let m = Map::new(&c, &c.warp, rate);
-                let detected = self.detected_transients(c.asset).to_vec();
-                let transients = c.warp.transients(&detected, rate);
-                let near = |source: u64, tol: f32| (view.x_of(m.clip_beat(source as f64)) - x).abs() <= tol;
-                if (MARKER_BAND.0..MARKER_BAND.1).contains(&y) {
-                    if let Some(k) = c.warp.markers.iter().filter(|k| near(k.source, MARKER_HIT)).min_by(|a, b| {
-                        let d = |s: u64| (view.x_of(m.clip_beat(s as f64)) - x).abs();
-                        d(a.source).total_cmp(&d(b.source))
-                    }) {
-                        self.pr.ac_drag = Some(AcDrag {
-                            view,
-                            clip: c.id,
-                            warp: c.warp.clone(),
-                            kind: AcDragKind::Marker { source: k.source, slide: shift, placed: false },
-                            moved: false,
-                        });
-                        return;
-                    }
-                    let tr: Vec<u64> = transients.iter().map(|t| t.source).collect();
-                    let hit = if alt {
-                        None
+                if let Some(s) = self.marker_at(&c, &view, x) {
+                    if double {
+                        self.pr.ac_hover = None;
+                        self.remove_marker_at(&c, s);
                     } else {
-                        (0..tr.len())
-                            .filter(|&i| near(tr[i], TRANSIENT_SNAP))
-                            .min_by_key(|&i| (view.x_of(m.clip_beat(tr[i] as f64)) - x).abs() as i64)
-                    };
-                    if let Some(i) = hit {
-                        let s = tr[i];
-                        if shift {
-                            self.pr.ac_drag = Some(AcDrag {
-                                view,
-                                clip: c.id,
-                                warp: c.warp.clone(),
-                                kind: AcDragKind::Transient { from: s, to: s },
-                                moved: false,
-                            });
-                            return;
-                        }
-                        // Pin it where it plays now (Cmd: with its neighbours) and drag it on: one undo step.
-                        let mut w = anchored(&c, rate);
-                        let inside = |s: u64| s > c.source_offset && s < c.source_offset + c.source_length;
-                        let picks = if command { &tr[i.saturating_sub(1)..(i + 2).min(tr.len())] } else { &tr[i..=i] };
-                        let mut added = false;
-                        for &p in picks.iter().filter(|&&p| inside(p)) {
-                            added |= w.set_marker(p, c.warp.beat_at(p as f64, rate));
-                        }
-                        if !added || !w.markers.iter().any(|k| k.source == s) {
-                            return;
-                        }
-                        self.set_clip_warp(c.id, w.clone(), PLACE_LABEL);
+                        let warp = anchored(&c, rate);
                         self.pr.ac_drag = Some(AcDrag {
                             view,
                             clip: c.id,
-                            warp: w,
-                            kind: AcDragKind::Marker { source: s, slide: false, placed: true },
+                            warp,
+                            kind: AcDragKind::Marker { source: s, slide: shift, placed: false },
                             moved: false,
                         });
-                        return;
-                    }
-                    let source = m.source(view.beat_at(x)).round().max(0.0) as u64;
-                    if source <= c.source_offset || source >= c.source_offset + c.source_length {
-                        return;
-                    }
-                    let mut w = anchored(&c, rate);
-                    if w.set_marker(source, c.warp.beat_at(source as f64, rate)) {
-                        self.set_clip_warp(c.id, w, "Add warp marker");
                     }
                     return;
                 }
-                if y < GRID_Y {
-                    return;
-                }
-                let hit = transients
-                    .iter()
-                    .map(|t| t.source)
-                    .filter(|&s| near(s, TRANSIENT_HIT))
-                    .min_by_key(|&s| (view.x_of(m.clip_beat(s as f64)) - x).abs() as i64);
-                let mut w = c.warp.clone();
-                match (double, hit) {
-                    (true, Some(s)) => {
-                        if w.remove_transient(&detected, s, rate) {
-                            self.set_clip_warp(c.id, w, "Remove transient");
-                        }
-                    }
-                    (true, None) => {
-                        let s = m.source(view.beat_at(x)).round().max(0.0) as u64;
-                        if w.add_transient(&detected, s, rate) {
-                            self.set_clip_warp(c.id, w, "Add transient");
-                        }
-                    }
-                    (false, Some(s)) => {
+                let m = Map::new(&c, &c.warp, rate);
+                let tr: Vec<u64> = c.warp.transients(self.detected_transients(c.asset), rate).iter().map(|t| t.source).collect();
+                let dist = |s: u64| (view.x_of(m.clip_beat(s as f64)) - x).abs();
+                let hit = if alt {
+                    None
+                } else {
+                    (0..tr.len()).filter(|&i| dist(tr[i]) <= TRANSIENT_SNAP).min_by(|&a, &b| dist(tr[a]).total_cmp(&dist(tr[b])))
+                };
+                let window = c.source_offset..=c.source_offset + c.source_length;
+                match (hit, double) {
+                    (Some(i), false) => {
                         self.pr.ac_drag = Some(AcDrag {
                             view,
                             clip: c.id,
                             warp: c.warp.clone(),
-                            kind: AcDragKind::Transient { from: s, to: s },
+                            kind: AcDragKind::Pin { source: tr[i], neighbours: command },
                             moved: false,
                         });
                     }
-                    (false, None) => {}
+                    (Some(i), true) => {
+                        let s = tr[i];
+                        let mut w = anchored(&c, rate);
+                        if window.contains(&s) && w.set_marker(s, c.warp.beat_at(s as f64, rate)) {
+                            self.set_clip_warp(c.id, w, PLACE_LABEL);
+                        }
+                    }
+                    (None, true) => {
+                        let s = m.source(view.beat_at(x)).round().max(0.0) as u64;
+                        let mut w = anchored(&c, rate);
+                        if window.contains(&s) && w.set_marker(s, c.warp.beat_at(s as f64, rate)) {
+                            self.set_clip_warp(c.id, w, "Add warp marker");
+                        }
+                    }
+                    (None, false) => {}
                 }
             }
             1 => {
                 if matches!(self.pr.drag, Some(crate::pianoroll::PrDrag::Loop { .. })) {
+                    self.ui_dirty = true;
                     let raw = (self.pr_view().beat_at(x) * dstudio_core::PPQ as f64).round() as dstudio_core::Ticks;
                     self.pr_loop_move(raw);
                     return;
+                }
+                let Some(d) = self.pr.ac_drag.as_mut() else { return };
+                self.ui_dirty = true;
+                // A drag from a transient: pin it where it plays now (Cmd: with its neighbours)
+                // and drag that marker on.
+                if let AcDragKind::Pin { source, neighbours } = d.kind {
+                    let tr: Vec<u64> = c.warp.transients(self.detected_transients(c.asset), rate).iter().map(|t| t.source).collect();
+                    let Some(i) = tr.iter().position(|&t| t == source) else { return };
+                    let mut w = anchored(&c, rate);
+                    let inside = |s: u64| s > c.source_offset && s < c.source_offset + c.source_length;
+                    let picks = if neighbours { &tr[i.saturating_sub(1)..(i + 2).min(tr.len())] } else { &tr[i..=i] };
+                    for &p in picks.iter().filter(|&&p| inside(p)) {
+                        w.set_marker(p, c.warp.beat_at(p as f64, rate));
+                    }
+                    let Some(d) = self.pr.ac_drag.as_mut() else { return };
+                    if !w.markers.iter().any(|k| k.source == source) {
+                        self.pr.ac_drag = None;
+                        return;
+                    }
+                    d.warp = w;
+                    d.kind = AcDragKind::Marker { source, slide: false, placed: true };
                 }
                 let Some(d) = self.pr.ac_drag.as_mut() else { return };
                 let m = Map::new(&c, &d.warp, rate);
@@ -648,7 +815,8 @@ impl Controller {
                     }
                     AcDragKind::Marker { source, slide: false, placed } => {
                         let mut w = d.warp.clone();
-                        if !w.set_marker(source, m.original_beat(beat)) {
+                        let Some(beat) = clamp_between_neighbours(&w, source, m.original_beat(beat)) else { return };
+                        if !w.set_marker(source, beat) {
                             return;
                         }
                         d.moved = true;
@@ -661,10 +829,11 @@ impl Controller {
                         d.moved = d.moved || to != from;
                         d.kind = AcDragKind::Transient { from, to };
                     }
-                    AcDragKind::Bpm { .. } | AcDragKind::Transpose { .. } => {}
+                    AcDragKind::Pin { .. } | AcDragKind::Bpm { .. } | AcDragKind::Transpose { .. } => {}
                 }
             }
             _ => {
+                self.ui_dirty = true;
                 if let Some(crate::pianoroll::PrDrag::Loop { orig, cur, .. }) = self.pr.drag.take() {
                     if let Some(l) = c.clip_loop.filter(|_| orig != cur) {
                         self.execute(Command::SetClipLoop {
@@ -674,21 +843,14 @@ impl Controller {
                     }
                     return;
                 }
-                let Some(d) = self.pr.ac_drag.take() else { return };
-                match d.kind {
-                    AcDragKind::Marker { source, placed: false, .. } if !d.moved => {
-                        let mut w = d.warp.clone();
-                        if let Some(i) = w.markers.iter().position(|k| k.source == source)
-                            && w.remove_marker(i)
-                        {
-                            self.set_clip_warp(d.clip, w, "Remove warp marker");
-                        }
-                    }
-                    AcDragKind::Transient { from, to } if d.moved => {
+                // A click without a drag changes nothing: markers are removed by double- or right-click.
+                match self.pr.ac_drag.take() {
+                    Some(AcDrag { kind: AcDragKind::Marker { source, .. }, .. }) => self.pr.ac_hover = Some(source),
+                    Some(AcDrag { kind: AcDragKind::Transient { from, to }, moved: true, clip, warp, .. }) => {
                         let detected = self.detected_transients(c.asset).to_vec();
-                        let mut w = d.warp.clone();
+                        let mut w = warp;
                         if w.move_transient(&detected, from, to, rate) {
-                            self.set_clip_warp(d.clip, w, "Move transient");
+                            self.set_clip_warp(clip, w, "Move transient");
                         }
                     }
                     _ => {}
@@ -696,6 +858,15 @@ impl Controller {
             }
         }
     }
+}
+
+/// `beat` kept strictly between the beats of the markers either side of `source` in `w`, so a
+/// dragged marker stops at its neighbours. `None` when there is no room left between them.
+fn clamp_between_neighbours(w: &ClipWarp, source: u64, beat: f64) -> Option<f64> {
+    const GAP: f64 = 1e-3;
+    let lo = w.markers.iter().rev().find(|k| k.source < source).map_or(f64::NEG_INFINITY, |k| k.beat + GAP);
+    let hi = w.markers.iter().find(|k| k.source > source).map_or(f64::INFINITY, |k| k.beat - GAP);
+    (lo <= hi && beat.is_finite()).then(|| beat.clamp(lo, hi))
 }
 
 #[cfg(test)]
@@ -745,12 +916,27 @@ mod tests {
     }
 
     #[test]
-    fn markers_at_transients_anchor_a_reversed_clip_at_its_source_start() {
+    fn a_clip_without_markers_is_anchored_at_its_window_start_and_end() {
         let c = reversed_clip(&[]);
         let mut w = super::anchored(&c, 48_000.0);
-        assert_eq!(w.markers.len(), 1);
-        assert_eq!((w.markers[0].source, w.markers[0].beat), (0, 0.0));
+        let pins: Vec<(u64, f64)> = w.markers.iter().map(|k| (k.source, k.beat)).collect();
+        assert_eq!(pins, vec![(0, 0.0), (4 * 48_000, 8.0)]);
         assert!(w.set_marker(24_000, c.warp.beat_at(24_000.0, 48_000.0)), "an interior transient can be pinned");
+        // Pinning where the audio plays now changes nothing.
+        for s in [0.0, 24_000.0, 96_000.0, 191_999.0] {
+            assert!((w.beat_at(s, 48_000.0) - c.warp.beat_at(s, 48_000.0)).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn a_dragged_marker_stops_at_its_neighbours() {
+        let c = reversed_clip(&[(0, 0.0), (96_000, 4.0), (192_000, 8.0)]);
+        let clamp = |b: f64| super::clamp_between_neighbours(&c.warp, 96_000, b).unwrap();
+        assert_eq!(clamp(5.0), 5.0);
+        assert!(clamp(9.0) < 8.0 && clamp(9.0) > 7.99, "stops just before the next marker");
+        assert!(clamp(-3.0) > 0.0 && clamp(-3.0) < 0.01, "stops just after the previous marker");
+        let first = super::clamp_between_neighbours(&c.warp, 0, -2.0).unwrap();
+        assert_eq!(first, -2.0, "the first marker is free on its outer side");
     }
 
     #[test]
