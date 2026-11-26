@@ -184,6 +184,10 @@ struct Args {
     reverse_state: bool,
     /// review-warp-stereo: review-warp from a stereo file (hits on the left only).
     stereo_state: bool,
+    /// review-warp-hover: review-warp with the pointer over the second warp marker.
+    warp_hover: bool,
+    /// review-warp-off: review-warp with warp switched off afterwards (dimmed markers).
+    warp_off: bool,
     /// reference-synth: Instrument track selected, Devices tab, test-state synth preset.
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
@@ -528,7 +532,13 @@ fn parse_args() -> Result<Args, String> {
                     a.audio_clip_state = true;
                     a.resample_state = true;
                 }
-                s @ ("review-warp" | "review-reverse" | "review-warp-stereo" | "review-audio-clip-loop" | "review-audio-loop-drag") => {
+                s @ ("review-warp"
+                | "review-warp-hover"
+                | "review-warp-off"
+                | "review-reverse"
+                | "review-warp-stereo"
+                | "review-audio-clip-loop"
+                | "review-audio-loop-drag") => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                     a.warp_state = true;
@@ -536,6 +546,8 @@ fn parse_args() -> Result<Args, String> {
                     a.audio_loop_drag = s == "review-audio-loop-drag";
                     a.reverse_state = s == "review-reverse";
                     a.stereo_state = s == "review-warp-stereo";
+                    a.warp_hover = s == "review-warp-hover";
+                    a.warp_off = s == "review-warp-off";
                 }
                 "reference-synth" => {
                     a.reference_default = true;
@@ -3933,6 +3945,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             a.window().request_redraw();
         });
     }
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_ac_context(move |x, y, wx, wy| {
+            let Some(a) = aw.upgrade() else { return };
+            let scale = a.window().scale_factor();
+            let sz = a.window().size();
+            ctl.borrow_mut().ac_context(x, y, wx, wy, (sz.width as f32 / scale, sz.height as f32 / scale));
+            ctl.borrow_mut().update_ui(&a);
+            a.window().request_redraw();
+        });
+    }
     // ---- plugin devices (src/devices.rs) ----
     on!(on_browser_tab_select, |c, i: i32| c.browser_tab(i.max(0) as usize));
     on!(on_browser_search_edited, |c, t: slint::SharedString| c.browser_search(t.as_str()));
@@ -4528,6 +4552,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut loop_drag = args.audio_loop_drag;
         let mut menu = args.clip_menu.filter(|_| warp);
         let mut edit = args.ac_edit.filter(|_| warp);
+        let mut warp_hover = args.warp_hover;
+        let mut warp_off = args.warp_off;
+        // Warps the clip once (review-warp-off switches it off again afterwards).
+        let mut warped = false;
         // Selects the clip once, after the import lands; later tab changes are the user's.
         let done = std::cell::Cell::new(false);
         audio_clip_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
@@ -4541,7 +4569,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 resample = false;
                 c.resample_open_clip();
             }
-            if let Some(cl) = clip.filter(|cl| warp && !cl.warp.enabled) {
+            if let Some(cl) = clip.filter(|cl| warp && !warped && !cl.warp.enabled) {
+                warped = true;
                 let mut w = dstudio_core::ClipWarp {
                     enabled: true,
                     mode: dstudio_core::WarpMode::Drums,
@@ -4554,6 +4583,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 w.set_marker(0, 0.0);
                 w.set_marker(4 * 44_100, 9.0);
                 c.execute(dstudio_core::Command::SetClipWarp { clip: cl.id, warp: w, label: "Set clip speed".into() });
+            }
+            if c.ac_clip().is_some_and(|cl| cl.warp.enabled) && std::mem::take(&mut warp_hover) {
+                // REVIEW STATE: the pointer rests on the second warp marker.
+                c.pr.ac_hover = Some(4 * 44_100);
+            }
+            if let Some(cl) = c.ac_clip().filter(|cl| cl.warp.enabled).cloned()
+                && std::mem::take(&mut warp_off)
+            {
+                let warp = dstudio_core::ClipWarp { enabled: false, ..cl.warp.clone() };
+                c.execute(dstudio_core::Command::SetClipWarp { clip: cl.id, warp, label: "Set clip warp mode".into() });
             }
             if let Some(cl) = c.ac_clip().filter(|cl| looped && cl.warp.enabled && cl.clip_loop.is_none()).cloned() {
                 let content = c.project().content_length_ticks(&cl);

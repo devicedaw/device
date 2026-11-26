@@ -423,6 +423,9 @@ pub enum MenuAction {
     /// A tempo point's menu (src/tempo_lane.rs): ramp to the next point, or hold until it.
     TempoRamp,
     TempoHold,
+    /// The audio clip editor's transient menu (src/warpedit.rs).
+    InsertTransient,
+    DeleteTransient,
     /// Record button menu (src/count_in.rs): count-in off, one bar, two bars.
     CountInOff,
     CountIn1,
@@ -447,6 +450,9 @@ pub struct MenuState {
     pub auto_lane: Option<(TrackId, usize)>,
     /// A tempo point's menu: the point's index in the tempo map.
     pub tempo_point: Option<usize>,
+    /// The audio clip editor's transient menu: the clip and the source frame it was opened at
+    /// (the transient there, or where one would be inserted).
+    pub ac_transient: Option<(ClipId, u64)>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
     /// The entry whose submenu `sub_open` shows (Transpose or Bounce).
