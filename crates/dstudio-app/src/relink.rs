@@ -2,10 +2,13 @@
 //!
 //! Opening a project whose audio files moved shows the Missing media dialog: one row per
 //! missing file. Locate… asks for a folder and searches it (and the folders inside it) on a
-//! worker thread for files with the same name. A candidate counts only when the engine decodes
-//! it to the same length as the original, so a different take that happens to share a name is
-//! not picked. Everything found is relinked in ONE undo step (`Command::RelinkAssets`), and the
-//! rows still missing stay in the dialog for another folder.
+//! worker thread for files with the same name. A candidate counts only when it has the same
+//! length as the original, measured at the file's own sample rate (the project stores it that
+//! way), so a different take that happens to share a name is not picked. A file in a folder of
+//! the same name as before is tried first, and no file is given to two assets. Everything found
+//! is relinked in ONE undo step (`Command::RelinkAssets`), and the rows still missing stay in
+//! the dialog for another folder. File › Relink Missing Media… opens the dialog again after
+//! Skip.
 //!
 //! Undo, redo and any other change of an asset's path reload that asset
 //! ([`Controller::reload_moved_assets`]).
@@ -84,17 +87,56 @@ pub fn candidates(folder: &Path, names: &[String], max_entries: usize) -> (HashM
     (out, seen)
 }
 
-/// Searches `folder` for each missing (asset, file name, length in frames): the first file of
-/// that name the engine decodes to the same length. Runs on a worker thread.
-pub fn search(engine: &Engine, folder: &Path, missing: &[(AssetId, String, u64)]) -> Found {
-    let names: Vec<String> = missing.iter().map(|(_, n, _)| n.clone()).collect();
+/// A missing file the search looks for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Wanted {
+    pub asset: AssetId,
+    /// File name.
+    pub name: String,
+    /// Name of the folder it was in (tried first).
+    pub folder: String,
+    /// Length in frames at the file's own sample rate, as `Asset::frames` stores it.
+    pub frames: u64,
+}
+
+/// `info` (decoded by an engine running at `engine_rate`) has `frames` frames at its own
+/// sample rate. Computed as an import computes `Asset::frames`; one frame either way is allowed
+/// for rounding.
+pub fn same_length(info: &AssetInfo, engine_rate: f64, frames: u64) -> bool {
+    let native = if info.source_sample_rate > 0.0 && engine_rate > 0.0 {
+        (info.frames as f64 * info.source_sample_rate / engine_rate).round().max(1.0) as u64
+    } else {
+        info.frames
+    };
+    native.abs_diff(frames) <= 1
+}
+
+/// The order to try a missing file's candidates in: those in a folder named like the one it was
+/// in first, then the rest (each group keeps its stable order).
+pub fn by_preference<'a>(paths: &'a [PathBuf], folder: &str) -> Vec<&'a PathBuf> {
+    let same = |p: &PathBuf| p.parent().and_then(|d| d.file_name()).is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(folder));
+    paths.iter().filter(|p| same(p)).chain(paths.iter().filter(|p| !same(p))).collect()
+}
+
+/// Searches `folder` for each missing file: the first file of that name with the same length,
+/// never one already given to another asset. Runs on a worker thread.
+pub fn search(engine: &Engine, folder: &Path, missing: &[Wanted]) -> Found {
+    let names: Vec<String> = missing.iter().map(|w| w.name.clone()).collect();
     let (by_name, looked_at) = candidates(folder, &names, MAX_ENTRIES);
+    let rate = engine.sample_rate();
+    let mut used = std::collections::HashSet::new();
     let mut files = Vec::new();
-    for (asset, name, frames) in missing {
-        for path in by_name.get(&name.to_lowercase()).into_iter().flatten() {
+    for w in missing {
+        let paths = by_name.get(&w.name.to_lowercase()).map(Vec::as_slice).unwrap_or(&[]);
+        for path in by_preference(paths, &w.folder) {
+            if used.contains(path) {
+                continue;
+            }
             match load_and_analyse(engine, path) {
-                Ok((info, pyr)) if info.frames == *frames => {
-                    files.push((*asset, path.clone(), info, pyr));
+                Ok((info, pyr)) if same_length(&info, rate, w.frames) => {
+                    used.insert(path.clone());
+                    let asset = w.asset;
+                    files.push((asset, path.clone(), info, pyr));
                     break;
                 }
                 Ok((info, _)) => {
@@ -133,8 +175,16 @@ impl Controller {
         if self.relink.searching || self.relink.rows.is_empty() {
             return;
         }
-        let missing: Vec<(AssetId, String, u64)> =
-            self.relink.rows.iter().filter_map(|r| self.project().asset(r.asset).map(|a| (r.asset, r.name.clone(), a.frames))).collect();
+        let missing: Vec<Wanted> = self
+            .relink
+            .rows
+            .iter()
+            .filter_map(|r| {
+                let a = self.project().asset(r.asset)?;
+                let folder = Path::new(&r.was).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                Some(Wanted { asset: r.asset, name: r.name.clone(), folder, frames: a.frames })
+            })
+            .collect();
         let engine: Arc<Engine> = self.engine.clone();
         let tx = self.jobs_tx.clone();
         let epoch = self.doc_epoch;
@@ -197,6 +247,22 @@ impl Controller {
             self.set_status(format!("Relinked {n} media file{}", if n == 1 { "" } else { "s" }), 4);
         }
         self.ui_dirty = true;
+    }
+
+    /// File › Relink Missing Media…: the dialog again, for the files that are still missing
+    /// (after Skip, or files moved while the project was open).
+    pub fn relink_reopen(&mut self) {
+        if self.relink.open {
+            return;
+        }
+        let missing: Vec<String> =
+            self.project().assets.iter().filter(|a| !Path::new(&a.absolute_path).exists()).map(|a| a.absolute_path.clone()).collect();
+        if missing.is_empty() {
+            self.set_status("No media files are missing", 3);
+            self.ui_dirty = true;
+            return;
+        }
+        self.relink_show(&missing);
     }
 
     /// Skip: leave the rest missing (their clips stay silent).
@@ -305,6 +371,62 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(c.asset_map.contains_key(&id), "redo loads the new file again");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Opens a saved project whose `files` (path, sample rate, frames) are all missing.
+    fn open_missing(root: &std::path::Path, files: &[(&str, f64, u64)]) -> (crate::controller::Controller, Vec<dstudio_core::AssetId>) {
+        use dstudio_core::{Asset, AssetId, Command, Origin, Project};
+        let mut doc = dstudio_core::Document::new(Project::default());
+        for (path, rate, frames) in files {
+            let absolute_path = root.join(path).to_string_lossy().into_owned();
+            let asset = Asset { id: AssetId(0), relative_path: None, absolute_path, sample_rate: *rate, channels: 1, frames: *frames };
+            doc.execute(Command::AddAsset { asset }, Origin::User).unwrap();
+        }
+        let ids = doc.project().assets.iter().map(|a| a.id).collect();
+        let song = root.join("Song.dsproj");
+        dstudio_core::persist::save(doc.project(), &song).unwrap();
+        let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = crate::controller::Controller::new(engine, Project::default());
+        assert!(c.open(&song));
+        (c, ids)
+    }
+
+    #[test]
+    fn samples_at_44_1_khz_are_found_and_no_file_is_given_twice() {
+        let root = std::env::temp_dir().join(format!("dstudio-relink-44k-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // Two kits with a snare of the same name and length (a pack's one-shots often are).
+        for kit in ["Kit A", "Kit B"] {
+            std::fs::create_dir_all(root.join("moved").join(kit)).unwrap();
+            crate::wavgen::write_wav(&root.join("moved").join(kit).join("Snare.wav"), 44_100, 1, &[0.3; 4_410]).unwrap();
+        }
+        let (mut c, ids) = open_missing(&root, &[("was/Kit B/Snare.wav", 44_100.0, 4_410), ("was/Kit A/Snare.wav", 44_100.0, 4_410)]);
+        assert_eq!(c.relink.rows.len(), 2);
+        c.relink_locate(root.join("moved"));
+        let t = std::time::Instant::now();
+        while c.relink.searching && t.elapsed() < std::time::Duration::from_secs(20) {
+            c.poll_jobs();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(c.relink.rows.is_empty(), "both found: {}", c.relink.note);
+        let at = |i: usize| c.project().asset(ids[i]).unwrap().absolute_path.clone();
+        assert_eq!(std::path::Path::new(&at(0)), root.join("moved/Kit B/Snare.wav"), "the snare from the kit it was in");
+        assert_eq!(std::path::Path::new(&at(1)), root.join("moved/Kit A/Snare.wav"), "and not the same file twice");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_dialog_opens_again_from_the_file_menu_after_skip() {
+        let root = std::env::temp_dir().join(format!("dstudio-relink-again-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let (mut c, _) = open_missing(&root, &[("gone/Bass.wav", 48_000.0, 100)]);
+        c.relink_close();
+        assert!(!c.relink.open);
+        c.menu_action("file.relink_missing");
+        assert!(c.relink.open, "File › Relink Missing Media… lists it again");
+        assert_eq!(c.relink.rows.len(), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

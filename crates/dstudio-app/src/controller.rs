@@ -1011,6 +1011,7 @@ impl Controller {
             }
             "options.check_plugins" => self.start_plugin_scan(false),
             "options.rescan_plugins" => self.start_plugin_scan(true),
+            "file.relink_missing" => self.relink_reopen(),
             "file.show_in_finder" => {
                 let Some(dir) = &self.project_dir else { return };
                 if let Err(e) = crate::clip_render::reveal(&dir.to_string_lossy()) {

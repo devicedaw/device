@@ -21,6 +21,9 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 - Takes and rendered clips made before a project's first save are kept in Device's own data folder instead of
   the system temp folder, so a restart no longer deletes them before you save. Ones nobody saved are removed
   after 30 days.
+- Relinking missing media now finds samples that aren't at 48 kHz, which is most sample packs. Before, Locate…
+  found the file but said nothing matched. Two missing files with the same name (a snare from two kits) are no
+  longer both linked to the first one found, and File › Relink Missing Media… opens the dialog again after Skip.
 
 ## [0.4.0] - 2026-11-25
 
