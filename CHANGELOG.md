@@ -13,6 +13,17 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ### Fixed
 
+- Quitting, closing the window, opening another project or starting a new one while recording (or just after
+  stopping) now keeps the take and asks whether to save it. Before, the take could be lost without a prompt.
+- Autosave now also backs up changes made only in a plugin's own window, and keeps modulated parameters at
+  their set value. A crash right after saving no longer offers an older backup over the save, and on Windows a
+  second copy of Device no longer takes over the backup of one that is still running.
+- Takes and rendered clips made before a project's first save are kept in Device's own data folder instead of
+  the system temp folder, so a restart no longer deletes them before you save. Ones nobody saved are removed
+  after 30 days.
+- Relinking missing media now finds samples that aren't at 48 kHz, which is most sample packs. Before, Locate…
+  found the file but said nothing matched. Two missing files with the same name (a snare from two kits) are no
+  longer both linked to the first one found, and File › Relink Missing Media… opens the dialog again after Skip.
 - A note played from the piano roll's keyboard no longer keeps sounding when the window loses the mouse while the key
   is held (another window or a system dialog coming up, for example).
 

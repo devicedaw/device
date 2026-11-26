@@ -86,6 +86,11 @@ the AI assistant:
 - A file is written with the oldest schema that holds it (`persist::schema_version_for`): schema 2 adds
   tempo changes, so a project without them is still schema 1 and opens in 0.2.x builds, while one with them
   is refused there instead of playing at one tempo.
+- Compatibility is tested, not assumed: `crates/dstudio-core/tests/compat.rs` loads projects saved by each
+  released version (`tests/fixtures/compat/`, made by that release's own code and never edited) and
+  checks they keep their content and survive a save. `tests/param_lock.rs` locks the built-in device
+  parameter ids (`tests/fixtures/builtin_params.lock`): ids may be added, never removed or renamed;
+  `DSTUDIO_BLESS=1 cargo test -p dstudio-core --test param_lock` adds new ones to the lock.
 - **SQLite** (planned) is for the sample-library index, analysis caches and plugin scan results: data
   that is large, query-heavy and rebuildable. The project document stays JSON so it diffs well, merges
   in VCS, and is easy to inspect and repair.

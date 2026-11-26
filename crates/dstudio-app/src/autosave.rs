@@ -51,8 +51,8 @@ pub struct TakesMeta {
 pub struct Autosave {
     /// `<support dir>/Autosave`; None turns autosave off (self-tests, screenshot runs).
     pub dir: Option<PathBuf>,
-    /// The project revision the current backup holds; None when there is no backup.
-    pub saved_rev: Option<u64>,
+    /// What the current backup holds ([`Controller::backup_key`]); None when there is no backup.
+    pub saved_rev: Option<(u64, u64)>,
     /// When the project last went from saved to unsaved.
     pub dirty_since: Option<Instant>,
     pub last_write: Option<Instant>,
@@ -61,7 +61,7 @@ pub struct Autosave {
     /// `<pid>.takes.json` is written (audio is being recorded).
     pub takes_marked: bool,
     /// A backup being written on its own thread, and the revision it holds.
-    pub pending: Option<(u64, std::thread::JoinHandle<Result<(), String>>)>,
+    pub pending: Option<((u64, u64), std::thread::JoinHandle<Result<(), String>>)>,
 }
 
 fn now_secs() -> u64 {
@@ -177,11 +177,39 @@ fn running(pid: u32) -> bool {
     r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn running(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, GetLastError, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    if pid == 0 {
+        return false;
+    }
+    // SAFETY: plain Win32 calls on a handle this function opens and closes.
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            // A process we may not look at is still a process.
+            return GetLastError() == ERROR_ACCESS_DENIED;
+        }
+        let mut code = 0u32;
+        let alive = GetExitCodeProcess(h, &mut code) != 0 && code == STILL_ACTIVE as u32;
+        CloseHandle(h);
+        alive
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn running(_pid: u32) -> bool {
-    // A second copy of the app running at once is rare on Windows; its backup would be
-    // offered as a recovered copy, which loses nothing.
     false
+}
+
+/// The project folder's `project.json` was written after `written` (seconds since 1970): it
+/// was saved after the backup, so the backup holds nothing newer.
+fn saved_after(project_dir: Option<&str>, written: u64) -> bool {
+    let Some(dir) = project_dir else { return false };
+    let file = Path::new(dir).join(persist::PROJECT_FILE);
+    let saved = std::fs::metadata(file).and_then(|m| m.modified()).ok();
+    saved.and_then(|t| t.duration_since(UNIX_EPOCH).ok()).is_some_and(|t| t.as_secs() > written)
 }
 
 /// A backup left by a session that is no longer running, newest first: (pid, meta).
@@ -196,6 +224,14 @@ pub fn leftover(dir: &Path, own_pid: u32) -> Option<(u32, Meta)> {
             (pid != own_pid && !running(pid) && paths(dir, pid).0.join(persist::PROJECT_FILE).exists()).then_some((pid, meta))
         })
         .collect();
+    // A backup its project was saved over (a crash in the moment after Save) is stale.
+    found.retain(|(pid, meta)| {
+        let stale = saved_after(meta.project_dir.as_deref(), meta.written);
+        if stale {
+            remove(dir, *pid);
+        }
+        !stale
+    });
     found.sort_by_key(|(_, m)| std::cmp::Reverse(m.written));
     found.into_iter().next()
 }
@@ -222,6 +258,24 @@ fn write_backup(project: &dstudio_core::Project, project_dir: Option<String>, di
 }
 
 impl Controller {
+    /// What a backup of the project as it is now holds: its revision, and the count of changes
+    /// made outside the undo history (a plugin's own window), which move no revision.
+    pub fn backup_key(&self) -> (u64, u64) {
+        (self.doc.revision(), self.doc.outside_edits())
+    }
+
+    /// The project was just saved: the backup is out of date, so it goes now.
+    pub fn autosave_saved(&mut self) {
+        let Some(dir) = self.autosave.dir.clone() else { return };
+        if let Some((_, write)) = self.autosave.pending.take() {
+            let _ = write.join();
+        }
+        if self.autosave.saved_rev.take().is_some() {
+            remove(&dir, std::process::id());
+        }
+        self.autosave.dirty_since = None;
+    }
+
     /// UI timer: back up the project once it has had unsaved changes for [`INTERVAL`], and
     /// again every interval while it changes; drop the backup once nothing is unsaved. The
     /// write runs on its own thread (a large project takes tens of milliseconds to write).
@@ -253,7 +307,7 @@ impl Controller {
         }
         let now = Instant::now();
         let since = *self.autosave.dirty_since.get_or_insert(now);
-        let rev = self.doc.revision();
+        let rev = self.backup_key();
         let interval = self.autosave.interval.unwrap_or(INTERVAL);
         let last = self.autosave.last_write.filter(|t| *t > since).unwrap_or(since);
         // Not while recording: the take joins the project when the pass ends.
@@ -261,9 +315,8 @@ impl Controller {
             return;
         }
         self.autosave.last_write = Some(now);
-        // Plugin instances own their state: pull it into the model first, as Save does.
-        let states = self.engine.plugin_states();
-        self.doc.sync_device_states(&states);
+        // Pull plugin states and modulation bases into the model first, as Save does.
+        self.prepare_for_save();
         let project = self.project().clone();
         let project_dir = self.project_dir.as_ref().map(|p| p.to_string_lossy().into_owned());
         let write = std::thread::Builder::new().name("autosave".into()).spawn(move || write_backup(&project, project_dir, &dir, pid));
@@ -345,7 +398,7 @@ impl Controller {
         }
         self.project_dir = meta.project_dir.map(PathBuf::from);
         self.doc.mark_edited();
-        self.autosave.saved_rev = Some(self.doc.revision());
+        self.autosave.saved_rev = Some(self.backup_key());
         self.autosave.last_write = Some(Instant::now());
         Some(ago(meta.written))
     }
@@ -397,6 +450,46 @@ mod tests {
         dstudio_core::persist::save(&dstudio_core::Project::default(), &p).unwrap();
         let meta = Meta { project_dir: Some("/songs/a.dsproj".into()), written };
         std::fs::write(m, serde_json::to_vec(&meta).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_change_in_a_plugin_window_is_backed_up_and_save_drops_the_backup_at_once() {
+        use crate::controller::Controller;
+        use std::sync::Arc;
+        let dir = scratch("outside");
+        let engine = Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, dstudio_core::Project::default());
+        c.autosave.dir = Some(dir.clone());
+        c.autosave.interval = Some(std::time::Duration::ZERO);
+        c.execute(dstudio_core::Command::SetTempo { bpm: 97.0, at: None });
+        tick(&mut c);
+        let first = c.autosave.saved_rev.expect("a backup");
+        // A parameter moved in a plugin's own window: no revision change, still a new backup.
+        c.doc.mark_edited();
+        tick(&mut c);
+        assert_ne!(c.autosave.saved_rev, Some(first), "backed up again");
+        assert_eq!(c.autosave.saved_rev, Some(c.backup_key()));
+        let backup = paths(&dir, std::process::id()).0;
+        assert!(backup.exists());
+        c.save_to(&dir.join("Song.dsproj"));
+        assert!(!backup.exists(), "gone with the save, before any timer tick");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_backup_its_project_was_saved_over_is_not_offered() {
+        let dir = scratch("stale");
+        let song = dir.join("Song.dsproj");
+        dstudio_core::persist::save(&dstudio_core::Project::default(), &song).unwrap();
+        let dead = 2_000_000_005;
+        let (p, m) = paths(&dir, dead);
+        dstudio_core::persist::save(&dstudio_core::Project::default(), &p).unwrap();
+        // Written a minute before the project was last saved.
+        let meta = Meta { project_dir: Some(song.to_string_lossy().into_owned()), written: super::now_secs() - 60 };
+        std::fs::write(&m, serde_json::to_vec(&meta).unwrap()).unwrap();
+        assert!(leftover(&dir, std::process::id()).is_none(), "the save is newer");
+        assert!(!p.exists() && !m.exists(), "and the stale backup is removed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

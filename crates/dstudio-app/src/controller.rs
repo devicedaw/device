@@ -546,6 +546,9 @@ pub struct Controller {
     pub feedback: crate::feedback::FeedbackForm,
     pub(crate) undo_history_model: Rc<VecModel<crate::UndoHistoryRow>>,
     pub(crate) jobs_tx: Sender<JobResult>,
+    /// Where takes and renders made before the first save go (src/unsaved_media.rs): the
+    /// system temp folder, or the app's data folder in a normal session (main.rs).
+    pub unsaved_root: PathBuf,
     jobs_rx: Receiver<JobResult>,
     pub pending_jobs: usize,
     pub(crate) doc_epoch: u64,
@@ -758,6 +761,7 @@ impl Controller {
             feedback: Default::default(),
             undo_history_model: Rc::new(VecModel::default()),
             jobs_tx,
+            unsaved_root: crate::unsaved_media::temp_root(),
             jobs_rx,
             pending_jobs: 0,
             doc_epoch: 0,
@@ -1007,6 +1011,7 @@ impl Controller {
             }
             "options.check_plugins" => self.start_plugin_scan(false),
             "options.rescan_plugins" => self.start_plugin_scan(true),
+            "file.relink_missing" => self.relink_reopen(),
             "file.show_in_finder" => {
                 let Some(dir) = &self.project_dir else { return };
                 if let Err(e) = crate::clip_render::reveal(&dir.to_string_lossy()) {
@@ -1041,7 +1046,7 @@ impl Controller {
     /// Open `dir` (File › Open, Open Recent, the browser): asks first when the project has
     /// unsaved changes. A project in Open Recent that no longer opens leaves the list.
     pub fn open_request(&mut self, dir: PathBuf) {
-        if self.doc.is_dirty() {
+        if self.has_unsaved_work() {
             self.after_unsaved = Some(crate::dialogs::AfterUnsaved::Open(dir));
             self.unsaved_open = true;
             self.ui_dirty = true;
@@ -1787,24 +1792,40 @@ impl Controller {
         self.after_change();
     }
 
-    pub fn save_to(&mut self, dir: &Path) {
-        // Plugin instances own their state: pull it into the model first (no undo step).
+    /// What Save and the autosave backup both do before writing the project: pull the state
+    /// that lives outside the model into it (no undo step). Plugin instances own their state,
+    /// and modulated parameters keep their unmodulated base in the engine.
+    pub(crate) fn prepare_for_save(&mut self) {
         let states = self.engine.plugin_states();
         self.doc.sync_device_states(&states);
         let bases = self.mod_bases_now();
         self.doc.sync_mod_bases(&bases);
+    }
+
+    pub fn save_to(&mut self, dir: &Path) {
+        self.prepare_for_save();
         if let Some(name) = project_name_of(dir) {
             self.doc.set_project_name(&name);
         }
         // Takes and renders made before the first save are in the temp folder: bring them in.
         let paths: Vec<String> = self.project().assets.iter().map(|a| a.absolute_path.clone()).collect();
-        let (moved, failed) = crate::unsaved_media::adopt(&crate::unsaved_media::temp_root(), &paths, dir);
+        let (mut moved, mut failed) = crate::unsaved_media::adopt(&self.unsaved_root, &paths, dir);
+        let temp = crate::unsaved_media::temp_root();
+        if self.unsaved_root != temp {
+            // Sound previews, and takes a version before 0.5 left there (a recovered backup).
+            let (more, more_failed) = crate::unsaved_media::adopt(&temp, &paths, dir);
+            moved.extend(more);
+            failed.extend(more_failed);
+        }
         for (from, to) in &moved {
             self.doc.relocate_asset_file(from, to);
         }
         match persist::save(self.project(), dir) {
             Ok(()) => {
                 self.doc.mark_saved();
+                // The backup is older than what was just saved: it goes now, not at the next
+                // timer tick, so a crash in between can't offer it over the save.
+                self.autosave_saved();
                 self.project_dir = Some(dir.to_path_buf());
                 self.remember_recent(dir);
                 match (moved.len(), failed.first()) {

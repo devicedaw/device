@@ -1,0 +1,95 @@
+{
+  "bpm": 128.5,
+  "fades": [
+    240,
+    480
+  ],
+  "generated_by": "dstudio-core 0.3.1",
+  "params": {
+    "Drums": {
+      "compressor": {
+        "attack": 5.0,
+        "ratio": 6.0,
+        "threshold": -18.0
+      },
+      "delay": {
+        "feedback": 65.0,
+        "mix": 40.0,
+        "time": 180.0
+      }
+    },
+    "Keys": {
+      "synth-v2": {
+        "osc1_level": 0.5,
+        "osc1_shape": 0.6000000238418579,
+        "osc2_fine": -12.0
+      }
+    },
+    "Space": {
+      "reverb": {
+        "decay": 3.5,
+        "mix": 25.0,
+        "size": 70.0
+      }
+    }
+  },
+  "sections": [
+    "Intro",
+    "Verse"
+  ],
+  "tempo_points": 3,
+  "time_signature": [
+    3,
+    4
+  ],
+  "tracks": [
+    {
+      "automation_lanes": 2,
+      "clips": [
+        2880
+      ],
+      "effects": [
+        "compressor",
+        "delay"
+      ],
+      "kind": "Audio",
+      "midi_clips": [],
+      "name": "Drums",
+      "sends": 1
+    },
+    {
+      "automation_lanes": 0,
+      "clips": [],
+      "effects": [],
+      "kind": "Instrument",
+      "midi_clips": [
+        {
+          "notes": 5,
+          "start": 2880
+        }
+      ],
+      "name": "Keys",
+      "sends": 0
+    },
+    {
+      "automation_lanes": 0,
+      "clips": [],
+      "effects": [],
+      "kind": "Group",
+      "midi_clips": [],
+      "name": "Bus",
+      "sends": 0
+    },
+    {
+      "automation_lanes": 0,
+      "clips": [],
+      "effects": [
+        "reverb"
+      ],
+      "kind": "Return",
+      "midi_clips": [],
+      "name": "Space",
+      "sends": 0
+    }
+  ]
+}
