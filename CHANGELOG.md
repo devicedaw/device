@@ -11,6 +11,15 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-27
+
+### Added
+
+- Edit warp markers in the clip editor. Markers sit as pins in the marker row under the waveform, with the clip's
+  transients as ticks beside them. Double-click to add one, drag to move it, and double-click or right-click to
+  remove it. A right-click on the waveform offers Insert Transient and Delete Transient.
+- File › Relink Missing Media… opens the relink dialog again at any time.
+
 ### Fixed
 
 - Quitting, closing the window, opening another project or starting a new one while recording (or just after
