@@ -1,14 +1,48 @@
-//! Media made before a project's first save lives in the system temp folder
-//! (`<temp>/Device Studio/`: recorded takes in "Unsaved recordings", rendered clips in
-//! "Unsaved renders", auditioned sounds in "Sound previews"). The system may delete that
-//! folder, so Save brings every such file the project uses into `<project>/media/`: takes
-//! and renders are moved there, previews (a shared cache) are copied.
+//! Media made before a project's first save lives outside any project: recorded takes in
+//! "Unsaved recordings" and rendered clips in "Unsaved renders" under `Controller::unsaved_root` (the
+//! app's data folder, which survives a restart, so crash recovery finds them), and auditioned
+//! sounds in "Sound previews" under [`temp_root`] (a cache). Save brings every such file the
+//! project uses into `<project>/media/`: takes and renders are moved there, previews are
+//! copied. Versions before 0.5 kept takes and renders under [`temp_root`] too.
 
 use std::path::{Path, PathBuf};
 
-/// The folder unsaved media is written under: `<temp>/Device Studio`.
+/// The system temp folder's `Device Studio` (sound previews; takes and renders of older versions).
 pub fn temp_root() -> PathBuf {
     std::env::temp_dir().join("Device Studio")
+}
+
+/// Where a normal session puts takes and renders made before the first save:
+/// `<app data>/Unsaved media` (`Controller::unsaved_root`; tests keep [`temp_root`]).
+pub fn data_root(support_dir: &Path) -> PathBuf {
+    support_dir.join("Unsaved media")
+}
+
+/// How long an unsaved take or render nobody saved stays before [`prune`] removes it.
+pub const KEEP_UNSAVED: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
+
+/// At launch: removes audio files under `root` last changed more than `keep` ago (takes and
+/// renders of projects that were never saved). The system temp folder used to do this.
+pub fn prune(root: &Path, keep: std::time::Duration) -> usize {
+    let cutoff = std::time::SystemTime::now().checked_sub(keep);
+    let mut removed = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            let Ok(kind) = e.file_type() else { continue };
+            if kind.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let audio = p.extension().is_some_and(|x| ["wav", "flac", "mp3", "ogg"].iter().any(|a| x.eq_ignore_ascii_case(a)));
+            let old = e.metadata().and_then(|m| m.modified()).ok().zip(cutoff).is_some_and(|(t, c)| t < c);
+            if audio && old && std::fs::remove_file(&p).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
 }
 
 /// Where a file at `rest` (its path under the temp root) goes in the project's media folder:
@@ -111,5 +145,28 @@ mod tests {
         assert!(!take.exists() && !render.exists(), "takes and renders are moved");
         assert!(preview.exists(), "previews are a shared cache: copied");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn unsaved_takes_nobody_saved_for_a_month_are_removed() {
+        let root = std::env::temp_dir().join(format!("dstudio-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let takes = root.join("Unsaved recordings/2026-11-26 10-00-00");
+        std::fs::create_dir_all(&takes).unwrap();
+        let old = takes.join("Audio 1.wav");
+        let new = takes.join("Audio 2.wav");
+        let note = takes.join("notes.txt");
+        for f in [&old, &new, &note] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 3600);
+        for f in [&old, &note] {
+            std::fs::File::options().write(true).open(f).unwrap().set_modified(long_ago).unwrap();
+        }
+        assert_eq!(super::prune(&root, super::KEEP_UNSAVED), 1);
+        assert!(!old.exists(), "a take from 40 days ago goes");
+        assert!(new.exists(), "today's stays");
+        assert!(note.exists(), "only audio files are removed");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -51,6 +51,10 @@ sha2 = "0.10"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Already in the tree through winit; autosave asks whether the session that left a backup is still running.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 # Already in the tree through winit/muda; used to turn off the menu items AppKit adds to Edit and View
 # and to place the window buttons (window_buttons.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
