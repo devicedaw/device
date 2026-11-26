@@ -24,6 +24,8 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 - Relinking missing media now finds samples that aren't at 48 kHz, which is most sample packs. Before, Locate…
   found the file but said nothing matched. Two missing files with the same name (a snare from two kits) are no
   longer both linked to the first one found, and File › Relink Missing Media… opens the dialog again after Skip.
+- A note played from the piano roll's keyboard no longer keeps sounding when the window loses the mouse while the key
+  is held (another window or a system dialog coming up, for example).
 
 ## [0.4.0] - 2026-11-25
 

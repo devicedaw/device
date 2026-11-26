@@ -13,6 +13,7 @@
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
+//!              [--self-test-part <1..3>  (with --self-test or --self-test-audio: the shared setup and one part's sections, for running the parts side by side)]
 //!              [--window-width <pt>  (OS window width, default 1440)] [--window-height <pt>  (default 820)] [--assistant-width <px>  (saved docked-assistant width, 297..600)]
 //!              [--timeline-zoom <percent>  (horizontal timeline zoom, 100 = default; 100 is 12.76 pt per beat)]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = the design units)]
@@ -385,6 +386,8 @@ struct Args {
     /// --showcase <view>: after --open, one of the artwork views (src/showcase.rs).
     showcase: Option<String>,
     self_test: bool,
+    /// --self-test-part K: run only part K of the self-test (selftest::SECTIONS).
+    self_test_part: Option<usize>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -1058,6 +1061,11 @@ fn parse_args() -> Result<Args, String> {
                 // --self-test-audio also plays ~1 s through the device at -40 dB master.
                 a.audio = v[i] == "--self-test-audio";
             }
+            "--self-test-part" => {
+                let v = value(&mut i)?;
+                let k = v.parse::<usize>().ok().filter(|k| (1..=selftest::PARTS).contains(k));
+                a.self_test_part = Some(k.ok_or(format!("--self-test-part: want 1 to {}, got {v:?}", selftest::PARTS))?);
+            }
             "-h" | "--help" => {
                 println!(
                     "{}",
@@ -1082,6 +1090,9 @@ fn parse_args() -> Result<Args, String> {
     }
     if a.screenshot.is_some() && a.exit_after_frames.is_none() {
         a.exit_after_frames = Some(30);
+    }
+    if a.self_test_part.is_some() && !a.self_test {
+        return Err("--self-test-part needs --self-test or --self-test-audio".into());
     }
     Ok(a)
 }
@@ -4993,7 +5004,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.self_test {
-        selftest::start(&app, ctl.clone());
+        selftest::start(&app, ctl.clone(), args.self_test_part);
     }
     // Fallback for --screenshot when the window never presents frames (occluded window
     // or locked screen: macOS stops redraws). `take_snapshot()` renders offscreen and

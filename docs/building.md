@@ -195,11 +195,20 @@ jobs that run side by side:
   (`tools/ci/self-test.sh`). macOS runs `--self-test --no-audio` (no
   screenshot); Linux takes a reference-state screenshot and runs `--no-audio`
   and `--self-test-audio`, all three side by side under Xvfb with Mesa
-  lavapipe; Windows takes the screenshot under WARP on every run, and runs the
-  full self-test under WARP on the nightly run, manual runs, and pull requests
-  labelled `windows-self-test` whose changes reach the app. Add the label and
-  push a commit to request the full test on a PR. The screenshots and self-test logs are uploaded as an
-  artifact.
+  lavapipe; Windows takes the screenshot under WARP on every run. The screenshots and self-test logs are
+  uploaded as an artifact.
+- **self-test (Windows, part K)** runs the full self-test under WARP on the
+  Windows app job's build, in three parts side by side (`--self-test-part 1`
+  to `3`: each runs the shared setup and about a third of the sections listed in
+  `SECTIONS` in `crates/dstudio-app/src/selftest.rs`, roughly 20 to 25 minutes
+  each instead of about 50 in one job). It runs on the nightly run, manual runs,
+  and pull requests labelled `windows-self-test` whose changes reach the app; add
+  the label and push a commit to request it on a PR. Run one part locally with
+  `device-studio --self-test --no-audio --self-test-part 2`.
+
+A scheduled CI run (and the weekly Security run) that fails opens an issue
+labelled `ci-nightly`, or comments on the open one, and the next passing
+scheduled run closes it (`tools/ci/scheduled-run-issue.sh`).
 
 A **lint** job checks the workflows (actionlint, which also runs shellcheck on
 their scripts), the scripts in `tools/`, the change detection below and the
@@ -341,10 +350,11 @@ python3 tools/perf/bench_gate.py all --base origin/main --mode time  # time only
 
 ### Release packages
 
-Before publishing, run the full Windows WARP self-test against the release
-candidate. Dispatch the CI workflow for the candidate ref with
-`gh workflow run ci.yml --ref <candidate-ref>` and check that
-`App — self-test (Windows, WARP)` passes.
+The release workflow runs the full Windows WARP self-test (its three parts,
+**Self-test Windows (part K)**) on the packaged Windows build, and the draft
+release is created only when all three pass. To check a candidate before
+tagging it, dispatch CI for it with `gh workflow run ci.yml --ref <candidate-ref>`
+and check the **self-test (Windows, part K)** jobs.
 
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the
 installable packages:

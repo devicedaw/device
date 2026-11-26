@@ -481,7 +481,9 @@ export component PianoRoll inherits Rectangle {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
                     Studio.pr-pointer(0, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta || e.modifiers.control);
                 }
-                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) {
+                // A cancelled press (the window lost the pointer, so no release will come) ends the
+                // gesture as a release does: a held preview note stops instead of sounding on.
+                if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) {
                     Studio.pr-pointer(2, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta || e.modifiers.control);
                 }
                 // Audio clip editor: hover (3) lights the warp marker under the pointer; a
