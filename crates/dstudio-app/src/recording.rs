@@ -232,14 +232,15 @@ impl Controller {
         self.project().tracks.iter().filter(|t| t.kind == TrackKind::Audio && t.arm && t.input.is_some()).map(|t| t.id).collect()
     }
 
-    /// Takes go to `<project>/media/` once saved, else to a temp "Unsaved recordings" dir.
+    /// Takes go to `<project>/media/` once saved, else to "Unsaved recordings" in the app's data
+    /// folder (not the system temp folder, which a restart may empty: crash recovery needs them).
     pub fn recording_dir(&self) -> PathBuf {
         if let Some(d) = &self.rec.dir_override {
             return d.clone();
         }
         match &self.project_dir {
             Some(p) => p.join("media"),
-            None => std::env::temp_dir().join("Device Studio").join("Unsaved recordings"),
+            None => self.unsaved_root.join("Unsaved recordings"),
         }
     }
 

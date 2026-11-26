@@ -4409,7 +4409,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // screenshot runs. A backup a crashed session left opens instead of the last session.
     {
         let mut c = ctl.borrow_mut();
-        c.autosave.dir = c.settings.prefs_path.as_ref().and_then(|p| p.parent()).map(|d| d.join("Autosave"));
+        let support = c.settings.prefs_path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf);
+        c.autosave.dir = support.as_ref().map(|d| d.join("Autosave"));
+        // Takes and renders of a project not saved yet: kept where a restart doesn't wipe
+        // them, and removed once nobody saved them for a month.
+        if let Some(d) = support {
+            c.unsaved_root = crate::unsaved_media::data_root(&d);
+            let root = c.unsaved_root.clone();
+            std::thread::spawn(move || crate::unsaved_media::prune(&root, crate::unsaved_media::KEEP_UNSAVED));
+        }
     }
     let recovered = use_prefs && args.open.is_none() && ctl.borrow_mut().autosave_recover();
     let autosave_timer = slint::Timer::default();

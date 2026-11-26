@@ -213,7 +213,7 @@ impl Controller {
         }
         match &self.project_dir {
             Some(p) => p.join("media").join(kind),
-            None => std::env::temp_dir().join("Device Studio").join("Unsaved renders").join(kind),
+            None => self.unsaved_root.join("Unsaved renders").join(kind),
         }
     }
 
