@@ -1425,6 +1425,7 @@ export component AppWindow inherits Window {
                 if Studio.recent-projects.length > 0: MenuSeparator { }
                 MenuItem { title: "Clear Menu"; enabled: Studio.recent-projects.length > 0; activated => { Studio.menu-action("file.clear_recent"); } }
             }
+            MenuItem { title: "Relink Missing Media…"; enabled: !Studio.menu-replay; activated => { Studio.menu-action("file.relink_missing"); } }
             MenuItem { title: "Show Project in " + Studio.file-manager; enabled: Studio.project-on-disk; activated => { Studio.menu-action("file.show_in_finder"); } }
             MenuSeparator { }
             MenuItem { title: "Export Audio…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + Shift + E); activated => { Studio.menu-key("e", true, true); } }
