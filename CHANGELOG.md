@@ -11,6 +11,11 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ## [Unreleased]
 
+### Fixed
+
+- Quitting, closing the window, opening another project or starting a new one while recording (or just after
+  stopping) now keeps the take and asks whether to save it. Before, the take could be lost without a prompt.
+
 ## [0.4.0] - 2026-11-25
 
 ### Added
