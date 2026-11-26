@@ -13,6 +13,8 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ### Fixed
 
+- Quitting, closing the window, opening another project or starting a new one while recording (or just after
+  stopping) now keeps the take and asks whether to save it. Before, the take could be lost without a prompt.
 - Relinking missing media now finds samples that aren't at 48 kHz, which is most sample packs. Before, Locate…
   found the file but said nothing matched. Two missing files with the same name (a snare from two kits) are no
   longer both linked to the first one found, and File › Relink Missing Media… opens the dialog again after Skip.

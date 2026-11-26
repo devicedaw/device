@@ -759,7 +759,7 @@ pub enum PendingImport {
 impl crate::controller::Controller {
     /// File › Import Ableton Live Set…: replaces the open project, asking to save changes first.
     pub fn import_live_set_request(&mut self, file: PathBuf) {
-        if self.doc.is_dirty() {
+        if self.has_unsaved_work() {
             self.pending_import = Some(PendingImport::File(file));
             self.unsaved_open = true;
             self.ui_dirty = true;

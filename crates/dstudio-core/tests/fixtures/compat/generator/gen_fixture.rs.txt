@@ -1,0 +1,206 @@
+// Throwaway fixture generator: builds a representative project with the dstudio-core API of the
+// release it is compiled against and saves it with that release's `persist::save`.
+// Usage: gen_fixture <out-dir>
+use dstudio_core::*;
+use serde_json::json;
+use std::path::PathBuf;
+
+fn wav(path: &std::path::Path, frames: u32) {
+    let (rate, ch) = (48_000u32, 2u16);
+    let data_len = frames * ch as u32 * 2;
+    let mut b = Vec::new();
+    b.extend(b"RIFF");
+    b.extend((36 + data_len).to_le_bytes());
+    b.extend(b"WAVEfmt ");
+    b.extend(16u32.to_le_bytes());
+    b.extend(1u16.to_le_bytes());
+    b.extend(ch.to_le_bytes());
+    b.extend(rate.to_le_bytes());
+    b.extend((rate * ch as u32 * 2).to_le_bytes());
+    b.extend((ch * 2).to_le_bytes());
+    b.extend(16u16.to_le_bytes());
+    b.extend(b"data");
+    b.extend(data_len.to_le_bytes());
+    for i in 0..frames {
+        let s = (((i as f32) * 0.07).sin() * 12_000.0) as i16;
+        for _ in 0..ch {
+            b.extend(s.to_le_bytes());
+        }
+    }
+    std::fs::write(path, b).unwrap();
+}
+
+fn builtin_device(id: &str, values: &[(&str, f32)]) -> (Device, serde_json::Value) {
+    let def = builtin::find(id).unwrap();
+    let mut d = def.instantiate();
+    let mut set = serde_json::Map::new();
+    for (pid, v) in values {
+        let p = def.param(pid).unwrap_or_else(|| panic!("{id} has no parameter {pid}"));
+        let v = p.snap(*v);
+        assert!(v != p.default, "{id}.{pid} would stay at its default");
+        d.params.insert(pid.to_string(), v);
+        set.insert(pid.to_string(), json!(v));
+    }
+    (d, serde_json::Value::Object(set))
+}
+
+macro_rules! run {
+    ($d:expr, $c:expr) => {
+        $d.execute($c, Origin::User).unwrap()
+    };
+}
+
+fn track_id(d: &Document, name: &str) -> TrackId {
+    d.project().tracks.iter().find(|t| t.name == name).unwrap().id
+}
+
+fn main() {
+    let out = PathBuf::from(std::env::args().nth(1).expect("out dir"));
+    let proj_dir = out.join("Compat.dsproj");
+    std::fs::create_dir_all(proj_dir.join("media")).unwrap();
+    let media = proj_dir.join("media/click.wav");
+    wav(&media, 480);
+
+    let mut d = Document::new(Project::default());
+    let audio = d.project().tracks[0].id;
+    let inst = d.project().tracks[1].id;
+    run!(d, Command::RenameTrack { track: audio, name: "Drums".into() });
+    run!(d, Command::RenameTrack { track: inst, name: "Keys".into() });
+
+    // Transport.
+    run!(d, Command::SetTempo { bpm: 128.5 , at: None });
+    run!(d, Command::SetTimeSignature { numerator: 3, denominator: 4 });
+    run!(d, Command::SetLoop { enabled: true, start: 0, end: 8 * PPQ * 3 });
+    run!(d, Command::SetProjectKey { key: Some(ProjectKey { root: 9, minor: true }) });
+    // (v0.3.0 and later) tempo map: run!(d, Command::SetTempoMap { points: vec![TempoPoint { time: 0, bpm: 128.5, ramp: false }, TempoPoint { time: 4 * PPQ * 3, bpm: 140.0, ramp: true }, TempoPoint { time: 8 * PPQ * 3, bpm: 100.0, ramp: false }], bpm: None });
+
+    // Sections.
+    for (name, color, bars) in [("Intro", 0x3355aa, 2u64), ("Verse", 0xaa5533, 4)] {
+        run!(d, Command::InsertSection {
+            index: None,
+            section: Section { id: SectionId(0), name: name.into(), color, length: (bars as i64) * 3 * PPQ },
+        });
+    }
+
+    // Audio track: asset, clip with fades, gain, pan.
+    run!(d, Command::AddAsset {
+        asset: Asset {
+            id: AssetId(0),
+            relative_path: None,
+            absolute_path: media.to_string_lossy().into_owned(),
+            sample_rate: 48_000.0,
+            channels: 2,
+            frames: 480,
+        },
+    });
+    let asset = d.project().assets[0].id;
+    run!(d, Command::AddClip {
+        track: audio,
+        clip: Clip {
+            id: ClipId(0),
+            asset,
+            name: "Click".into(),
+            start: 3 * PPQ,
+            source_offset: 48,
+            source_length: 400,
+            gain: 0.8,
+            warp: Default::default(),
+            disabled: false,
+            clip_loop: None,
+            fades: Default::default(),
+            takes: Vec::new(),
+        },
+    });
+    let clip = d.project().tracks[0].clips[0].id;
+    run!(d, Command::SetClipFades { clip, fades: ClipFades { fade_in: PPQ / 4, fade_out: PPQ / 2 } });
+    run!(d, Command::SetTrackGain { track: audio, gain: 0.7 });
+    run!(d, Command::SetTrackPan { track: audio, pan: -0.25 });
+
+    // MIDI track: clip with notes, synth instrument with non-default parameters.
+    let notes: Vec<Note> = (0..5u32)
+        .map(|i| Note { id: i + 1, pitch: 57 + (i as u8) * 3, start: (i as i64) * PPQ / 2, length: PPQ / 4, velocity: 70 + i as u8 * 10 })
+        .collect();
+    run!(d, Command::AddMidiClip {
+        track: inst,
+        clip: MidiClip {
+            id: ClipId(0),
+            name: "Chords".into(),
+            start: 3 * PPQ,
+            length: 2 * 3 * PPQ,
+            notes: notes.clone(),
+            pattern: None, disabled: false, composer: None, scale: None, clip_loop: None,
+        },
+    });
+    let (synth, synth_set) = builtin_device("synth-v2", &[("osc1_shape", 0.6), ("osc1_level", 0.5), ("osc2_fine", -12.0)]);
+    run!(d, Command::SetInstrumentPlugin { track: inst, device: Some(synth) });
+
+    // Group and return, routing and a send.
+    run!(d, Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Group, "Bus", ColorIndex(2)) });
+    run!(d, Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Return, "Space", ColorIndex(3)) });
+    let group = track_id(&d, "Bus");
+    let ret = track_id(&d, "Space");
+    run!(d, Command::SetTrackOutput { track: audio, output: Some(group) });
+    run!(d, Command::SetSends { track: audio, sends: vec![TrackSend { target: ret, level: 0.5, pre_fader: false }] });
+
+    // Effects with non-default parameters: two on the audio track, one on the return.
+    let (comp, comp_set) = builtin_device("compressor", &[("threshold", -18.0), ("ratio", 6.0), ("attack", 5.0)]);
+    let (delay, delay_set) = builtin_device("delay", &[("time", 180.0), ("feedback", 65.0), ("mix", 40.0)]);
+    let (rev, rev_set) = builtin_device("reverb", &[("size", 70.0), ("decay", 3.5), ("mix", 25.0)]);
+    run!(d, Command::AddDevice { track: audio, index: None, device: comp });
+    run!(d, Command::AddDevice { track: audio, index: None, device: delay });
+    run!(d, Command::AddDevice { track: ret, index: None, device: rev });
+    let comp_id = d.project().tracks[0].devices[0].id;
+    let comp_param = "threshold";
+
+    // Automation: track volume and a built-in parameter.
+    run!(d, Command::SetAutomationLane {
+        track: Some(audio),
+        target: AutomationTarget::Volume,
+        lane: Some(AutomationLane {
+            target: AutomationTarget::Volume,
+            enabled: true,
+            points: vec![AutoPoint { time: 0, value: -12.0, curve: 0.0 }, AutoPoint { time: 4 * PPQ, value: 0.0, curve: 0.5 }],
+        }),
+    });
+    let bt = AutomationTarget::Builtin { device: comp_id, device_type: "compressor".into(), param: comp_param.into() };
+        run!(d, Command::SetAutomationLane {
+        track: Some(audio),
+        target: bt.clone(),
+        lane: Some(AutomationLane {
+            target: bt,
+            enabled: true,
+            points: vec![
+                AutoPoint { time: 0, value: -40.0, curve: 0.0 },
+                AutoPoint { time: 2 * PPQ, value: -10.0, curve: 0.0 },
+            ],
+        }),
+    });
+
+    let p = d.project();
+    let dev_names = |t: &Track| t.devices.iter().map(|x| x.plugin.id.clone()).collect::<Vec<_>>();
+    let expected = json!({
+        "generated_by": format!("dstudio-core {}", env!("CARGO_PKG_VERSION")),
+        "bpm": p.transport.bpm,
+        "time_signature": [3, 4],
+        "tempo_points": p.transport.tempo.len(),
+        "tracks": p.tracks.iter().map(|t| json!({
+            "name": t.name,
+            "kind": format!("{:?}", t.kind),
+            "clips": t.clips.iter().map(|c| c.start).collect::<Vec<_>>(),
+            "midi_clips": t.midi_clips.iter().map(|c| json!({"start": c.start, "notes": c.notes.len()})).collect::<Vec<_>>(),
+            "effects": dev_names(t),
+            "automation_lanes": t.automation.len(),
+            "sends": t.sends.len(),
+        })).collect::<Vec<_>>(),
+        "sections": p.sections.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+        "params": {
+            "Drums": { "compressor": comp_set, "delay": delay_set },
+            "Space": { "reverb": rev_set },
+            "Keys": { "synth-v2": synth_set },
+        },
+        "fades": [PPQ / 4, PPQ / 2],
+    });
+    persist::save(p, &proj_dir).unwrap();
+    std::fs::write(out.join("expected.json"), serde_json::to_string_pretty(&expected).unwrap() + "\n").unwrap();
+    println!("saved {}", proj_dir.display());
+}
