@@ -37,6 +37,8 @@ pub struct Document {
     saved_revision: u64,
     /// Changed in a way that is not an undo step (a plugin's own editor): unsaved until saved.
     edited_outside: bool,
+    /// How many such changes there have been: a backup compares it, as the revision does not move.
+    outside_edits: u64,
     pub coalesce_window: Duration,
     pub max_history: usize,
     /// A gesture holds the last entry open ([`hold_coalescing`](Self::hold_coalescing)): a
@@ -53,6 +55,7 @@ impl Document {
             revision: 0,
             saved_revision: 0,
             edited_outside: false,
+            outside_edits: 0,
             coalesce_window: Duration::from_millis(750),
             max_history: 1000,
             held: false,
@@ -80,6 +83,13 @@ impl Document {
     /// plugin's own window): the project has unsaved changes, with no revision change.
     pub fn mark_edited(&mut self) {
         self.edited_outside = true;
+        self.outside_edits += 1;
+    }
+
+    /// Changes so far that are not undo steps ([`mark_edited`](Self::mark_edited)), saved or
+    /// not. Together with [`revision`](Self::revision) it tells whether anything has changed.
+    pub fn outside_edits(&self) -> u64 {
+        self.outside_edits
     }
 
     /// Validate and execute a command, recording it for undo.
