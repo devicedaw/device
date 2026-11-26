@@ -5080,6 +5080,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     app.window().set_size(slint::LogicalSize::new(args.window_width.unwrap_or(1440.0), args.window_height.unwrap_or(820.0)));
     app.run()?;
     // A normal quit: unsaved changes were saved or thrown away on purpose, so no backup stays.
+    // A pass still recording (a quit that skipped the prompt) is stopped first, so its takes
+    // are finished on disk.
+    ctl.borrow_mut().land_takes();
     ctl.borrow_mut().autosave_finish();
     if args.frame_stats && exit_after.is_none() {
         println!("{}", stats_json(&frame.borrow(), &app));

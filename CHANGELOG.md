@@ -13,6 +13,8 @@ Fixed or Removed. Write it for people who use Device, not for developers.
 
 ### Fixed
 
+- Quitting, closing the window, opening another project or starting a new one while recording (or just after
+  stopping) now keeps the take and asks whether to save it. Before, the take could be lost without a prompt.
 - Autosave now also backs up changes made only in a plugin's own window, and keeps modulated parameters at
   their set value. A crash right after saving no longer offers an older backup over the save, and on Windows a
   second copy of Device no longer takes over the backup of one that is still running.

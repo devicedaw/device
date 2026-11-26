@@ -62,7 +62,13 @@ pub struct RecState {
     /// Takes of the last stopped pass that the engine cut short (file size limit or a
     /// write error): they keep what was written, and the status line says so.
     pub cut_short: u64,
+    /// Stopped passes whose takes are still loading on a worker thread: they join the project
+    /// (and make it unsaved) only when `JobResult::Recorded` arrives.
+    pub loading_takes: usize,
 }
+
+/// The longest closing the project waits for a stopped pass's takes to load.
+const TAKE_LANDING_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Status suffix for takes the engine had to cut short; empty when there are none.
 pub fn cut_short_note(n: u64) -> String {
@@ -355,6 +361,7 @@ impl Controller {
         let tx = self.jobs_tx.clone();
         let epoch = self.doc_epoch;
         self.pending_jobs += 1;
+        self.rec.loading_takes += 1;
         std::thread::Builder::new()
             .name("recorded-takes".into())
             .spawn(move || {
@@ -369,6 +376,35 @@ impl Controller {
             })
             .expect("spawn take loader");
         self.set_status("Loading recording…", 30);
+    }
+
+    /// A pass is recording, or a stopped pass's takes are still loading: they are not in the
+    /// project yet, so closing it now would lose them.
+    pub fn takes_in_flight(&self) -> bool {
+        self.rec.recording || self.rec.loading_takes > 0
+    }
+
+    /// Before the project closes (quit, the close button, Open, New, a Live set import): stop a
+    /// recording pass and wait for its takes to join the project, so that the unsaved-changes
+    /// prompt covers them and Save keeps them. Gives up after `TAKE_LANDING_LIMIT`.
+    pub fn land_takes(&mut self) {
+        if self.rec.recording {
+            self.stop_return();
+        }
+        let until = std::time::Instant::now() + TAKE_LANDING_LIMIT;
+        while self.rec.loading_takes > 0 && std::time::Instant::now() < until {
+            self.poll_jobs();
+            if self.rec.loading_takes > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    }
+
+    /// Whether closing the project now would throw work away: unsaved changes, or takes that
+    /// have not joined the project yet.
+    pub fn has_unsaved_work(&mut self) -> bool {
+        self.land_takes();
+        self.doc.is_dirty() || self.takes_in_flight()
     }
 
     /// A pass without usable audio takes: its MIDI clips are the "Record" step.
@@ -399,6 +435,7 @@ impl Controller {
         punch: Option<i64>,
         rec_loop: Option<(i64, i64)>,
     ) {
+        self.rec.loading_takes = self.rec.loading_takes.saturating_sub(1);
         if doc_epoch != self.doc_epoch {
             for (_, r) in takes {
                 if let Ok((info, _)) = r {
@@ -700,6 +737,42 @@ mod tests {
         assert!(cut_short_note(1).contains("1 take was cut short"));
         assert!(cut_short_note(3).contains("3 takes were cut short"));
     }
+    /// A controller whose last recording pass has stopped and is still loading its takes: the
+    /// pass sets the tempo to 97 BPM when it joins the project.
+    fn pass_still_loading() -> crate::controller::Controller {
+        use std::sync::Arc;
+        let engine = Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = crate::controller::Controller::new(engine, dstudio_core::Project::default());
+        assert!(!c.doc.is_dirty());
+        c.rec.loading_takes += 1;
+        c.pending_jobs += 1;
+        let midi = vec![dstudio_core::Command::SetTempo { bpm: 97.0, at: None }];
+        let done = crate::controller::JobResult::Recorded { doc_epoch: c.doc_epoch, takes: Vec::new(), midi, punch: None, rec_loop: None };
+        c.jobs_tx.send(done).unwrap();
+        c
+    }
+
+    #[test]
+    fn closing_waits_for_the_last_take_and_then_asks() {
+        let mut c = pass_still_loading();
+        assert!(!c.close_request(), "the window stays open");
+        assert!(c.unsaved_open, "the unsaved-changes prompt asks");
+        assert_eq!(c.project().transport.bpm, 97.0, "the take joined the project first");
+        assert!(!c.takes_in_flight());
+    }
+
+    #[test]
+    fn opening_or_starting_a_project_keeps_a_loading_take() {
+        let mut c = pass_still_loading();
+        c.open_request(std::path::PathBuf::from("/nowhere/Other.dsproj"));
+        assert!(c.unsaved_open && matches!(c.after_unsaved, Some(crate::dialogs::AfterUnsaved::Open(_))));
+        assert_eq!(c.project().transport.bpm, 97.0, "not thrown away by the project change");
+        let mut c = pass_still_loading();
+        c.new_project_request();
+        assert!(c.unsaved_open);
+        assert_eq!(c.project().transport.bpm, 97.0);
+    }
+
     #[test]
     fn choices() {
         let labels = |d: Option<&AudioDeviceInfo>| input_choices(d).into_iter().map(|(l, _)| l).collect::<Vec<_>>();

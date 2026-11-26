@@ -1143,7 +1143,7 @@ impl Controller {
 
     /// File › New Project: ask first when the project has unsaved changes.
     pub fn new_project_request(&mut self) {
-        if self.doc.is_dirty() {
+        if self.has_unsaved_work() {
             self.after_unsaved = None;
             self.unsaved_open = true;
             self.ui_dirty = true;
@@ -1178,7 +1178,7 @@ impl Controller {
     /// The window was asked to close (close button, ⌘Q, Alt-F4). True when it may close now;
     /// otherwise the unsaved-changes prompt opens, and Save or Don't Save then quits.
     pub fn close_request(&mut self) -> bool {
-        if self.quit_confirmed || !self.doc.is_dirty() {
+        if self.quit_confirmed || !self.has_unsaved_work() {
             self.quit_confirmed = true;
             return true;
         }

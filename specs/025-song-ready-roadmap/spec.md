@@ -1,6 +1,6 @@
 # Song-ready roadmap: what comes after parity
 
-Status: Agreed · Spec: 025 · Issue: none
+Status: In progress · Spec: 025 · Issue: none
 
 ## Problem
 
@@ -28,12 +28,12 @@ the CI history and the website. It replaces 010 as the list contributors and age
 
 ## S0: never lose work
 
-- [ ] **S0.1 Ask before quitting, closing or opening.** Only New Project and the Live set import asked about
+- [x] **S0.1 Ask before quitting, closing or opening** (#171). Only New Project and the Live set import asked about
   unsaved changes. Quit, the window's close button, File › Open, Open Recent and opening a project from the
   browser threw them away (`main.rs`, `controller.rs::open_recent`, `files.rs::files_activate`), and a change
   made in a plugin's own window never marked the project as edited. Done when every one of those asks first
   (Save / Don't Save / Cancel), with self-test steps for the close button and Open.
-- [ ] **S0.2 Recordings made before the first save move into the project.** Takes and rendered clips go to
+- [x] **S0.2 Recordings made before the first save move into the project** (#173). Takes and rendered clips go to
   `<temp>/Device Studio/` until the project is saved, and Save left them there (`recording.rs`,
   `clip_render.rs`). Done when Save moves them into `<project>/media/`, the undo history follows, and a unit
   test covers takes, renders and name clashes.
@@ -45,6 +45,11 @@ the CI history and the website. It replaces 010 as the list contributors and age
 - [x] **S0.4 Relink missing media** (#177). Opening a project whose files moved only said "N media file(s) missing"
   in the status bar (`controller.rs`, `open`). Done when a dialog lists the missing files, Locate… searches a
   chosen folder for the rest by name and length, and the result is one undo step.
+- [ ] **S0.6 A take is never lost when the project closes.** Quitting, closing the window, Open, Open Recent,
+  New Project or a Live set import during a recording pass, or while a stopped pass's takes were still loading,
+  went ahead without asking: the take had not joined the project yet, so it counted as unchanged
+  (`dialogs.rs::close_request`, `recording.rs::stop_recording`). Done when each of those stops the pass, waits
+  for its takes to join the project, then asks as for any unsaved change, with unit tests for closing and opening.
 - [ ] **S0.5 Collect All and Save.** Imported audio is referenced where it lies. Done when File › Collect All
   and Save copies every outside file into `<project>/media/` and repoints the project.
 
