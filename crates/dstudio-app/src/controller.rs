@@ -1041,7 +1041,7 @@ impl Controller {
     /// Open `dir` (File › Open, Open Recent, the browser): asks first when the project has
     /// unsaved changes. A project in Open Recent that no longer opens leaves the list.
     pub fn open_request(&mut self, dir: PathBuf) {
-        if self.doc.is_dirty() {
+        if self.has_unsaved_work() {
             self.after_unsaved = Some(crate::dialogs::AfterUnsaved::Open(dir));
             self.unsaved_open = true;
             self.ui_dirty = true;
