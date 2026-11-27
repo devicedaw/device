@@ -45,7 +45,7 @@ export struct TrackRow {
     pan-auto: bool,
 }
 
-// Track-header meter: 0 (silent, below -50 dB) .. 1 (0 dB), clip latched.
+// Track-header meter: 0 (silent, below -50 dB) .. 1 (0 dB), clip: reached 0 dB in the last 1.5 s.
 export struct RelinkRow { name: string, was: string }
 export struct TrackLevel { l: float, r: float, clip: bool }
 
