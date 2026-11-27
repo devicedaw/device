@@ -269,6 +269,8 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect.
     device_chain_review: bool,
+    /// review-meter-clip: every track and the master clipped 2 s ago and now play at about −12 dB.
+    meter_clip_review: bool,
     /// review-chain-gaps (1: instrument track, 2: audio track): meters and "+" between cards.
     chain_gaps_review: u8,
     /// review-effect-selection: three effects on the audio track, the first two selected.
@@ -757,6 +759,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.device_chain_review = true;
                 }
+                "review-meter-clip" => {
+                    a.reference_default = true;
+                    a.meter_clip_review = true;
+                }
                 "review-devices-minimap" => {
                     a.reference_default = true;
                     a.devices_minimap_review = true;
@@ -966,7 +972,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, review-settings-recording-offset, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-effect-selection, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-smart-fill, review-smart-fill-type, review-smart-fill-record, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-add-track-menu, review-lane-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, review-settings-audio-devices, review-settings-recording-offset, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-shortcuts, review-shortcuts-recording, review-shortcuts-unmapped, review-shortcuts-tracks, review-shortcuts-notes, review-shortcuts-transpose, review-shortcuts-strip, review-shortcuts-zoom, review-shortcuts-move, review-shortcuts-mouse, review-shortcuts-preset-menu, review-shortcuts-logic, review-device-chain, review-meter-clip, review-effect-selection, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-return-sends, review-return-sends-strip, review-tool-menu, review-marquee-range, review-smart-fill, review-smart-fill-type, review-smart-fill-record, review-synth-presets, review-instrument-sounds, review-sound-preview, review-title-rename, review-snap-menu, review-count-in-menu, review-tempo-lane, review-clip-takes, review-track-menu, review-add-track-menu, review-lane-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, window-<id> and review-window-<id> (expanded window, review- with a test signal), review-window-spectrum-<2d|split>, reference-lfo, reference-chain, review-chain-presets, review-chain-add, review-settings-plugins, review-settings-search, review-settings-search-none, review-settings-help, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|key|turn|point|draft|steps|error|busy|highlight|narrow|full>)"
                     ));
                 }
             },
@@ -2636,6 +2642,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.devices.windows.clear();
         c.review_chain_levels(vec![(0.5, 0.42), (0.32, 0.36), (0.2, 0.18)]);
+    }
+    if args.meter_clip_review {
+        ctl.borrow_mut().review_meter_clip();
     }
     if args.device_chain_review {
         // Review only: Instrument track selected, Devices tab, the built-in

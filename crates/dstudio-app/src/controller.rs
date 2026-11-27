@@ -1593,6 +1593,18 @@ impl Controller {
         self.set_master_gain(db_to_gain(db_from_fader(f)).min(dstudio_core::command::MAX_GAIN));
     }
 
+    /// Review only: every track and the master clipped 2 s ago and have played at about −12 dB since.
+    pub fn review_meter_clip(&mut self) {
+        let now = Instant::now();
+        let Some(t0) = now.checked_sub(Duration::from_secs(2)) else { return };
+        let ids: Vec<u64> = std::iter::once(MASTER_METER_ID).chain(self.project().tracks.iter().map(|t| t.id.0)).collect();
+        let at = |g: f32| ids.iter().map(|&id| Meter { track_id: id, peak_l: g, peak_r: g * 0.9 }).collect::<Vec<_>>();
+        self.ballistics.update_at(t0, &at(1.3));
+        for i in 1..=20 {
+            self.ballistics.update_at(t0 + Duration::from_millis(100 * i), &at(0.25));
+        }
+    }
+
     pub fn reset_peaks(&mut self) {
         self.ballistics.reset_hold();
         self.sel_peak_hold = 0.0;
@@ -2607,8 +2619,8 @@ impl Controller {
         metering |= self.ballistics.update(&self.meters);
         let p = self.doc.project();
         let level = |id: u64| {
-            let (l, r, hold) = self.ballistics.get(id);
-            TrackLevel { l: header_meter(l), r: header_meter(r), clip: hold >= 1.0 }
+            let (l, r, _) = self.ballistics.get(id);
+            TrackLevel { l: header_meter(l), r: header_meter(r), clip: self.ballistics.clipping(id) }
         };
         let n = self.lane_tracks();
         let levels: Vec<TrackLevel> = p.tracks.iter().take(n).map(|t| level(t.id.0)).collect();
